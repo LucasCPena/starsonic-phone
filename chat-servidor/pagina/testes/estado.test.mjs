@@ -3,16 +3,19 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  AVISO_CURTO_MS,
   CONTAGEM_MS,
   FIM_SEM_AVISO_MS,
   MAX_REABRIR,
   MAX_RECONECTAR,
+  PRAZO_DA_MENSAGEM_MS,
   PRAZO_VOLTA_MS,
   REABRIR_MS,
   RECONECTAR_MS,
   cabecalho,
   inicial,
   nomeValido,
+  podeEscrever,
   quando,
   transicao,
 } from '../../internal/pagina/estatico/estado.js';
@@ -159,6 +162,9 @@ test('o carregar abre', () => {
     vez: 0,
     abertura: 0,
     palco: null,
+    chat: { mensagens: [], naoLidas: 0, aberto: false, seq: 0 },
+    avisoCurto: null,
+    avisos: 0,
   });
   const r = passo(inicial(), COMECAR);
   assert.equal(r.estado.tela, 'carregando');
@@ -1514,4 +1520,407 @@ test('cabecalho', () => {
   for (const [reuniao, sobretitulo, titulo] of casos) {
     assert.deepEqual(cabecalho(reuniao, agora), { sobretitulo, titulo });
   }
+});
+
+// ---- O chat da reunião (seção 10 do protocolo): a lista, as não lidas, o painel e o aviso curto. ----
+
+const FOCAR_O_CAMPO = { tipo: 'focarOCampo' };
+const FOCAR_O_CHAT = { tipo: 'focarOChat' };
+// O que a pessoa escreveu e mandou, e o Tentar de novo da mensagem n, na hora dada (o agora que a página põe).
+const escrever = (texto, agora = 1000) => ({ tipo: 'escrever', texto, agora });
+const reenviar = (n, agora = 2000) => ({ tipo: 'reenviar', n, agora });
+// Uma mensagem do chat que chega pelo canal, e a recusa de uma.
+const doChat = (m, agora = 1000) => ({ tipo: 'mensagem', m: { tipo: 'mensagem', ...m }, agora });
+const recusada = (id, motivo) => mensagem({ tipo: 'mensagemRecusada', id, motivo });
+const doCarlos = (texto, agora = 1000) =>
+  doChat({ de: 'c2c2c2c2c2c2c2c2', nome: 'Carlos Lima', voce: false, texto }, agora);
+// A resposta do servidor à mensagem da própria pessoa: ela volta com o id.
+const deVolta = (id, texto, agora = 1000) =>
+  doChat({ id, de: 'e3e3e3e3e3e3e3e3', nome: 'Maria Lima', voce: true, texto }, agora);
+const mandarDoChat = (id, texto) => mandar({ tipo: 'mensagem', id, texto });
+const prazoDaMensagem = (id) => esperar(10000, `mensagem:${id}`);
+const tempoDoAviso = (n) => esperar(5000, `avisoCurto:${n}`);
+// As mensagens, como a lista as guarda.
+const minha = (n, texto, extra = {}) => ({
+  n,
+  voce: true,
+  nome: '',
+  texto,
+  hora: 1000,
+  situacao: 'enviando',
+  id: `m${n}`,
+  motivo: null,
+  ...extra,
+});
+const deOutro = (n, texto, extra = {}) => ({
+  n,
+  voce: false,
+  nome: 'Carlos Lima',
+  texto,
+  hora: 1000,
+  situacao: 'enviada',
+  id: null,
+  motivo: null,
+  ...extra,
+});
+const chatVazio = (seq = 0) => ({ mensagens: [], naoLidas: 0, aberto: false, seq });
+// As três tentativas da volta que falham: a página desiste e mostra "Você saiu da reunião".
+const desistirDeVoltar = (estado) =>
+  rodar(
+    estado,
+    SEM_CONEXAO,
+    tempo('reconectar:1'),
+    mensagem({ tipo: 'senha', senha: 'senha-r1' }),
+    ligacao('principal', 'falhou', 0),
+    tempo('reconectar:2'),
+    mensagem({ tipo: 'senha', senha: 'senha-r2' }),
+    ligacao('principal', 'falhou', 0),
+    tempo('reconectar:3'),
+    mensagem({ tipo: 'senha', senha: 'senha-r3' }),
+    ligacao('principal', 'falhou', 0),
+  ).estado;
+
+test('os valores do chat', () => {
+  assert.equal(PRAZO_DA_MENSAGEM_MS, 10000);
+  assert.equal(AVISO_CURTO_MS, 5000);
+});
+
+test('podeEscrever: na tela da reunião, com o canal da pessoa aberto', () => {
+  assert.equal(podeEscrever(naReuniao()), true);
+  assert.equal(podeEscrever(entrando()), false);
+  assert.equal(podeEscrever(aguardando()), false);
+  assert.equal(podeEscrever(saiu()), false);
+  assert.equal(podeEscrever(passo(naReuniao(), canalFechou(1006)).estado), false);
+  // O canal abrindo e o voltando ainda não são o da pessoa.
+  const religando = rodar(naReuniaoComChave(), canalFechou(1006), tempo('religar:1'), abriu(3));
+  assert.equal(religando.estado.canal, 'abrindo');
+  assert.equal(podeEscrever(religando.estado), false);
+  const voltando = passo(religando.estado, CANAL_ABRIU);
+  assert.equal(voltando.estado.canal, 'voltando');
+  assert.equal(podeEscrever(voltando.estado), false);
+  assert.equal(podeEscrever(passo(voltando.estado, voltou(VOLTA_2)).estado), true);
+  // Na conexão caída, com o canal ainda aberto, ele continua valendo: quem decide é o servidor.
+  assert.equal(podeEscrever(passo(naReuniao(), SEM_CONEXAO).estado), true);
+});
+
+test('escrever manda a mensagem e a mostra indo', () => {
+  const r = passo(naReuniao(), escrever('  Bom dia  ', 5000));
+  assert.deepEqual(r.efeitos, [mandarDoChat('m1', 'Bom dia'), prazoDaMensagem('m1')]);
+  assert.deepEqual(r.estado.chat, {
+    mensagens: [minha(1, 'Bom dia', { hora: 5000 })],
+    naoLidas: 0,
+    aberto: false,
+    seq: 1,
+  });
+  // A quebra de linha do meio fica.
+  const s = passo(r.estado, escrever('linha 1\nlinha 2', 6000));
+  assert.deepEqual(s.efeitos, [mandarDoChat('m2', 'linha 1\nlinha 2'), prazoDaMensagem('m2')]);
+  assert.deepEqual(s.estado.chat.mensagens.at(-1), minha(2, 'linha 1\nlinha 2', { hora: 6000 }));
+});
+
+test('o texto vazio e o de mais de 1.000 não saem', () => {
+  semMudar(naReuniao(), escrever(''));
+  semMudar(naReuniao(), escrever('  \n '));
+  semMudar(naReuniao(), escrever('a'.repeat(1001)));
+  semMudar(naReuniao(), { tipo: 'escrever', agora: 1000 });
+  // O de 1.000 sai.
+  assert.equal(passo(naReuniao(), escrever('a'.repeat(1000))).efeitos.length, 2);
+});
+
+test('a resposta com o id confirma', () => {
+  const indo = passo(naReuniao(), escrever('Bom dia', 5000)).estado;
+  const r = passo(indo, deVolta('m1', 'Bom dia', 9000));
+  assert.deepEqual(r.efeitos, []);
+  // A hora continua a de quando a pessoa mandou, e o id sai: a mensagem não espera mais nada.
+  assert.deepEqual(r.estado.chat.mensagens, [minha(1, 'Bom dia', { hora: 5000, situacao: 'enviada', id: null })]);
+  assert.equal(r.estado.chat.naoLidas, 0);
+  assert.equal(r.estado.avisoCurto, null);
+  // O prazo dela, que ainda chega, não muda mais nada.
+  semMudar(r.estado, tempo('mensagem:m1'));
+});
+
+test('a mensagem de outra pessoa, com o chat fechado', () => {
+  let r = passo(naReuniao(), doCarlos('Oi', 1000));
+  assert.deepEqual(r.estado.chat, { mensagens: [deOutro(1, 'Oi')], naoLidas: 1, aberto: false, seq: 1 });
+  assert.deepEqual(r.estado.avisoCurto, { n: 1, tipo: 'mensagem', nome: 'Carlos Lima', texto: 'Oi' });
+  assert.equal(r.estado.avisos, 1);
+  assert.deepEqual(r.efeitos, [tempoDoAviso(1)]);
+  // Outra mensagem: o aviso novo toma o lugar do anterior.
+  r = passo(r.estado, doCarlos('Tudo bem?', 3000));
+  assert.equal(r.estado.chat.naoLidas, 2);
+  assert.deepEqual(r.estado.avisoCurto, { n: 2, tipo: 'mensagem', nome: 'Carlos Lima', texto: 'Tudo bem?' });
+  assert.deepEqual(r.efeitos, [tempoDoAviso(2)]);
+  // O tempo do aviso que passou fica de fora; o do aviso de agora o tira. As não lidas ficam.
+  semMudar(r.estado, tempo('avisoCurto:1'));
+  r = passo(r.estado, tempo('avisoCurto:2'));
+  assert.equal(r.estado.avisoCurto, null);
+  assert.equal(r.estado.chat.naoLidas, 2);
+  assert.deepEqual(r.efeitos, []);
+  // Sem o nome, ele fica vazio: quem escreve "Participante" é a tela.
+  r = passo(naReuniao(), doChat({ de: 'c2c2c2c2c2c2c2c2', nome: '', voce: false, texto: 'Oi' }));
+  assert.equal(r.estado.chat.mensagens[0].nome, '');
+  assert.equal(passo(naReuniao(), doChat({ voce: false, texto: 'Oi' })).estado.chat.mensagens[0].nome, '');
+});
+
+test('com o chat aberto, a mensagem não conta nem avisa', () => {
+  const aberto = passo(naReuniao(), clique('chat')).estado;
+  const r = passo(aberto, doCarlos('Oi'));
+  assert.deepEqual(r.estado.chat, { mensagens: [deOutro(1, 'Oi')], naoLidas: 0, aberto: true, seq: 1 });
+  assert.equal(r.estado.avisoCurto, null);
+  assert.deepEqual(r.efeitos, []);
+});
+
+test('abrir zera as não lidas, tira o aviso e leva o foco ao campo', () => {
+  const comDuas = rodar(naReuniao(), doCarlos('Oi'), doCarlos('Tudo bem?')).estado;
+  for (const botao of ['chat', 'abrirChat']) {
+    const r = passo(comDuas, clique(botao));
+    assert.deepEqual(r.estado.chat, {
+      mensagens: [deOutro(1, 'Oi'), deOutro(2, 'Tudo bem?')],
+      naoLidas: 0,
+      aberto: true,
+      seq: 2,
+    });
+    assert.equal(r.estado.avisoCurto, null);
+    assert.deepEqual(r.efeitos, [FOCAR_O_CAMPO]);
+    // O tempo do aviso que saiu com o abrir não muda mais nada.
+    semMudar(r.estado, tempo('avisoCurto:2'));
+    // O Abrir o chat com ele já aberto não faz nada.
+    semMudar(r.estado, clique('abrirChat'));
+  }
+});
+
+test('fechar devolve o foco ao botão', () => {
+  const aberto = passo(naReuniao(), clique('chat')).estado;
+  let r = passo(aberto, clique('fecharChat'));
+  assert.equal(r.estado.chat.aberto, false);
+  assert.deepEqual(r.efeitos, [FOCAR_O_CHAT]);
+  // O clique no próprio botão Chat fecha, e o foco já está nele.
+  r = passo(aberto, clique('chat'));
+  assert.equal(r.estado.chat.aberto, false);
+  assert.deepEqual(r.efeitos, []);
+  // Fechar o que está fechado não faz nada.
+  semMudar(naReuniao(), clique('fecharChat'));
+});
+
+test('fora da tela da reunião, os cliques do chat, o escrever e o reenviar não fazem nada', () => {
+  for (const estado of [naEntrada(), aguardando(), entrando(), saiu()]) {
+    for (const botao of ['chat', 'abrirChat', 'fecharChat']) semMudar(estado, clique(botao));
+    semMudar(estado, escrever('Bom dia'));
+    semMudar(estado, reenviar(1));
+  }
+});
+
+test('a recusa marca Não enviada, com o motivo', () => {
+  const indo = passo(naReuniao(), escrever('Bom dia')).estado;
+  for (const motivo of ['limite', 'grande', 'foraDaReuniao', 'invalida']) {
+    const r = passo(indo, recusada('m1', motivo));
+    assert.deepEqual(r.estado.chat.mensagens, [minha(1, 'Bom dia', { situacao: 'naoEnviada', id: null, motivo })]);
+    assert.deepEqual(r.efeitos, []);
+  }
+  // A recusa de um id que a página não espera, e a que vem sem o id, ficam de fora.
+  semMudar(indo, recusada('m7', 'limite'));
+  semMudar(indo, mensagem({ tipo: 'mensagemRecusada', motivo: 'limite' }));
+});
+
+test('sem resposta em 10 s, a mensagem fica Não enviada, e a resposta atrasada ainda a confirma', () => {
+  const indo = passo(naReuniao(), escrever('Bom dia', 5000)).estado;
+  let r = passo(indo, tempo('mensagem:m1'));
+  assert.deepEqual(r.efeitos, []);
+  // O id fica: a resposta pode só ter atrasado.
+  assert.deepEqual(r.estado.chat.mensagens, [
+    minha(1, 'Bom dia', { hora: 5000, situacao: 'naoEnviada', motivo: 'prazo' }),
+  ]);
+  r = passo(r.estado, deVolta('m1', 'Bom dia', 20000));
+  assert.deepEqual(r.estado.chat.mensagens, [minha(1, 'Bom dia', { hora: 5000, situacao: 'enviada', id: null })]);
+  // A recusa atrasada também vale, com o motivo dela.
+  r = rodar(indo, tempo('mensagem:m1'), recusada('m1', 'limite'));
+  assert.deepEqual(r.estado.chat.mensagens, [
+    minha(1, 'Bom dia', { hora: 5000, situacao: 'naoEnviada', id: null, motivo: 'limite' }),
+  ]);
+  // O prazo de um id que não existe não muda nada.
+  semMudar(indo, tempo('mensagem:m9'));
+});
+
+test('o Tentar de novo manda de novo, no fim da lista', () => {
+  const antes = rodar(naReuniao(), escrever('Bom dia', 5000), recusada('m1', 'limite'), doCarlos('Oi', 6000)).estado;
+  assert.deepEqual(
+    antes.chat.mensagens.map((m) => m.n),
+    [1, 2],
+  );
+  const r = passo(antes, reenviar(1, 7000));
+  assert.deepEqual(r.efeitos, [mandarDoChat('m3', 'Bom dia'), prazoDaMensagem('m3')]);
+  assert.deepEqual(r.estado.chat.mensagens, [deOutro(2, 'Oi', { hora: 6000 }), minha(3, 'Bom dia', { hora: 7000 })]);
+  assert.equal(r.estado.chat.seq, 3);
+  // O que não está "Não enviada", o n que não existe, e sem o canal: nada muda.
+  semMudar(antes, reenviar(2));
+  semMudar(antes, reenviar(9));
+  const indo = passo(naReuniao(), escrever('Bom dia')).estado;
+  semMudar(indo, reenviar(1));
+  const semCanal = passo(antes, canalFechou(1006)).estado;
+  semMudar(semCanal, reenviar(1));
+});
+
+test('a resposta de um id que a página não espera mais vira outra mensagem', () => {
+  // A resposta atrasou mais que os 10 s, a pessoa clicou em Tentar de novo, e as duas chegaram aos outros.
+  const tentando = rodar(naReuniao(), escrever('Bom dia', 5000), tempo('mensagem:m1'), reenviar(1, 16000)).estado;
+  assert.deepEqual(tentando.chat.mensagens, [minha(2, 'Bom dia', { hora: 16000 })]);
+  let r = passo(tentando, deVolta('m1', 'Bom dia', 17000));
+  assert.deepEqual(r.estado.chat.mensagens, [
+    minha(2, 'Bom dia', { hora: 16000 }),
+    { n: 3, voce: true, nome: 'Maria Lima', texto: 'Bom dia', hora: 17000, situacao: 'enviada', id: null, motivo: null },
+  ]);
+  // A da própria pessoa nunca conta como não lida, nem avisa.
+  assert.equal(r.estado.chat.naoLidas, 0);
+  assert.equal(r.estado.avisoCurto, null);
+  assert.deepEqual(r.efeitos, []);
+  r = passo(r.estado, deVolta('m2', 'Bom dia', 18000));
+  assert.deepEqual(
+    r.estado.chat.mensagens.map((m) => [m.n, m.situacao]),
+    [
+      [2, 'enviada'],
+      [3, 'enviada'],
+    ],
+  );
+});
+
+test('sem o canal, o escrever guarda a mensagem como Não enviada', () => {
+  const semCanal = passo(naReuniao(), canalFechou(1006)).estado;
+  const r = passo(semCanal, escrever('Bom dia', 5000));
+  assert.deepEqual(r.efeitos, []);
+  assert.deepEqual(r.estado.chat.mensagens, [
+    minha(1, 'Bom dia', { hora: 5000, situacao: 'naoEnviada', id: null, motivo: 'semCanal' }),
+  ]);
+});
+
+test('a mensagem que estava indo quando o canal caiu fica Não enviada no prazo dela', () => {
+  const r = rodar(naReuniaoComChave(), escrever('Bom dia', 5000), canalFechou(1006));
+  assert.equal(r.estado.chat.mensagens[0].situacao, 'enviando');
+  const depois = passo(r.estado, tempo('mensagem:m1'));
+  assert.equal(depois.estado.chat.mensagens[0].situacao, 'naoEnviada');
+  assert.equal(depois.estado.chat.mensagens[0].motivo, 'prazo');
+});
+
+test('a lista esvazia quando a página sai da tela da reunião', () => {
+  // Três mensagens, duas não lidas e um aviso; depois, o chat aberto.
+  const fechado = rodar(naReuniao(), escrever('Bom dia'), doCarlos('Oi'), doCarlos('Tudo bem?')).estado;
+  assert.equal(fechado.chat.mensagens.length, 3);
+  assert.notEqual(fechado.avisoCurto, null);
+  const aberto = passo(fechado, clique('chat')).estado;
+  const fins = [
+    (e) => passo(e, clique('sair')).estado,
+    (e) => passo(e, mensagem({ tipo: 'tirado' })).estado,
+    (e) => passo(e, mensagem({ tipo: 'encerrada' })).estado,
+    desistirDeVoltar,
+  ];
+  for (const [i, fim] of fins.entries()) {
+    for (const antes of [fechado, aberto]) {
+      const depois = fim(antes);
+      assert.equal(depois.tela, 'aviso', `o fim ${i}`);
+      assert.deepEqual(depois.chat, chatVazio(3), `o fim ${i}`);
+      assert.equal(depois.avisoCurto, null, `o fim ${i}`);
+    }
+  }
+  // O tempo de um aviso e o prazo de uma mensagem que chegam depois do fim não mudam nada.
+  const saiuDaReuniao = passo(fechado, clique('sair')).estado;
+  semMudar(saiuDaReuniao, tempo('avisoCurto:2'));
+  semMudar(saiuDaReuniao, tempo('mensagem:m1'));
+});
+
+test('a lista fica enquanto a página tenta voltar', () => {
+  const com = (estado) => rodar(estado, escrever('Bom dia'), deVolta('m1', 'Bom dia'), doCarlos('Oi'), clique('chat'));
+  // A conexão caída: o cartão "A conexão caiu" aparece, e o chat fica como estava, até depois da volta.
+  let antes = com(naReuniao()).estado;
+  let r = { estado: antes };
+  for (const evento of [
+    SEM_CONEXAO,
+    tempo('reconectar:1'),
+    mensagem({ tipo: 'senha', senha: 'senha-r1' }),
+    ligacao('principal', 'confirmada'),
+  ]) {
+    r = passo(r.estado, evento);
+    assert.equal(r.estado.tela, 'reuniao');
+    assert.deepEqual(r.estado.chat, antes.chat, evento.tipo);
+  }
+  // O canal que cai e religa por trás, com a ligação no ar.
+  antes = com(naReuniaoComChave()).estado;
+  r = { estado: antes };
+  for (const evento of [canalFechou(1006), tempo('religar:1'), abriu(3), CANAL_ABRIU, voltou(VOLTA_2)]) {
+    r = passo(r.estado, evento);
+    assert.deepEqual(r.estado.chat, antes.chat, evento.tipo);
+  }
+  // E a página que desistiu de religar o canal (a reunião segue só com a imagem e o som) continua com as mensagens.
+  const semChave = passo(com(naReuniao()).estado, canalFechou(1006));
+  assert.equal(semChave.estado.tela, 'reuniao');
+  assert.deepEqual(semChave.estado.chat, com(naReuniao()).estado.chat);
+});
+
+test('as mensagens que chegam com a página entrando ficam para a reunião', () => {
+  let r = passo(entrando(), doCarlos('Oi'));
+  assert.deepEqual(r.estado.chat, { mensagens: [deOutro(1, 'Oi')], naoLidas: 1, aberto: false, seq: 1 });
+  // O aviso curto é da tela da reunião: entrando, ele não nasce.
+  assert.equal(r.estado.avisoCurto, null);
+  assert.deepEqual(r.efeitos, []);
+  r = passo(r.estado, ligacao('principal', 'confirmada'));
+  assert.equal(r.estado.tela, 'reuniao');
+  assert.deepEqual(r.estado.chat, { mensagens: [deOutro(1, 'Oi')], naoLidas: 1, aberto: false, seq: 1 });
+  // A entrada que não deu certo esvazia, como toda saída.
+  const falhou = rodar(entrando(), doCarlos('Oi'), ligacao('principal', 'falhou', 0));
+  assert.equal(falhou.estado.tela, 'aviso');
+  assert.deepEqual(falhou.estado.chat, chatVazio(1));
+});
+
+test('antes do aceito e depois do fim, a mensagem do chat fica de fora', () => {
+  semMudar(aguardando(), doCarlos('Oi'));
+  semMudar(saiu(), doCarlos('Oi'));
+  semMudar(aguardando(), recusada('m1', 'limite'));
+});
+
+test('a mensagem sem texto, ou com o texto que não é texto, fica de fora', () => {
+  for (const texto of [undefined, null, '', 7, {}, ['a']]) {
+    semMudar(naReuniao(), doChat({ de: 'c2c2c2c2c2c2c2c2', nome: 'Carlos Lima', voce: false, texto }));
+  }
+  // O nome que não é texto vira o vazio, e a mensagem vale.
+  const r = passo(naReuniao(), doChat({ de: 'c2c2c2c2c2c2c2c2', nome: 7, voce: false, texto: 'Oi' }));
+  assert.equal(r.estado.chat.mensagens[0].nome, '');
+});
+
+test('a página guarda as últimas 500', () => {
+  let estado = naReuniao();
+  for (let i = 1; i <= 501; i++) estado = passo(estado, doCarlos(`mensagem ${i}`)).estado;
+  assert.equal(estado.chat.mensagens.length, 500);
+  assert.equal(estado.chat.mensagens[0].n, 2);
+  assert.equal(estado.chat.mensagens.at(-1).n, 501);
+  assert.equal(estado.chat.seq, 501);
+  // As não lidas contam todas: quem diz "9+" é a tela.
+  assert.equal(estado.chat.naoLidas, 501);
+  // A que saiu da lista não volta com a resposta atrasada dela, nem com o prazo.
+  let r = passo(naReuniao(), escrever('a primeira', 5000));
+  for (let i = 1; i <= 500; i++) r = passo(r.estado, doCarlos(`mensagem ${i}`));
+  assert.equal(r.estado.chat.mensagens.some((m) => m.voce), false);
+  semMudar(r.estado, tempo('mensagem:m1'));
+});
+
+test('o Entrar de novo começa vazio, e os ids não se repetem', () => {
+  const fora = rodar(naReuniao(), escrever('Bom dia'), deVolta('m1', 'Bom dia'), clique('sair')).estado;
+  assert.deepEqual(fora.chat, chatVazio(1));
+  const dentro = rodar(
+    fora,
+    clique('entrarDeNovo'),
+    midia('ligado', 'ligado'),
+    mensagem({ tipo: 'senha', senha: 'senha-3' }),
+    ligacao('principal', 'confirmada'),
+  ).estado;
+  assert.equal(dentro.tela, 'reuniao');
+  assert.deepEqual(dentro.chat, chatVazio(1));
+  const r = passo(dentro, escrever('De volta', 9000));
+  assert.deepEqual(r.efeitos, [mandarDoChat('m2', 'De volta'), prazoDaMensagem('m2')]);
+  // A resposta atrasada de uma mensagem da entrada anterior não confirma nada da nova: vira uma mensagem a mais.
+  const s = passo(r.estado, deVolta('m1', 'Bom dia', 9500));
+  assert.deepEqual(
+    s.estado.chat.mensagens.map((m) => [m.n, m.situacao, m.texto]),
+    [
+      [2, 'enviando', 'De volta'],
+      [3, 'enviada', 'Bom dia'],
+    ],
+  );
 });

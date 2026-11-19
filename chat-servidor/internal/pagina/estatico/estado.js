@@ -39,7 +39,20 @@
 // servidor se a câmera dela está ligada (o {tipo:'camera', ligada}), para o quadro de quem está sem ela: o aviso sai
 // sempre que o canal passa a ser o da pessoa (o aceito, o voltou) e a cada mudança do ligado, e nunca antes do aceito
 // nem com o canal voltando (o servidor responderia o erro invalido). Ele não espera resposta.
+//
+// O chat da reunião (seção 10 do protocolo). As mensagens vivem só aqui, enquanto a página está na reunião: a lista
+// (as últimas 500), as não lidas, o painel aberto ou fechado e o aviso curto da mensagem nova. A pessoa escreve (o
+// evento escrever), e a mensagem entra na lista já, indo: o {tipo:'mensagem', id, texto} sai pelo canal, e a resposta
+// é a própria mensagem de volta, com o id (ou a recusa, o mensagemRecusada). Sem resposta em PRAZO_DA_MENSAGEM_MS, ela
+// fica "Não enviada", e o Tentar de novo (o evento reenviar) a manda como uma mensagem nova, no fim da lista. O id é o
+// "m" mais o número da mensagem, que nunca volta a zero: o mesmo canal pode servir a duas entradas. A hora de cada
+// mensagem é a do evento que a trouxe (o agora, que a tela põe em todo evento): o cérebro não tem relógio.
+// A regra da tela da reunião fica num lugar só, no fim da transicao: fora da reunião (e da entrada nela, com a ligação
+// subindo), o chat é o vazio, por qualquer fim (a pessoa saiu, foi tirada, a reunião acabou, a página desistiu de
+// voltar); e o aviso curto só existe na tela da reunião. Enquanto a página tenta voltar (a conexão caída, o religar
+// do canal), nada disso muda. O texto e o nome das mensagens não vão ao console, como o resto do estado.
 
+import { MAX_MENSAGENS, textoLimpo } from './mensagens.js';
 import { lerPalco } from './palco.js';
 
 /** O passo da contagem do 429 ("Tentar de novo em <n> s"), em ms. */
@@ -62,6 +75,10 @@ export const MAX_RECONECTAR = RECONECTAR_MS.length;
 export const PRAZO_VOLTA_MS = 10000;
 /** As aberturas de novo depois de um 1011, antes do aceito. */
 export const MAX_REABRIR = 3;
+/** A espera pela resposta de uma mensagem do chat da reunião, em ms: sem ela, a mensagem fica "Não enviada". */
+export const PRAZO_DA_MENSAGEM_MS = 10000;
+/** O tempo do aviso curto na tela (o da mensagem nova e o da conexão ruim), em ms. */
+export const AVISO_CURTO_MS = 5000;
 
 const MAX_NOME = 80;
 
@@ -75,12 +92,17 @@ const PEDIR_MIDIA = Object.freeze({ tipo: 'pedirMidia' });
 const PARAR_MIDIA = Object.freeze({ tipo: 'pararMidia' });
 const PARAR_CAPTURA = Object.freeze({ tipo: 'pararCaptura' });
 const FOCAR = Object.freeze({ tipo: 'focar' });
+const FOCAR_O_CAMPO = Object.freeze({ tipo: 'focarOCampo' }); // o campo de escrever do chat
+const FOCAR_O_CHAT = Object.freeze({ tipo: 'focarOChat' }); // o botão Chat dos controles
 const mandar = (m) => ({ tipo: 'mandar', m });
 const ligar = (qual, senha) => ({ tipo: 'ligar', qual, senha });
 const desligar = (qual) => ({ tipo: 'desligar', qual });
 const esperar = (ms, chave) => ({ tipo: 'esperar', ms, chave });
 const abrirCanal = (bilhete) => ({ tipo: 'abrirCanal', bilhete });
 const pedido = (e) => mandar({ tipo: 'pedir', nome: e.nome.trim() });
+
+// O chat da reunião sem nada: a lista, as não lidas, o painel fechado e o número da última mensagem.
+const CHAT_VAZIO = Object.freeze({ mensagens: Object.freeze([]), naoLidas: 0, aberto: false, seq: 0 });
 
 // com: o estado com as mudanças, e os efeitos. so: os efeitos, com o mesmo estado.
 const com = (estado, mudancas, ...efeitos) => ({ estado: { ...estado, ...mudancas }, efeitos });
@@ -131,6 +153,11 @@ export function inicial() {
     vez: 0, // a vez das esperas e dos prazos da volta e do religar: cada espera nova ganha a sua
     abertura: 0, // o número do último abrir
     palco: null, // o último palco que vale, depois do aceito: {largura, altura, quadros}
+    // O chat da reunião: as mensagens ({n, voce, nome, texto, hora, situacao, id, motivo}), as não lidas, o painel
+    // aberto e o seq, o número da última mensagem, que nunca volta a zero.
+    chat: CHAT_VAZIO,
+    avisoCurto: null, // o aviso curto na tela: {n, tipo: 'mensagem', nome, texto}
+    avisos: 0, // o número do último aviso curto: o tempo de um aviso que passou fica de fora
   };
 }
 
@@ -154,7 +181,7 @@ export function transicao(estado, evento) {
       r = canalFechou(estado, evento.codigo);
       break;
     case 'mensagem':
-      if (estado.canal === 'aberto') r = mensagem(estado, evento.m ?? {});
+      if (estado.canal === 'aberto') r = mensagem(estado, evento.m ?? {}, evento.agora);
       else if (estado.canal === 'voltando') r = respostaDoVoltar(estado, evento.m ?? {});
       else r = nada(estado);
       break;
@@ -181,9 +208,17 @@ export function transicao(estado, evento) {
     case 'tempo':
       r = tempo(estado, evento.chave);
       break;
+    case 'escrever':
+      r = escrever(estado, evento.texto, evento.agora);
+      break;
+    case 'reenviar':
+      r = reenviar(estado, evento.n, evento.agora);
+      break;
     default:
       r = nada(estado);
   }
+  // O chat e o aviso curto são da tela da reunião: a regra fica só aqui, para todo fim, também os que vierem depois.
+  r.estado = soNaReuniao(r.estado);
   // O aviso da câmera nasce só aqui, do estado de antes e do de depois: nenhum outro ponto do cérebro o monta.
   if (avisaACamera(estado, r.estado)) r.efeitos.push(mandar({ tipo: 'camera', ligada: cameraLigada(r.estado) }));
   // A tela nova, ou o aviso novo, leva o foco ao título dela.
@@ -199,6 +234,26 @@ const cameraLigada = (e) => e.cam === 'ligado';
 // O aviso sai quando o canal passa a ser o da pessoa, ou quando o ligado muda com ele aberto.
 const avisaACamera = (antes, depois) =>
   canalDaPessoa(depois) && (!canalDaPessoa(antes) || cameraLigada(antes) !== cameraLigada(depois));
+
+// A página está na reunião, ou entrando nela (aceita, com a ligação subindo): é quando o servidor lhe manda o chat.
+const naReuniaoOuEntrando = (e) => e.aceito && (e.tela === 'reuniao' || e.tela === 'entrando');
+
+/** A página pode escrever no chat da reunião: a tela da reunião, com o canal da pessoa aberto. */
+export function podeEscrever(estado) {
+  return estado.tela === 'reuniao' && canalDaPessoa(estado);
+}
+
+// Fora da reunião, o chat volta ao vazio (com o seq de antes: os ids não se repetem) e o painel fecha; fora da tela
+// da reunião, não há aviso curto. Sem nada a mudar, o estado é o mesmo.
+function soNaReuniao(e) {
+  let f = e;
+  const { chat } = f;
+  if (!naReuniaoOuEntrando(f) && (chat.mensagens.length > 0 || chat.naoLidas > 0 || chat.aberto)) {
+    f = { ...f, chat: { ...CHAT_VAZIO, seq: chat.seq } };
+  }
+  if (f.tela !== 'reuniao' && f.avisoCurto !== null) f = { ...f, avisoCurto: null };
+  return f;
+}
 
 // O abrir de um pedido (o do clique, o do Tentar de novo, o do Entrar de novo e o do 1011) roda com o canal fechado.
 const esperaOAbrir = (e) => !e.aceito && ESPERA.has(e.tela) && e.canal === 'fechado';
@@ -268,8 +323,8 @@ function canalFechou(e, codigo) {
   return com(f, mudancas, ...efeitos);
 }
 
-// As mensagens do servidor (seção 10 do protocolo).
-function mensagem(e, m) {
+// As mensagens do servidor (seção 10 do protocolo). O agora é a hora em que a mensagem chegou.
+function mensagem(e, m, agora) {
   const naEspera = !e.aceito && ESPERA.has(e.tela);
   switch (m.tipo) {
     case 'naoComecou':
@@ -311,9 +366,113 @@ function mensagem(e, m) {
       return erro(e, m.erro);
     case 'palco':
       return e.aceito ? guardarOPalco(e, m) : nada(e);
+    case 'mensagem':
+      return mensagemDoChat(e, m, agora);
+    case 'mensagemRecusada':
+      return mensagemRecusada(e, m);
     default:
       return nada(e);
   }
+}
+
+// ---- O chat da reunião ----
+
+// O chat com as mudanças, e os efeitos.
+const comChat = (e, mudancas, ...efeitos) => com(e, { chat: { ...e.chat, ...mudancas } }, ...efeitos);
+// A lista com mais uma mensagem no fim, sem passar das últimas MAX_MENSAGENS.
+const maisUma = (lista, m) => [...lista, m].slice(-MAX_MENSAGENS);
+// A lista com a mensagem nova no lugar da antiga.
+const noLugar = (lista, antiga, nova) => lista.map((x) => (x === antiga ? nova : x));
+
+// A mensagem da própria pessoa entra no fim da lista (a lista dada, que no Tentar de novo já vem sem a antiga), com a
+// hora de agora, e sai pelo canal, com o prazo da resposta. Sem o canal da pessoa, ela entra como "Não enviada": o
+// texto nunca se perde.
+function enviar(e, lista, texto, agora) {
+  const n = e.chat.seq + 1;
+  const minha = { n, voce: true, nome: '', texto, hora: agora, situacao: 'enviando', id: `m${n}`, motivo: null };
+  if (!podeEscrever(e)) {
+    const semCanal = { ...minha, situacao: 'naoEnviada', id: null, motivo: 'semCanal' };
+    return comChat(e, { seq: n, mensagens: maisUma(lista, semCanal) });
+  }
+  return comChat(
+    e,
+    { seq: n, mensagens: maisUma(lista, minha) },
+    mandar({ tipo: 'mensagem', id: minha.id, texto }),
+    esperar(PRAZO_DA_MENSAGEM_MS, `mensagem:${minha.id}`),
+  );
+}
+
+// A pessoa escreveu e mandou. O texto vazio, ou grande demais, não sai (o campo já não deixa).
+function escrever(e, texto, agora) {
+  if (e.tela !== 'reuniao') return nada(e);
+  const limpo = textoLimpo(texto);
+  return limpo === null ? nada(e) : enviar(e, e.chat.mensagens, limpo, agora);
+}
+
+// O Tentar de novo de uma mensagem "Não enviada": ela sai do lugar antigo e vai de novo, como uma mensagem nova.
+function reenviar(e, n, agora) {
+  if (!podeEscrever(e)) return nada(e);
+  const antiga = e.chat.mensagens.find((m) => m.n === n);
+  if (!antiga || antiga.situacao !== 'naoEnviada') return nada(e);
+  return enviar(
+    e,
+    e.chat.mensagens.filter((m) => m !== antiga),
+    antiga.texto,
+    agora,
+  );
+}
+
+// Uma mensagem do chat chegou. A que traz o id de uma que a página espera (indo, ou "Não enviada" pelo prazo) é a
+// resposta dela, e a confirma. Qualquer outra entra no fim da lista: a de outra pessoa e, também, a da própria pessoa
+// cujo id a página não espera mais (a resposta que atrasou e chegou depois do Tentar de novo: os outros viram as duas).
+// A de outra pessoa, com o chat fechado, conta como não lida e, na tela da reunião, mostra o aviso curto.
+function mensagemDoChat(e, m, agora) {
+  if (!naReuniaoOuEntrando(e) || typeof m.texto !== 'string' || m.texto === '') return nada(e);
+  const voce = m.voce === true;
+  if (voce && typeof m.id === 'string') {
+    const esperada = e.chat.mensagens.find((x) => x.id === m.id);
+    if (esperada) {
+      const confirmada = { ...esperada, situacao: 'enviada', id: null, motivo: null };
+      return comChat(e, { mensagens: noLugar(e.chat.mensagens, esperada, confirmada) });
+    }
+  }
+  const n = e.chat.seq + 1;
+  const nome = typeof m.nome === 'string' ? m.nome : '';
+  const nova = { n, voce, nome, texto: m.texto, hora: agora, situacao: 'enviada', id: null, motivo: null };
+  const mensagens = maisUma(e.chat.mensagens, nova);
+  if (voce || e.chat.aberto) return comChat(e, { seq: n, mensagens });
+  const chat = { ...e.chat, seq: n, mensagens, naoLidas: e.chat.naoLidas + 1 };
+  if (e.tela !== 'reuniao') return com(e, { chat });
+  const aviso = e.avisos + 1;
+  return com(
+    e,
+    { chat, avisos: aviso, avisoCurto: { n: aviso, tipo: 'mensagem', nome, texto: m.texto } },
+    esperar(AVISO_CURTO_MS, `avisoCurto:${aviso}`),
+  );
+}
+
+// A recusa de uma mensagem que a página espera: ela fica "Não enviada", com o motivo, e não espera mais nada.
+function mensagemRecusada(e, m) {
+  if (typeof m.id !== 'string') return nada(e);
+  const esperada = e.chat.mensagens.find((x) => x.id === m.id);
+  if (!esperada) return nada(e);
+  const motivo = typeof m.motivo === 'string' ? m.motivo : null;
+  const recusada = { ...esperada, situacao: 'naoEnviada', id: null, motivo };
+  return comChat(e, { mensagens: noLugar(e.chat.mensagens, esperada, recusada) });
+}
+
+// O prazo de uma mensagem venceu sem a resposta: ela fica "Não enviada". O id fica: a resposta que só atrasou ainda a
+// confirma.
+function prazoDaMensagem(e, id) {
+  const indo = e.chat.mensagens.find((x) => x.id === id && x.situacao === 'enviando');
+  if (!indo) return nada(e);
+  return comChat(e, { mensagens: noLugar(e.chat.mensagens, indo, { ...indo, situacao: 'naoEnviada', motivo: 'prazo' }) });
+}
+
+// O chat abre: as não lidas zeram, o aviso curto da mensagem sai, e o foco vai ao campo de escrever.
+function abrirOChat(e) {
+  const avisoCurto = e.avisoCurto?.tipo === 'mensagem' ? null : e.avisoCurto;
+  return com(e, { chat: { ...e.chat, aberto: true, naoLidas: 0 }, avisoCurto }, FOCAR_O_CAMPO);
 }
 
 // O palco que vale toma o lugar do anterior. O que não vale fica de fora e leva o anterior junto: ele prova que o
@@ -519,6 +678,15 @@ function clique(e, botao) {
       return trocar(e, 'cam');
     case 'pararDeCompartilhar':
       return pararDeCompartilhar(e);
+    case 'chat':
+      // O botão Chat dos controles abre e fecha. Ao fechar por ele, o foco já está nele.
+      if (e.tela !== 'reuniao') return nada(e);
+      return e.chat.aberto ? comChat(e, { aberto: false }) : abrirOChat(e);
+    case 'abrirChat':
+      return e.tela === 'reuniao' && !e.chat.aberto ? abrirOChat(e) : nada(e);
+    case 'fecharChat':
+      // O fechar do painel (o botão dele e o Esc) devolve o foco ao botão Chat.
+      return e.tela === 'reuniao' && e.chat.aberto ? comChat(e, { aberto: false }, FOCAR_O_CHAT) : nada(e);
     default:
       return nada(e);
   }
@@ -628,6 +796,11 @@ function tempo(e, chave) {
       return e.tela === 'reuniao' && e.principal === 'nenhuma' && e.reconectando === 0 ? terminar(e, 'saiu') : nada(e);
     case 'reabrir':
       return esperaOAbrir(e) && e.reabrindo > 0 ? comAbrir(e, {}) : nada(e);
+    case 'mensagem':
+      return prazoDaMensagem(e, vez); // a segunda parte da chave é o id da mensagem
+    case 'avisoCurto':
+      // O tempo de um aviso que já saiu, ou que deu lugar a outro, fica de fora.
+      return e.avisoCurto !== null && Number(vez) === e.avisoCurto.n ? com(e, { avisoCurto: null }) : nada(e);
     default:
       return nada(e);
   }
