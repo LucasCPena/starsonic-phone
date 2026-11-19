@@ -603,6 +603,8 @@ O `Online` e o `Sem registro` dependem do app do Windows: é a versão do app se
 - O celular e os aparelhos de mesa não aparecem: a página só vê os PCs com o app do Windows ligado ao chat.
 - A página mostra o que o app diz. O chat não fala com a central: se o app travar, ele pode continuar dizendo que o ramal está registrado.
 - Um ramal que registra e cai de novo o tempo todo não chega a ficar 1 minuto sem registrar, e por isso não aparece em vermelho: ele fica trocando entre `Online` e `No chat`.
+- O tempo do `Online` e do `Sem registro` é contado pelo app, e recomeça quando o app é aberto de novo. Um ramal registrado há dias aparece `há menos de 1 min` logo depois de a pessoa fechar e abrir o app.
+- Enquanto o PC dorme (a tampa fechada, a suspensão), a pessoa aparece `Offline`. Quando ele acorda, o tempo do `Online` pode incluir as horas em que ele dormiu: se o Windows não avisou o app de que a rede caiu, o app continuou contando.
 
 **A página se atualiza sozinha.**
 

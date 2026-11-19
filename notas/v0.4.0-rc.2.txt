@@ -1,0 +1,2 @@
+O app passa a dizer ao servidor do chat se o ramal deste computador está registrado, para o suporte da Starsonic ver mais rápido quando um ramal fica fora do ar. Nada muda nas telas.
+Esta é uma versão de teste.

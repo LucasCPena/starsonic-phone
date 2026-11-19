@@ -268,4 +268,14 @@ São pontos pequenos. Nenhum muda o que a página mostra no dia a dia.
 9. **Higiene dos testes:** os computadores de mentira não fecham os canais deles; o teste da primeira página conta com a empresa dele estar entre as 50 da lista; dois nomes inventados não estão na lista do plano ("Marcos Teles" e "Expedição").
 10. **A senha de teste no trace:** quando um teste da administração falha no GitHub, a senha sorteada daquela rodada fica no trace enviado. É a senha de um servidor que acaba junto com a rodada.
 
+**Da revisão da segunda entrega (o app do Windows), em 19/11:**
+
+11. **Uma piscada do ramal recomeça o tempo no app sem o chat saber.** Um ramal sem registro há horas que registra por menos de 2 s e cai de novo não manda nada (é a regra da espera), e a página continua com o tempo antigo. Se depois o canal do chat cair e voltar, o app manda o tempo dele, que recomeçou na piscada: a página passa de `Sem registro`, `há 3 h`, para `No chat`, `registrando o ramal…`, e volta a `Sem registro` 1 minuto depois.
+12. **A abertura do canal esquece a espera do limite.** Com o canal abrindo sem parar, cada abertura manda um pedido, e o chat responde `429` aos que passam de 30 por minuto. Não quebra nada: o pedido recusado não conta no limite.
+13. **A mesma chave do chat em dois lugares** (um perfil do Windows copiado, ou o mesmo usuário aberto duas vezes num servidor de terminal): os dois derrubam o canal um do outro, como já acontecia antes desta entrega, e a página fica trocando entre os dois estados.
+14. **Por alguns segundos, a página pode dizer `o app é antigo e não diz o ramal` de um app novo:** enquanto o primeiro pedido dele espera (o limite do chat, uma falha, ou um pedido anterior ainda no ar).
+15. **O tempo depois de o PC dormir, e depois de o app ser aberto de novo:** o app conta por um relógio que não anda para trás, e não desconta as horas em que o PC dormiu. O guia diz isso (passo 13 do `docs/chat-servidor.md`).
+16. **O teste do "nada aparece para a pessoa" olha a tela só no fim de cada teste:** um aviso que aparecesse e sumisse no meio passaria. A peça não tem caminho até a tela, e o console é vigiado o teste inteiro.
+17. **Higiene dos testes do app:** o canal aberto por fora não tem prazo, e só fecha quando o teste passa; duas guardas do `ramal.ts` continuam sem teste porque não se achou efeito nelas (a espera de 2 s cancelada na abertura do canal, e a conferência do ramal no valor).
+
 E uma pergunta para o responsável, que é quem dá os nomes: o estado "No chat" aparece ao lado de textos mais antigos da página que também dizem "no chat" (`PESSOAS NO CHAT`, "8 pessoas no chat", `NO CHAT DESDE`). Se confundir, o nome do estado muda (seção 13, item 1).
