@@ -7,7 +7,7 @@ import (
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/tempo"
 )
 
-// O Mandar nunca espera: com a fila de 32 cheia, ele derruba a conexão e volta (R: M-7).
+// O Mandar nunca espera: com a fila cheia, ele derruba a conexão e volta (R: M-7).
 func TestCanalPagina_MandarNaoEspera(t *testing.T) {
 	c := novoCanalPagina(nil) // sem conexão e sem a goroutine que escreve: a fila só enche
 	feito := make(chan struct{})
@@ -19,7 +19,7 @@ func TestCanalPagina_MandarNaoEspera(t *testing.T) {
 		if c.ctx.Err() != nil {
 			t.Error("a conexão caiu com a fila no limite, antes de passar dele")
 		}
-		c.Mandar(map[string]string{"tipo": "aguardando"}) // a 33ª
+		c.Mandar(map[string]string{"tipo": "aguardando"}) // a que passa da fila
 		c.Mandar(map[string]string{"tipo": "aguardando"}) // e depois da queda: ignorada
 		c.Fechar()                                        // idem, e nunca espera
 	}()
@@ -30,6 +30,23 @@ func TestCanalPagina_MandarNaoEspera(t *testing.T) {
 	}
 	if c.ctx.Err() == nil {
 		t.Fatal("a fila cheia não derrubou a conexão")
+	}
+}
+
+// A fila de um canal cabe a pior rajada do chat da reunião que os limites deixam: as 10 pessoas de uma reunião (o
+// maxPessoas do gerente) com as 20 mensagens do minuto de cada uma, todas de uma vez, com a folga de 32 para o palco e
+// as outras respostas. Assim, só a página que parou de ler enche a fila e cai; a que lê nunca cai por causa do chat.
+func TestCanalPagina_AFilaCabeAPiorRajadaDoChat(t *testing.T) {
+	const pessoasPorReuniao = 10
+	if pior := pessoasPorReuniao * maxMensagensChat; filaDoCanal < pior+32 {
+		t.Fatalf("a fila do canal tem %d; a pior rajada do chat tem %d, e a folga é de 32", filaDoCanal, pior)
+	}
+	c := novoCanalPagina(nil) // sem a goroutine que escreve: a rajada inteira fica na fila
+	for range pessoasPorReuniao * maxMensagensChat {
+		c.Mandar(map[string]string{"tipo": "mensagem"})
+	}
+	if c.ctx.Err() != nil {
+		t.Fatal("a pior rajada do chat derrubou o canal de quem só não tinha lido ainda")
 	}
 }
 

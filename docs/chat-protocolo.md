@@ -62,6 +62,9 @@ Um erro vem com o status HTTP e um corpo `{"erro": "<código>"}`, às vezes com 
   - não pode ser só de espaços;
   - as quebras de linha valem. O servidor troca `\r\n` e `\r` por `\n`;
   - os outros caracteres de controle não valem.
+- **O texto de uma mensagem da reunião** (o chat da reunião, seção 10): segue a regra do texto de uma mensagem, com duas diferenças:
+  - o servidor tira os espaços e as quebras de linha das pontas antes de conferir, e é o texto sem eles que os outros recebem;
+  - ele tem de 1 a 1.000 caracteres, contados do mesmo jeito.
 - **O `idLocal`:** um texto de 1 a 64 caracteres (`[A-Za-z0-9-]`), gerado pelo app para cada mensagem.
   - Ele é único por pessoa, em todas as conversas dela, e não por conversa: o mesmo `idLocal` mandado de novo, mesmo para outra conversa, devolve a mensagem que já foi gravada com ele.
   - O app o gera ao acaso, por exemplo um UUID. Nunca use um contador por computador: dois computadores da mesma pessoa repetiriam os mesmos números, e um engoliria as mensagens do outro.
@@ -406,7 +409,8 @@ A página é servida pelo chat em `https://<endereço do chat>/r/<código>`. Que
 - **Um bilhete** inválido, vencido ou já usado responde `401 chave`.
 - **O servidor manda um ping a cada 25 segundos.** Sem resposta em 60 segundos, ele fecha.
 - Sem um `pedir` em 2 minutos depois de abrir, o servidor fecha o canal (1000).
-- **Até 20 mensagens por minuto** da página, sem contar o `camera`. Passando disso, o servidor responde `{"tipo": "erro", "erro": "limite"}` e ignora a mensagem. O `camera` tem a janela dele, de 30 por minuto por canal (seção 12).
+- **Até 20 mensagens por minuto** da página, sem contar o `camera` nem o `mensagem`. Passando disso, o servidor responde `{"tipo": "erro", "erro": "limite"}` e ignora a mensagem. O `camera` tem a janela dele, de 30 por minuto por canal, e o `mensagem` (o chat da reunião), a dele, de 20 por minuto por canal (seção 12).
+- **O maior quadro** que a página manda tem 4.096 bytes. Passando disso, o servidor fecha o canal com o código `1009`, sem resposta.
 - **Fechar o canal** enquanto espera retira o pedido. Depois de aceito, fechar o canal não tira ninguém da reunião.
 - **A página abre duas vezes.** Ela chama o abrir ao carregar, para saber qual é a reunião e mostrar a entrada, e de novo ao pedir. O bilhete do segundo abrir é o que abre o canal; o do primeiro não é guardado, e valeria só 30 segundos, muito pouco para a pessoa escrever o nome. Depois de uma queda, a página entra de novo pelo `senha`, que renova só a ligação de vídeo. Se os dois canais caem (este e o da ligação), ela abre outro canal (o abrir dá um bilhete novo) e vai pelo `voltar` primeiro; o `senha` vem depois dele, como a chave de volta explica abaixo.
 
@@ -418,6 +422,7 @@ As mensagens são JSON em texto, sempre com o `tipo`. Da página para o servidor
 {"tipo": "tela"}                           // a senha da tela compartilhada, com a pessoa na reunião
 {"tipo": "voltar", "participante": "…", "volta": "…"}   // só como a primeira mensagem do canal, no lugar do pedir
 {"tipo": "camera", "ligada": false}        // a câmera da pessoa foi desligada (true: ligada), depois do aceito
+{"tipo": "mensagem", "id": "m12", "texto": "O link é https://exemplo.com.br"}   // o chat da reunião, de quem está nela ou entrando
 ```
 Do servidor para a página:
 ```json
@@ -436,6 +441,8 @@ Do servidor para a página:
 {"tipo": "palco", "largura": 1920, "altura": 1080,
  "quadros": [{"quem": "<16 hex>", "nome": "Ana Souza", "voce": false, "tela": false, "semCamera": false,
               "x": 0, "y": 0, "l": 960, "a": 540}]}   // o palco do mosaico, só a quem está na reunião ou entrando
+{"tipo": "mensagem", "id": "m12", "de": "<16 hex>", "nome": "Carlos Lima", "voce": true, "texto": "…"}   // o chat da reunião: a quem escreveu (aos outros, sem o id e com o voce falso)
+{"tipo": "mensagemRecusada", "id": "m12", "motivo": "limite" | "grande" | "foraDaReuniao" | "invalida"}   // só a quem escreveu
 {"tipo": "tirado"}           // um colega tirou a pessoa da reunião
 {"tipo": "encerrada"}        // um colega encerrou a reunião para todos, ela foi cancelada, a empresa perdeu as reuniões, ou a reunião acabou no servidor de vídeo
 {"tipo": "erro", "erro": "invalido" | "limite" | "foraDaReuniao"}
@@ -465,6 +472,18 @@ Do servidor para a página:
   - **o palco chega antes da imagem.** A imagem de um layout novo leva de 0,3 a 0,8 s para chegar depois do palco dele (mais, numa rede lenta). Por isso o cliente **só usa um palco enquanto o tamanho da imagem decodificada do vídeo é `largura`×`altura`**: com outro tamanho, ele continua com o palco anterior enquanto a imagem tem o tamanho dele. E um quadro novo, ou que mudou de célula, ainda não vale por um instante. A página espera 0,6 s depois de o tamanho da imagem ficar o do palco, 1 s para o quadro que entrou ou mudou de célula sem o tamanho mudar, e mostra o mosaico inteiro quando passam 3 s sem o tamanho da imagem ser o do palco;
   - a reunião que acaba esquece o palco.
 - **O aviso da câmera (`camera`).** A página o manda logo depois do `aceito`, logo depois do `voltou` e a cada vez que a pessoa liga ou desliga a câmera. O `ligada` tem de ser um booleano. Quando vale, **não tem resposta**: o chat guarda o valor sempre, e o que a página vê é o `palco` com o `semCamera` novo, se a pessoa tem um quadro da câmera no palco da sala (sem ele, ou sem palco, nada é mandado, e o primeiro palco com o quadro dela já sai com o valor). Antes do `aceito` (ou depois do fim do pedido), ou sem um `ligada` booleano, responde `{"tipo": "erro", "erro": "invalido"}`, e o canal continua aberto. Como as outras mensagens, o `camera` conta como mensagem tratada do canal (o `voltar` só vale como a primeira, e a primeira mensagem depois do `voltou` confirma a chave nova).
+- **O chat da reunião (`mensagem`).** Quem está na reunião manda um texto para todos os que estão nela. O servidor só repassa: ele não guarda mensagem nenhuma, nem na memória depois de repassar, nem no banco, nem no log (que não leva o texto, o nome nem o `id`).
+  - **A página manda** o `id` e o `texto`. O `id` é dela, de 1 a 16 letras ou números (`[A-Za-z0-9]`), e serve só para ela saber de qual mensagem é a resposta: ele não precisa ser único fora daquele canal. O `texto` segue a regra do texto de uma mensagem da reunião (seção 3).
+  - **O servidor manda a mensagem a cada página da reunião,** também à de quem escreveu, que a recebe de volta: não há outra resposta. Só quem escreveu recebe o `id`, junto com o `voce` verdadeiro; os outros a recebem sem o `id`, com o `voce` falso. O `de` é o participante de quem escreveu, e o `nome`, o nome dele, como no palco (`""` para quem o chat não conhece). O `texto` é o que o servidor conferiu, sem os espaços das pontas. A hora não vai: cada página usa a hora em que a mensagem chegou.
+  - **Quem recebe é quem recebe o palco:** a página aceita, com o canal aberto, daquela reunião, de quem está nela (a câmera ou a tela) ou entrando (com uma senha da câmera ainda não usada). **Quem pode mandar é quem recebe,** sem outra regra. Quem ainda espera, quem foi recusado ou tirado, quem saiu (com a página aberta, para o Entrar de novo), quem deixou a senha vencer e quem é de outra reunião não recebe nada e não manda. Os apps (seção 11) não recebem evento nenhum.
+  - **Quem entra depois não vê as mensagens de antes,** e quem perdeu o canal não recebe as que foram mandadas enquanto ele estava fora.
+  - **A recusa** vai só a quem escreveu, com o `id` da mensagem e o `motivo`, e o canal continua aberto:
+    - `foraDaReuniao`: quem mandou não recebe o palco (antes do aceito, ou depois de sair). Este motivo vem antes dos do texto;
+    - `grande`: o texto tem mais de 1.000 caracteres;
+    - `invalida`: o texto está vazio, é só de espaços, ou tem um caractere de controle que não é a quebra de linha;
+    - `limite`: já são 20 mensagens do chat neste minuto, neste canal. A mensagem não é repassada.
+  - **Sem um `id` que valha** (vazio, com mais de 16, com outro sinal, ou que não é texto), ou sem um `texto` que seja texto, não há de qual mensagem dizer: a resposta é `{"tipo": "erro", "erro": "invalido"}` (ou `limite`, se já passou das 20). Essas mensagens também contam nas 20.
+  - **O `id` e o reenvio.** O servidor não confere se um `id` já foi usado: a página que manda o mesmo texto de novo manda outra mensagem, e os outros recebem as duas.
 - **Na reunião de teste,** o `pedir` responde `aceito` na hora, sem sala de espera. A primeira pessoa a começa.
 - **Quando o último colega sai da reunião,** mesmo com gente de fora ainda nela, **ou quando a reunião marcada para** (todos saíram), os pedidos que esperam voltam a `naoComecou`. Quando um colega volta a ela, eles voltam a `aguardando`, com 10 minutos de novo.
 
@@ -487,7 +506,10 @@ Do servidor para a página:
 | Pessoas por reunião | 10, sem contar a tela compartilhada |
 | Reuniões ao mesmo tempo | 2 por padrão, de 1 a 20 na administração, em todo o servidor |
 | Tentativas de abrir | 20 por minuto por endereço, contando só as que não levam a uma reunião em que a pessoa possa entrar: o `entrar` do app que dá `404`, `outraEmpresa` ou `semReunioes`, junto com o abrir da página que falha e o `voltar` da página que falha (seção 10). Passou disso, `429 tentativas`, até com um código certo. O `entrar` e o abrir que dão certo, e o `cheia`, o `servidorCheio` e o `servidorVideo` de um código bom, não contam nessas 20. O abrir da página que dá certo tem a janela dele: 60 por minuto por endereço, e o 61º recebe o mesmo `429 tentativas`. As duas janelas são separadas |
-| Mensagens da página | 20 por minuto por canal, sem o `camera`. A 21ª recebe `erro` `limite` e é ignorada |
+| Mensagens da página | 20 por minuto por canal, sem o `camera` e sem o `mensagem`. A 21ª recebe `erro` `limite` e é ignorada |
+| As mensagens do chat da reunião (`mensagem`) | 20 por minuto por canal, à parte das outras: não gastam as 20 nem os avisos da câmera, e eles não as gastam. A 21ª recebe `mensagemRecusada` com o motivo `limite` e não é repassada |
+| O texto de uma mensagem da reunião | de 1 a 1.000 caracteres, sem os espaços das pontas |
+| O maior quadro que a página manda | 4.096 bytes. Passando disso, o canal fecha com o código `1009` |
 | Os avisos da câmera (`camera`) | 30 por minuto por canal, à parte das 20 mensagens: não gastam as 20, e as 20 não os gastam. O 31º é ignorado, sem resposta. O `camera` que não vale (sem o `ligada`, ou com ele sem ser verdadeiro ou falso) também conta nos 30 e recebe `erro` `invalido` |
 | A senha de uso único | 30 segundos, uma vez só, no relógio do servidor de vídeo |
 | A espera de quem é de fora | 10 minutos depois de o pedido chegar aos colegas |

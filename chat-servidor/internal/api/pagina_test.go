@@ -1606,3 +1606,251 @@ func TestCanal_Camera_DepoisDoVoltou(t *testing.T) {
 	aPaginaErro(t, velha, "invalido")
 	esperarFechamento(t, velha)
 }
+
+// ---------- O chat da reunião ----------
+
+// outraPagina deixa mais uma pessoa aceita e na reunião que já tem a Maria (e o palco dela): o palco chega logo
+// depois do aceito.
+func (c *cenaR) outraPagina(t *testing.T, codigo string, carlos *websocket.Conn, nome string) (*websocket.Conn, string) {
+	t.Helper()
+	pagina := c.canal(t, codigo)
+	m := c.aceita(t, codigo, carlos, pagina, nome)
+	aPaginaTipo(t, pagina, "palco")
+	part, _ := m["participante"].(string)
+	c.entrou(t, codigo, part)
+	return pagina, part
+}
+
+// doChat manda uma mensagem do chat da reunião.
+func doChat(t *testing.T, conn *websocket.Conn, id, texto string) {
+	t.Helper()
+	daPagina(t, conn, map[string]any{"tipo": "mensagem", "id": id, "texto": texto})
+}
+
+// minhaMensagem lê a próxima mensagem e confere que é a de quem escreveu, de volta: com o id e o voce.
+func minhaMensagem(t *testing.T, conn *websocket.Conn, id, de, nome, texto string) {
+	t.Helper()
+	m := aPaginaTipo(t, conn, "mensagem")
+	if len(m) != 6 || m["id"] != id || m["de"] != de || m["nome"] != nome || m["voce"] != true || m["texto"] != texto {
+		t.Fatalf("quem escreveu recebeu %v; queria o id %q, de %q, o nome %q, o voce e o texto %q", m, id, de, nome, texto)
+	}
+}
+
+// mensagemDeOutro lê a próxima mensagem e confere que é a de outra pessoa: sem o id, e sem o voce.
+func mensagemDeOutro(t *testing.T, conn *websocket.Conn, de, nome, texto string) {
+	t.Helper()
+	m := aPaginaTipo(t, conn, "mensagem")
+	if _, temID := m["id"]; len(m) != 5 || temID || m["de"] != de || m["nome"] != nome || m["voce"] != false ||
+		m["texto"] != texto {
+		t.Fatalf("a outra página recebeu %v; queria de %q, o nome %q e o texto %q, sem o id", m, de, nome, texto)
+	}
+}
+
+// recusada lê a próxima mensagem e confere que é a recusa da mensagem do id, com o motivo.
+func recusada(t *testing.T, conn *websocket.Conn, id, motivo string) {
+	t.Helper()
+	m := aPagina(t, conn)
+	if len(m) != 3 || m["tipo"] != "mensagemRecusada" || m["id"] != id || m["motivo"] != motivo {
+		t.Fatalf("a página recebeu %v; queria {tipo: mensagemRecusada, id: %s, motivo: %s}", m, id, motivo)
+	}
+}
+
+func TestCanal_Mensagem(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	carlos := c.colegaNaReuniao(t, r.Codigo)
+	maria, partM, _ := c.aceitaMaria(t, r.Codigo, carlos)
+	bia, partB := c.outraPagina(t, r.Codigo, carlos, "Bia Ramos")
+
+	doChat(t, maria, "m1", "  Bom dia  ")
+	minhaMensagem(t, maria, "m1", partM, "Maria Lima", "Bom dia")
+	mensagemDeOutro(t, bia, partM, "Maria Lima", "Bom dia")
+
+	doChat(t, bia, "m1", "Oi, Maria") // o id é de cada página: o mesmo valor em duas não se mistura
+	minhaMensagem(t, bia, "m1", partB, "Bia Ramos", "Oi, Maria")
+	mensagemDeOutro(t, maria, partB, "Bia Ramos", "Oi, Maria")
+
+	// O app do colega não ganha evento nenhum com a mensagem.
+	semEventoDe(t, carlos, []string{"mensagem", "mensagemRecusada", "reuniaoMensagem"}, 300*time.Millisecond)
+}
+
+func TestCanal_Mensagem_Recusas(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	carlos := c.colegaNaReuniao(t, r.Codigo)
+
+	maria, partM, _ := c.aceitaMaria(t, r.Codigo, carlos)
+	t.Run("o texto que não vale", func(t *testing.T) {
+		doChat(t, maria, "m1", strings.Repeat("a", 1001))
+		recusada(t, maria, "m1", "grande")
+		doChat(t, maria, "m2", "   ")
+		recusada(t, maria, "m2", "invalida")
+		doChat(t, maria, "m3", "com o nulo\x00no meio")
+		recusada(t, maria, "m3", "invalida")
+		// O canal continua, e a próxima passa.
+		doChat(t, maria, "m4", "agora sim")
+		minhaMensagem(t, maria, "m4", partM, "Maria Lima", "agora sim")
+	})
+
+	t.Run("sem um id que valha, o erro de sempre", func(t *testing.T) {
+		for _, m := range []map[string]any{
+			{"tipo": "mensagem", "id": "", "texto": "oi"},
+			{"tipo": "mensagem", "texto": "oi"},
+			{"tipo": "mensagem", "id": "0123456789abcdefg", "texto": "oi"}, // 17
+			{"tipo": "mensagem", "id": "a-b", "texto": "oi"},
+			{"tipo": "mensagem", "id": "a b", "texto": "oi"},
+			{"tipo": "mensagem", "id": "ação", "texto": "oi"},
+			{"tipo": "mensagem", "id": 7, "texto": "oi"},
+			{"tipo": "mensagem", "id": "m5", "texto": 7},
+			{"tipo": "mensagem", "id": "m5", "texto": nil},
+			{"tipo": "mensagem", "id": "m5"},
+		} {
+			daPagina(t, maria, m)
+			aPaginaErro(t, maria, "invalido")
+		}
+		doChat(t, maria, "0123456789abcdef", "o id de 16 vale")
+		minhaMensagem(t, maria, "0123456789abcdef", partM, "Maria Lima", "o id de 16 vale")
+	})
+
+	t.Run("antes do pedir e esperando", func(t *testing.T) {
+		pagina := c.canal(t, r.Codigo)
+		doChat(t, pagina, "m1", "oi")
+		recusada(t, pagina, "m1", "foraDaReuniao")
+		daPagina(t, pagina, map[string]any{"tipo": "pedir", "nome": "Davi Rocha"})
+		aPaginaTipo(t, pagina, "aguardando")
+		doChat(t, pagina, "m2", "oi")
+		recusada(t, pagina, "m2", "foraDaReuniao")
+		// A Maria, na reunião, não recebeu nada de quem espera: a próxima que chega a ela é a dela.
+		doChat(t, maria, "m9", "ninguém de fora escreveu")
+		minhaMensagem(t, maria, "m9", partM, "Maria Lima", "ninguém de fora escreveu")
+	})
+}
+
+func TestCanal_Mensagem_Limite(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	carlos := c.colegaNaReuniao(t, r.Codigo)
+	maria, partM, _ := c.aceitaMaria(t, r.Codigo, carlos)
+	bia, _ := c.outraPagina(t, r.Codigo, carlos, "Bia Ramos")
+
+	for i := 1; i <= 20; i++ {
+		id, texto := fmt.Sprintf("m%d", i), fmt.Sprintf("mensagem %d", i)
+		doChat(t, maria, id, texto)
+		minhaMensagem(t, maria, id, partM, "Maria Lima", texto)
+		mensagemDeOutro(t, bia, partM, "Maria Lima", texto)
+	}
+	doChat(t, maria, "m21", "a que passa do limite")
+	recusada(t, maria, "m21", "limite")
+	// Passou do limite sem um id que valha: o erro de sempre, com o limite.
+	daPagina(t, maria, map[string]any{"tipo": "mensagem", "id": "", "texto": "oi"})
+	aPaginaErro(t, maria, "limite")
+
+	// Passado o minuto, vale de novo. A próxima que a Bia recebe é esta: a recusada não foi repassada.
+	c.a.Relogio.Avancar(61 * time.Second)
+	doChat(t, maria, "m22", "depois do minuto")
+	minhaMensagem(t, maria, "m22", partM, "Maria Lima", "depois do minuto")
+	mensagemDeOutro(t, bia, partM, "Maria Lima", "depois do minuto")
+}
+
+func TestCanal_Mensagem_JanelaAParte(t *testing.T) {
+	// As 20 do chat da reunião não gastam as 20 das outras mensagens, nem os avisos da câmera.
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	carlos := c.colegaNaReuniao(t, r.Codigo)
+	maria, partM, _ := c.aceitaMaria(t, r.Codigo, carlos)
+	for i := 1; i <= 20; i++ {
+		id := fmt.Sprintf("m%d", i)
+		doChat(t, maria, id, "oi")
+		minhaMensagem(t, maria, id, partM, "Maria Lima", "oi")
+	}
+	doChat(t, maria, "m21", "oi")
+	recusada(t, maria, "m21", "limite")
+	daPagina(t, maria, map[string]any{"tipo": "tela"})
+	aPaginaTipo(t, maria, "tela")
+	daPagina(t, maria, map[string]any{"tipo": "camera", "ligada": false})
+	semCamera(t, maria, partM, true)
+
+	// E as 20 das outras não gastam as do chat: outro canal, com a janela das 20 cheia.
+	c2 := novaCenaR(t)
+	r2 := c2.marcada(t, c2.kAna)
+	carlos2 := c2.colegaNaReuniao(t, r2.Codigo)
+	maria2, part2, _ := c2.aceitaMaria(t, r2.Codigo, carlos2)
+	for range maxVinte - 1 { // o pedir já gastou uma das 20
+		daPagina(t, maria2, map[string]any{"tipo": "tela"})
+		aPaginaTipo(t, maria2, "tela")
+	}
+	daPagina(t, maria2, map[string]any{"tipo": "tela"})
+	aPaginaErro(t, maria2, "limite") // a janela das 20 está cheia
+	doChat(t, maria2, "m1", "a do chat ainda passa")
+	minhaMensagem(t, maria2, "m1", part2, "Maria Lima", "a do chat ainda passa")
+}
+
+func TestCanal_Mensagem_OMaiorTexto(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	carlos := c.colegaNaReuniao(t, r.Codigo)
+	maria, partM, _ := c.aceitaMaria(t, r.Codigo, carlos)
+
+	// O maior quadro que uma mensagem que vale pode ter: o id de 16 e 1.000 pontos de código de 4 bytes.
+	const id = "0123456789abcdef"
+	mil := strings.Repeat("😀", 1000)
+	quadro, _ := json.Marshal(map[string]any{"tipo": "mensagem", "id": id, "texto": mil})
+	if len(quadro) > 4096 {
+		t.Fatalf("o maior quadro tem %d bytes; o canal lê até 4.096", len(quadro))
+	}
+	doChat(t, maria, id, mil)
+	minhaMensagem(t, maria, id, partM, "Maria Lima", mil)
+
+	// Um quadro maior que o do canal não é uma recusa: o canal fecha, com o 1009.
+	doChat(t, maria, "m2", strings.Repeat("😀", 1100))
+	if cod := apitest.Fechamento(t, maria); cod != websocket.StatusMessageTooBig {
+		t.Fatalf("o canal fechou com %d; queria 1009", cod)
+	}
+}
+
+func TestCanal_Mensagem_SemNadaNoLog(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	var log registroSeguro
+	slog.SetDefault(slog.New(slog.NewTextHandler(&log, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(slog.New(slog.DiscardHandler)) })
+
+	const nome = "Zuleide Quasimodo"
+	const texto = "Um recado que nunca pode ir ao registro"
+	carlos := c.colegaNaReuniao(t, r.Codigo)
+	pagina := c.canal(t, r.Codigo)
+	m := c.aceita(t, r.Codigo, carlos, pagina, nome)
+	part, _ := m["participante"].(string)
+	c.entrou(t, r.Codigo, part)
+
+	doChat(t, pagina, "idQueNaoVaza01", texto)
+	minhaMensagem(t, pagina, "idQueNaoVaza01", part, nome, texto)
+	doChat(t, pagina, "idQueNaoVaza02", texto+strings.Repeat("a", 1000))
+	recusada(t, pagina, "idQueNaoVaza02", "grande")
+	doChat(t, pagina, "idQueNaoVaza03", " ")
+	recusada(t, pagina, "idQueNaoVaza03", "invalida")
+	daPagina(t, pagina, map[string]any{"tipo": "mensagem", "id": "id-que-nao-vale", "texto": texto})
+	aPaginaErro(t, pagina, "invalido")
+	c.a.Gerente.EventoDoVideo(video.Evento{Tipo: "saiu", Sala: c.sala(t, r.Codigo), Participante: part})
+	doChat(t, pagina, "idQueNaoVaza04", texto)
+	recusada(t, pagina, "idQueNaoVaza04", "foraDaReuniao")
+	pagina.Close(websocket.StatusNormalClosure, "")
+	// O log do pedido do canal sai quando o manipulador volta, e é a linha que o teste quer ver.
+	prazo := time.Now().Add(5 * time.Second)
+	for !strings.Contains(log.String(), "status=101") {
+		if time.Now().After(prazo) {
+			t.Fatalf("o log do fechamento do canal não saiu:\n%s", log.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	registro := log.String()
+	for o, s := range map[string]string{
+		"o texto": texto, "um pedaço do texto": "nunca pode ir", "o nome": nome, "o id": "idQueNaoVaza",
+		"o id que não vale": "id-que-nao-vale", "o participante": part,
+	} {
+		if strings.Contains(registro, s) {
+			t.Fatalf("o log tem %s (%q):\n%s", o, s, registro)
+		}
+	}
+}

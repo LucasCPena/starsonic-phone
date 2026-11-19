@@ -2,6 +2,7 @@
 package regras
 
 import (
+	"errors"
 	"mime"
 	"regexp"
 	"strings"
@@ -108,6 +109,38 @@ func Texto(s string) (string, error) {
 	}
 	n := utf8.RuneCountInString(s)
 	if n < 1 || n > 4000 || strings.TrimSpace(s) == "" {
+		return "", &Erro{Campo: "texto"}
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) && r != '\n' {
+			return "", &Erro{Campo: "texto"}
+		}
+	}
+	return s, nil
+}
+
+// ErrTextoGrande: o texto de uma mensagem da reunião passa do tamanho.
+var ErrTextoGrande = errors.New("regras: o texto passa do tamanho")
+
+// maxTextoDaReuniao é o tamanho de uma mensagem do chat da reunião, em pontos de código.
+const maxTextoDaReuniao = 1000
+
+// TextoDaReuniao confere o texto de uma mensagem do chat da reunião (seção 10 do protocolo): o do Texto, sem os
+// espaços das pontas, com 1 a 1.000 pontos de código. O \r\n e o \r sozinho viram \n antes de conferir, e só a quebra
+// de linha vale entre os caracteres de controle. O que passa de 1.000 dá ErrTextoGrande, e o tamanho vem antes dos
+// outros defeitos; o resto que não vale dá o *Erro do campo texto.
+func TextoDaReuniao(s string) (string, error) {
+	if !utf8.ValidString(s) {
+		return "", &Erro{Campo: "texto"}
+	}
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	s = strings.TrimSpace(s)
+	n := utf8.RuneCountInString(s)
+	if n > maxTextoDaReuniao {
+		return "", ErrTextoGrande
+	}
+	if n < 1 {
 		return "", &Erro{Campo: "texto"}
 	}
 	for _, r := range s {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,9 +24,13 @@ import (
 // ponta do WebSocket da sala de espera do gerente.
 
 const (
-	filaDoCanal       = 32          // as mensagens de um canal esperando a escrita; com a fila cheia, o canal cai
+	// filaDoCanal são as mensagens de um canal esperando a escrita; com a fila cheia, o canal cai. Ela cabe a pior
+	// rajada do chat da reunião que os limites deixam (10 páginas com 20 mensagens cada, num minuto), com folga para o
+	// palco: só a página que parou de ler enche a fila.
+	filaDoCanal       = 256
 	maxMensagensCanal = 20          // as mensagens da página por minuto, em cada canal
 	maxCamerasCanal   = 30          // os avisos da câmera por minuto, em cada canal: a janela é à parte das 20
+	maxMensagensChat  = 20          // as mensagens do chat da reunião por minuto, em cada canal: outra janela à parte
 	periodoCanal      = time.Minute // o período da janela das mensagens da página
 	limiteLeitura     = 4096        // o maior quadro que a página manda; passando disso, o canal fecha (1009)
 	prazoEscrita      = 10 * time.Second
@@ -395,19 +400,34 @@ func (s *servidor) servirCanal(c *canalPagina, reuniao banco.Reuniao, endereco s
 
 	limite := limites.Nova(maxMensagensCanal, periodoCanal, s.banco.Relogio())
 	limiteCamera := limites.Nova(maxCamerasCanal, periodoCanal, s.banco.Relogio())
+	limiteChat := limites.Nova(maxMensagensChat, periodoCanal, s.banco.Relogio())
 	for {
 		tipo, dados, err := c.conn.Read(c.ctx)
 		if err != nil {
 			return
 		}
-		if tipo == websocket.MessageText && tipoDaMensagem(dados) == "camera" {
+		qual := ""
+		if tipo == websocket.MessageText {
+			qual = tipoDaMensagem(dados)
+		}
+		switch qual {
+		case "camera":
 			// O aviso da câmera tem a janela dele, e não gasta a das 20. O que passa das 30 é ignorado, sem resposta.
 			if ok, _ := limiteCamera.Usar("", 1); !ok {
 				continue
 			}
-		} else if ok, _ := limite.Usar("", 1); !ok {
-			c.Mandar(erroDoCanal("limite"))
-			continue
+		case "mensagem":
+			// O chat da reunião também tem a dele: não gasta a das 20, e as outras mensagens não gastam a dele. Toda
+			// mensagem com esse tipo conta, valha ou não. A que passa das 20 é recusada, e não chega ao gerente.
+			if ok, _ := limiteChat.Usar("", 1); !ok {
+				c.Mandar(alemDoLimiteDoChat(dados))
+				continue
+			}
+		default:
+			if ok, _ := limite.Usar("", 1); !ok {
+				c.Mandar(erroDoCanal("limite"))
+				continue
+			}
 		}
 		s.mensagemDaPagina(c, st, tipo, dados)
 	}
@@ -439,6 +459,45 @@ type mensagemErro struct {
 }
 
 func erroDoCanal(erro string) mensagemErro { return mensagemErro{Tipo: "erro", Erro: erro} }
+
+// mensagemRecusada é a recusa de uma mensagem do chat da reunião, só para quem a escreveu: o id é o da mensagem.
+type mensagemRecusada struct {
+	Tipo   string `json:"tipo"`
+	ID     string `json:"id"`
+	Motivo string `json:"motivo"` // limite, grande, foraDaReuniao ou invalida
+}
+
+func recusaDoChat(id, motivo string) mensagemRecusada {
+	return mensagemRecusada{Tipo: "mensagemRecusada", ID: id, Motivo: motivo}
+}
+
+// O id de uma mensagem do chat da reunião: de 1 a 16 letras ou números. É a página que o escolhe.
+var reIDDaMensagem = regexp.MustCompile(`^[A-Za-z0-9]{1,16}$`)
+
+// mensagemDoChat são os campos de uma mensagem do chat da reunião. O texto que falta (ou que é null) fica nil.
+type mensagemDoChat struct {
+	ID    string  `json:"id"`
+	Texto *string `json:"texto"`
+}
+
+// lerMensagemDoChat lê o id e o texto. Sem um id que valha, ou sem um texto que seja texto, não há mensagem.
+func lerMensagemDoChat(dados []byte) (id, texto string, ok bool) {
+	var m mensagemDoChat
+	if json.Unmarshal(dados, &m) != nil || !reIDDaMensagem.MatchString(m.ID) || m.Texto == nil {
+		return "", "", false
+	}
+	return m.ID, *m.Texto, true
+}
+
+// alemDoLimiteDoChat é a resposta à mensagem do chat que passou das 20 do minuto: a recusa, com o id dela; sem um
+// id que valha, não há de qual mensagem dizer, e a resposta é o erro de sempre.
+func alemDoLimiteDoChat(dados []byte) any {
+	var m mensagemDoChat
+	if json.Unmarshal(dados, &m) != nil || !reIDDaMensagem.MatchString(m.ID) {
+		return erroDoCanal("limite")
+	}
+	return recusaDoChat(m.ID, "limite")
+}
 
 // mensagemDaPagina trata uma mensagem da página.
 func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo websocket.MessageType, dados []byte) {
@@ -519,6 +578,23 @@ func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo web
 		// estão na reunião, ou entrando.
 		if m.Ligada == nil || errors.Is(s.gerente.Camera(st.pedido, *m.Ligada), reunioes.ErrForaDeOrdem) {
 			c.Mandar(erroDoCanal("invalido"))
+		}
+	case "mensagem":
+		// O chat da reunião: o gerente repassa o texto às páginas da reunião, também a esta, que recebe a própria
+		// mensagem de volta com o id; não há outra resposta. A recusa diz o id e o motivo. Nada disso vai ao log.
+		id, texto, ok := lerMensagemDoChat(dados)
+		if !ok {
+			c.Mandar(erroDoCanal("invalido"))
+			return
+		}
+		switch err := s.gerente.Mensagem(st.pedido, id, texto); {
+		case err == nil:
+		case errors.Is(err, reunioes.ErrForaDaReuniao):
+			c.Mandar(recusaDoChat(id, "foraDaReuniao"))
+		case errors.Is(err, regras.ErrTextoGrande):
+			c.Mandar(recusaDoChat(id, "grande"))
+		default: // o *regras.Erro: o texto vazio, ou com um caractere que não vale
+			c.Mandar(recusaDoChat(id, "invalida"))
 		}
 	case "senha":
 		senha, err := s.gerente.NovaSenha(st.pedido)

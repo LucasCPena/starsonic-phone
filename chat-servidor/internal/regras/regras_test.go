@@ -127,6 +127,47 @@ func TestTexto(t *testing.T) {
 	}
 }
 
+func TestTextoDaReuniao(t *testing.T) {
+	mil := strings.Repeat("a", 1000)
+	rodar(t, TextoDaReuniao, []caso{
+		{"sem os espaços das pontas", "  Bom dia  ", "Bom dia", true},
+		{"crlf e cr viram lf", "a\r\nb\rc", "a\nb\nc", true},
+		{"as quebras das pontas saem", "\n\noi\n\n", "oi", true},
+		{"a quebra do meio fica", "linha1\n\nlinha2", "linha1\n\nlinha2", true},
+		{"1000 letras", mil, mil, true},
+		{"1000 emojis (pontos de código, e não bytes)", strings.Repeat("😀", 1000), strings.Repeat("😀", 1000), true},
+		{"1000 letras entre espaços", " " + mil + " ", mil, true},
+		{"1001 não", mil + "a", "", false},
+		{"1001 emojis não", strings.Repeat("😀", 1001), "", false},
+		{"vazio", "", "", false},
+		{"só espaços", "   ", "", false},
+		{"só quebras e tab", "\n\t ", "", false},
+		{"o nulo", "a\x00b", "", false},
+		{"o escape", "a\x1bb", "", false},
+		{"o tab no meio", "a\tb", "", false},
+		{"um controle do C1", "a\u0085b", "", false},
+		{"utf8 inválido", "\xff", "", false},
+	})
+
+	// O que passa do tamanho tem o erro dele, e o tamanho vem antes dos outros defeitos.
+	for nome, entrada := range map[string]string{
+		"1001 letras":                  mil + "a",
+		"1001 com um controle no meio": strings.Repeat("a", 500) + "\x00" + strings.Repeat("a", 500),
+	} {
+		if _, err := TextoDaReuniao(entrada); !errors.Is(err, ErrTextoGrande) {
+			t.Errorf("%s: o erro é %v; queria ErrTextoGrande", nome, err)
+		}
+	}
+	// O resto que não vale é o erro do campo, e nunca o do tamanho.
+	for _, entrada := range []string{"", "   ", "a\x00b", "\xff"} {
+		_, err := TextoDaReuniao(entrada)
+		var e *Erro
+		if !errors.As(err, &e) || e.Campo != "texto" || errors.Is(err, ErrTextoGrande) {
+			t.Errorf("(%q): o erro é %#v; queria *Erro com o Campo texto", entrada, err)
+		}
+	}
+}
+
 func TestIDLocal(t *testing.T) {
 	ok := []string{"a1-B2", strings.Repeat("a", 64)}
 	ruim := []string{"a b", strings.Repeat("a", 65), "", "a_b", "é"}
