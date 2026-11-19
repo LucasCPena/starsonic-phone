@@ -408,6 +408,39 @@ TEST_CASE("the main page ready stops a running camera test") {
     CHECK(h.port.Count("stop") == 1);
 }
 
+TEST_CASE("the camera test stops when the main window goes out of sight") {
+    Harness h;
+    h.port.cameras = {VideoDevice{"Camera A"}};
+    h.Start();
+    // Sem o teste ligado, a janela que sai da vista e volta nao chama o motor.
+    h.app->SetWindowOutOfSight(true);
+    h.Run();
+    h.app->SetWindowOutOfSight(false);
+    h.Run();
+    CHECK(h.port.Count("stop") == 0);
+    CHECK_FALSE(h.Logged("janela fora da vista"));
+
+    h.Send(R"({"v":1,"cmd":"cameraTest","on":true})");
+    REQUIRE(h.State()["video"]["teste"] == true);
+    // Minimizada ou fechada para a bandeja: o teste para, com uma linha sem nada da pessoa, e o estado diz.
+    h.posts.clear();
+    h.app->SetWindowOutOfSight(true);
+    CHECK(h.port.Count("stop") == 0);   // so poe na fila
+    h.Run();
+    CHECK(h.port.Count("stop") == 1);
+    CHECK(h.State()["video"]["teste"] == false);
+    CHECK(h.Logged("video: o teste da camera parou: janela fora da vista"));
+
+    // De volta a vista, o teste nao liga sozinho; fora dela de novo, sem o teste, nada.
+    h.app->SetWindowOutOfSight(false);
+    h.Run();
+    CHECK(h.port.Count("start") == 1);
+    CHECK(h.State()["video"]["teste"] == false);
+    h.app->SetWindowOutOfSight(true);
+    h.Run();
+    CHECK(h.port.Count("stop") == 1);
+}
+
 TEST_CASE("videoViews goes to the hook with its page") {
     Harness h;
     h.Start();
@@ -509,7 +542,7 @@ TEST_CASE("h264Retry asks again only after a failure") {
 }
 
 TEST_CASE("without the download allowed, H.264 stays off and is never fetched") {
-    // O build de agora: o DesktopConfig::h264Download desligado ate a etapa 2 (a chave, o aviso e a licenca da Cisco).
+    // O padrao do nucleo: o DesktopConfig::h264Download desligado (o app o liga desde a etapa 2, com a chave, o aviso e a licenca da Cisco).
     Harness h;
     h.Start();
     const json video = h.State()["video"];
@@ -1029,17 +1062,79 @@ TEST_CASE("the call state carries the video block") {
     h.StartRegistered();
     DialAndConfirm(h, R"(,"video":true)");
     json top = h.State()["ligacao"]["top"];
-    CHECK(top["video"] == json({{"oferece", false}, {"ativo", false}, {"imagem", false}, {"camera", false}, {"cedo", false}}));
+    CHECK(top["video"] == json({{"oferece", false}, {"ativo", false}, {"imagem", false}, {"camera", false}, {"cedo", false},
+                               {"porteiro", false}}));
 
     h.app->OnCallVideo(10, Video(true, true, false, true, false));
     h.Run();
     top = h.State()["ligacao"]["top"];
-    CHECK(top["video"] == json({{"oferece", true}, {"ativo", true}, {"imagem", false}, {"camera", true}, {"cedo", false}}));
+    CHECK(top["video"] == json({{"oferece", true}, {"ativo", true}, {"imagem", false}, {"camera", true}, {"cedo", false},
+                               {"porteiro", false}}));
 
     // A segunda ligacao tambem leva o bloco.
     h.app->OnIncomingCall(20, "2002", "Fulano");
     h.app->OnCallVideo(20, Video(true, false, false, false, true));
     h.Run();
     const json second = h.State()["ligacao"]["second"];
-    CHECK(second["video"] == json({{"oferece", true}, {"ativo", false}, {"imagem", false}, {"camera", false}, {"cedo", true}}));
+    CHECK(second["video"] == json({{"oferece", true}, {"ativo", false}, {"imagem", false}, {"camera", false}, {"cedo", true},
+                                  {"porteiro", false}}));
+}
+
+TEST_CASE("the doorphone flag goes to the page") {
+    Harness h;
+    h.StartRegistered();
+    // Uma ligacao comum que ofereceu o video, atendida com a camera e com a imagem: o porteiro false.
+    h.app->OnIncomingCall(10, "2003", "Ana");
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"answer","video":true})");
+    h.app->OnCallState(10, CallState::Confirmed, 200);
+    h.app->OnCallVideo(10, Video(true, true, true, true));
+    h.Run();
+    json state = h.State();
+    CHECK(state["ligacao"]["top"]["video"]["porteiro"] == false);
+
+    // Um Porteiro tocando como a segunda, com a imagem (o 183): o porteiro true, e a de cima segue false.
+    h.app->OnIncomingCall(20, "9001", "Portaria");
+    CallVideo doorphone = Video(true, true, true, false, true);
+    doorphone.doorphone = true;
+    h.app->OnCallVideo(20, doorphone);
+    h.Run();
+    state = h.State();
+    CHECK(state["ligacao"]["second"]["video"]["porteiro"] == true);
+    CHECK(state["ligacao"]["top"]["video"]["porteiro"] == false);
+
+    // Atendido, ele vem para cima e segue porteiro: o cedo acaba, o porteiro nao.
+    h.Send(R"({"v":1,"cmd":"answer"})");
+    h.app->OnCallState(20, CallState::Confirmed, 200);
+    doorphone.early = false;
+    h.app->OnCallVideo(20, doorphone);
+    h.Run();
+    state = h.State();
+    CHECK(state["ligacao"]["top"]["id"] == 20);
+    CHECK(state["ligacao"]["top"]["video"]["cedo"] == false);
+    CHECK(state["ligacao"]["top"]["video"]["porteiro"] == true);
+    CHECK(state["ligacao"]["second"]["video"]["porteiro"] == false);
+}
+
+TEST_CASE("noticeHeight from the notice page goes to the hook") {
+    Harness h;
+    h.StartRegistered();
+    h.SendFromNotice(R"({"v":1,"cmd":"noticeHeight","altura":430})");
+    CHECK(h.noticeHeights == std::vector<int>({430}));
+}
+
+TEST_CASE("noticeHeight from the main page is ignored") {
+    Harness h;
+    h.StartRegistered();
+    h.Send(R"({"v":1,"cmd":"noticeHeight","altura":430})");
+    CHECK(h.noticeHeights.empty());
+    CHECK(h.Logged("noticeHeight recusado: pagina principal"));
+}
+
+TEST_CASE("noticeHeight is refused on the iPhone") {
+    Harness h(Platform::IPhone);
+    h.StartRegistered();
+    h.SendFromNotice(R"({"v":1,"cmd":"noticeHeight","altura":430})");
+    CHECK(h.noticeHeights.empty());
+    CHECK(h.Logged("recusado no modo iPhone"));
 }

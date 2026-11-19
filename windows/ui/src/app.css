@@ -1,7 +1,8 @@
 /* Starsonic Phone (Windows) — a interface do app novo.
    Os tokens e os componentes são os do canvas "Starsonic Phone Windows — telas da W1" (project/app.css), com os
    valores exatos do design system Starsonic (tokens.json). O tema segue o Windows (prefers-color-scheme), não um
-   data-theme. As telas de ligação e o aviso (Task 10) são sempre escuros. */
+   data-theme. As telas de ligação e o aviso (Task 10) são sempre escuros. (0.3.0) O .tema-do-app volta aos tokens do
+   tema do app dentro de uma tela escura: a conversa no painel do grande. */
 
 @font-face {
   font-family: "Plus Jakarta Sans";
@@ -11,7 +12,7 @@
   font-display: block;
 }
 
-:root {
+:root, .tema-do-app {
   color-scheme: light;
   --cyan: #00c2cb; --cyan-d: #00a5ad; --blue: #0c2671; --blue-2: #0a1e57; --ink: #0a0e1a; --muted: #5b6478;
   --line: #e7eaf2; --soft: #f5f7fb; --white: #ffffff; --navy-950: #070b18; --navy-900: #0a1330; --navy-850: #07143d;
@@ -21,6 +22,8 @@
   --status-online: #22c55e;
   /* O contorno tracejado dos espaços vazios (rc.3: "Adicionar atalho", "Adicionar servidor"). */
   --dashed: #d3d8e6;
+  /* (0.3.0) O fundo da área do vídeo e das faixas da imagem encaixada, nos dois temas (o quadro da videochamada). */
+  --video-bg: #04060e;
   --surface: var(--white); --surface-alt: var(--soft); --card: var(--white); --border: var(--line);
   --text-strong: var(--blue); --text: var(--ink); --text-muted: var(--muted); --text-accent: var(--cyan-d);
   --icon: var(--blue); --icon-tile: rgba(0, 194, 203, 0.14); --focus: var(--blue);
@@ -46,7 +49,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root, .tema-do-app {
     color-scheme: dark;
     --surface: var(--navy-900); --surface-alt: var(--blue); --card: rgba(255, 255, 255, 0.045);
     --border: rgba(255, 255, 255, 0.1); --text-strong: var(--white); --text: var(--white); --text-muted: #b9c4e6;
@@ -183,11 +186,12 @@ button { cursor: default; }
 .call-row { display: flex; align-items: center; gap: 12px; flex: none; width: 100%; }
 .call-row > .btn { flex: 1 1 auto; width: auto; min-width: 0; }
 .redial-wrap { position: relative; display: flex; flex: none; }
-.btn-redial { width: 56px; height: 56px; border-radius: 999px; border: 1.5px solid var(--outline); background: transparent; color: var(--icon);
+/* (vídeo, etapa 2) O Ligar com vídeo (.btn-video) é o mesmo círculo do Rediscar, entre ele e o Ligar. */
+.btn-redial, .btn-video { width: 56px; height: 56px; border-radius: 999px; border: 1.5px solid var(--outline); background: transparent; color: var(--icon);
   display: grid; place-items: center; padding: 0; transition: border-color var(--ease), background var(--ease); }
-.btn-redial .ic { width: 22px; height: 22px; }
-.btn-redial:not(:disabled):hover, .btn-redial:focus-visible { border-color: var(--cyan); }
-.btn-redial:disabled { opacity: 0.45; }
+.btn-redial .ic, .btn-video .ic { width: 22px; height: 22px; }
+.btn-redial:not(:disabled):hover, .btn-redial:focus-visible, .btn-video:not(:disabled):hover, .btn-video:focus-visible { border-color: var(--cyan); }
+.btn-redial:disabled, .btn-video:disabled { opacity: 0.45; }
 .redial-tip { position: absolute; left: -4px; bottom: calc(100% + 8px); z-index: 25; padding: 6px 10px; border-radius: 10px; background: var(--navy-900);
   color: #ffffff; border: 1px solid rgba(255, 255, 255, 0.12); font: 600 12px/1.3 var(--font-sans); white-space: nowrap; pointer-events: none;
   max-width: calc(100vw - 32px); overflow: hidden; text-overflow: ellipsis; box-shadow: var(--shadow-modal); }
@@ -277,6 +281,8 @@ label.set-title { flex: 1 0 auto; }
 .select select { appearance: none; -webkit-appearance: none; border: 0; background: transparent; font: 600 13px/1.3 var(--font-sans); color: var(--text-muted);
   text-align: right; text-align-last: right; padding: 4px 20px 4px 2px; max-width: 226px; border-radius: 8px; text-overflow: ellipsis; }
 .select select:hover { color: var(--text-strong); }
+/* (0.3.0) Desativada (a Câmera sem câmeras), a lista não reage ao ponteiro. */
+.select select:disabled:hover { color: var(--text-muted); }
 .select select option { color: var(--text); background: var(--surface); }
 .select .ic { position: absolute; right: 2px; pointer-events: none; }
 .link { color: var(--accent-text); font-weight: 700; text-decoration: none; }
@@ -420,6 +426,9 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 .call-middle:has(.call-keys, .call-panel) { justify-content: center; }
 .ctrls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 10px; width: 100%; }
 .ctrls-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 4px; }
+/* (vídeo, etapa 2) Com 9 ou 10 controles (uma ligação com a Câmera e o Chat; 0.4.0: ou com o Adicionar pessoa, ou com os
+   dois), cinco colunas (Ligacao.tsx). */
+.ctrls-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px 6px; }
 .ctrl { display: flex; flex-direction: column; align-items: center; gap: 7px; border: 0; background: transparent; color: #ffffff; font: 600 12px/1.2 var(--font-sans); padding: 0; width: 100%; border-radius: 12px; text-align: center; }
 .ctrl-c { width: 58px; height: 58px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.14); display: grid; place-items: center; transition: background var(--ease), border-color var(--ease); }
 .ctrl:not(:disabled):hover .ctrl-c { background: rgba(255, 255, 255, 0.13); }
@@ -442,6 +451,14 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 .hang.answer { background: var(--cyan); color: var(--on-cyan); box-shadow: var(--shadow-cyan); }
 .hang.answer:hover { background: var(--cyan-d); }
 .hang.answer .ic { transform: none; }
+/* O Atender com vídeo: o Atender sem o fundo cheio, com a borda ciano e a câmera. */
+.hang.answer-video { background: rgba(0, 194, 203, 0.09); color: var(--cyan); border: 2px solid var(--cyan); }
+.hang.answer-video:hover { background: rgba(0, 194, 203, 0.2); }
+/* Três ações redondas (Recusar, Atender, Atender com vídeo): três colunas, o espaço 12. */
+.call-actions-tres { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; justify-items: center; gap: 12px; }
+.call-actions-tres .round-action { text-align: center; }
+/* O porteiro tocando: a imagem 4:3 (267 de altura no Normal) encolhe com a janela, para os três botões caberem. */
+.tocando-video { width: 100%; max-height: 267px; flex: 1 1 0; min-height: 0; border-radius: 18px; border: 1px solid rgba(255, 255, 255, 0.1); }
 
 .vcard { width: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 18px; background: rgba(255, 255, 255, 0.045); border: 1px solid rgba(255, 255, 255, 0.1); flex: none; }
 .vcard-on { background: rgba(0, 194, 203, 0.09); border-color: rgba(0, 194, 203, 0.5); }
@@ -489,6 +506,8 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
   font-size: 14px; line-height: 1.4; color: #ffffff; overflow-wrap: anywhere; }
 .call-para b { font-weight: 800; }
 .call-vazio { margin: 0; text-align: center; font-size: 13.5px; line-height: 1.4; color: #b9c4e6; }
+/* (0.4.0) A ajuda do painel de adicionar (o quadro Adicionar), depois de quem entra na sala. */
+.call-ajuda { margin: 0; font-size: 13px; line-height: 1.5; color: #b9c4e6; }
 /* O painel do Windows ocupa a parte do meio inteira: o campo em cima, a lista com o espaço que sobra e os botões embaixo.
    Com a busca mudando (menos linhas, nada achado, só um número) e depois da escolha, nada se mexe: centrado e da altura
    do que tinha, ele pulava a cada letra, e o segundo clique de um clique duplo numa linha caía no Consultar ou no
@@ -496,6 +515,9 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 .call-panel.call-panel-nome { flex: 1 1 auto; }
 .call-panel-nome > .call-lista { flex-grow: 1; }
 .call-panel-nome > .call-panel-actions { margin-top: auto; }
+/* (0.4.0) O painel de adicionar (o que tem a ajuda): a lista fica da altura das linhas, e a ajuda vem logo depois delas,
+   como no quadro Adicionar; o campo e os botões continuam parados. */
+.call-panel-nome:has(> .call-ajuda) > .call-lista { flex-grow: 0; }
 /* Janela baixa, um cartão em cima (a outra em espera, a segunda que toca) e o painel de número aberto: o bloco de quem
    fala sai, e o painel fica entre o cartão e o Desligar (o cartão e o título do painel dizem a ligação). */
 @media (max-height: 719.5px) {
@@ -511,7 +533,8 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 .btn-complete { height: 54px; }
 .consult-note { margin: 0; font-size: 12.5px; line-height: 1.45; color: #b9c4e6; text-align: center; }
 
-/* O aviso do canto (aviso.html): 380×168, sem rolagem. Os cantos arredondados são do Windows 11 (DWM). */
+/* O aviso do canto (aviso.html): 380 de largura e 168 de altura (222 com o Atender com vídeo, 430 com a imagem do porteiro:
+   video/alturaDoAviso.ts), sem rolagem. Os cantos arredondados são do Windows 11 (DWM). */
 html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--navy-950); }
 #aviso { width: 100%; height: 100%; }
 .aviso { width: 100%; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; gap: 14px; padding: 18px 18px 16px; position: relative; overflow: hidden;
@@ -528,6 +551,12 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .aviso .btn { height: 44px; }
 .aviso-recusar { background: rgba(214, 69, 69, 0.16); color: #ffffff; border: 1.5px solid var(--danger); }
 .aviso-recusar:hover { background: rgba(214, 69, 69, 0.3); }
+/* O Atender com vídeo: a segunda linha da grade, na largura toda. */
+.aviso .aviso-video { grid-column: 1 / -1; font-weight: 700; font-size: 15px; background: rgba(0, 194, 203, 0.09); color: #ffffff; border: 1.5px solid var(--cyan); }
+.aviso .aviso-video:hover { background: rgba(0, 194, 203, 0.2); }
+.aviso .aviso-video .ic { color: var(--cyan); }
+/* A imagem do porteiro, em cima de tudo: 344×194. */
+.aviso-imagem { width: 344px; height: 194px; flex: none; border-radius: 12px; z-index: 1; }
 .aviso-erro { display: grid; place-items: center; text-align: center; font-size: 14px; font-weight: 700; }
 
 /* ---------------------------------------------------------------------------------------------------------
@@ -557,8 +586,8 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .win[data-layout="compacto"] .call-row { gap: 10px; }
 .win[data-layout="compacto"] .btn-call { height: 46px; font-size: 15px; gap: 8px; }
 .win[data-layout="compacto"] .btn-call .ic { width: 18px; height: 18px; }
-.win[data-layout="compacto"] .btn-redial { width: 46px; height: 46px; }
-.win[data-layout="compacto"] .btn-redial .ic { width: 20px; height: 20px; }
+.win[data-layout="compacto"] :is(.btn-redial, .btn-video) { width: 46px; height: 46px; }
+.win[data-layout="compacto"] :is(.btn-redial, .btn-video) .ic { width: 20px; height: 20px; }
 .win[data-layout="compacto"] .nav { height: 52px; padding-top: 4px; padding-bottom: 4px; }
 .win[data-layout="compacto"] .tab { gap: 2px; padding: 0; font-size: 11.5px; }
 .win[data-layout="compacto"] .tab-pill { width: 44px; height: 22px; }
@@ -588,8 +617,8 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .win[data-layout="minimo"] .call-row { gap: 8px; }
 .win[data-layout="minimo"] .btn-call { height: 42px; font-size: 14.5px; gap: 8px; }
 .win[data-layout="minimo"] .btn-call .ic { width: 17px; height: 17px; }
-.win[data-layout="minimo"] .btn-redial { width: 42px; height: 42px; }
-.win[data-layout="minimo"] .btn-redial .ic { width: 18px; height: 18px; }
+.win[data-layout="minimo"] :is(.btn-redial, .btn-video) { width: 42px; height: 42px; }
+.win[data-layout="minimo"] :is(.btn-redial, .btn-video) .ic { width: 18px; height: 18px; }
 .win[data-layout="minimo"] .nav { height: 44px; padding-top: 4px; padding-bottom: 4px; }
 .win[data-layout="minimo"] .tab { padding: 0; }
 .win[data-layout="minimo"] .tab-label { display: none; }
@@ -604,6 +633,9 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .win[data-layout="minimo"] .about { gap: 12px; }
 .win[data-layout="minimo"] .about-logo { width: 180px; }
 .win[data-layout="compacto"] .row-actions, .win[data-layout="minimo"] .row-actions { padding-left: 2px; flex-wrap: wrap; }
+/* (vídeo, etapa 2) No Mínimo, a linha de contato com o vídeo tem três botões: os de 34 e o espaço de 8. */
+.win[data-layout="minimo"] .row.row-com-video { gap: 8px; }
+.win[data-layout="minimo"] .row.row-com-video :is(.row-call, .row-more) { width: 34px; height: 34px; }
 .win[data-layout="minimo"] .select, .win[data-layout="minimo"] .select select { max-width: 150px; }
 .win[data-layout="compacto"] .select, .win[data-layout="compacto"] .select select { max-width: 180px; }
 
@@ -649,6 +681,10 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .win.call[data-layout="minimo"] .call-para span { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
 .win.call[data-layout="minimo"] .call-para span:first-child { flex: none; }
 .win.call[data-layout="minimo"] .call-para b { flex: 0 1000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* (0.4.0) No Mínimo, a ajuda do painel de adicionar sai da vista, como o painel do Transferir, que não tem uma: assim o
+   campo, uma linha de contato e os botões cabem entre o alto do painel e o Desligar. O campo continua descrito por ela (o
+   aria-describedby), para o leitor de tela. */
+.win.call[data-layout="minimo"] .call-ajuda { display: none; }
 .win.call[data-layout="minimo"] .call-keys { gap: 6px; grid-auto-rows: minmax(34px, 44px); }
 .win.call[data-layout="minimo"] .btn-complete { height: 46px; }
 .win.call[data-layout="minimo"] .consult-actions { gap: 6px; margin-top: 4px; }
@@ -964,6 +1000,9 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .conversa-ligar { width: 40px; height: 40px; flex: none; border-radius: 999px; border: 0; background: var(--cyan); color: var(--on-cyan); display: grid;
   place-items: center; padding: 0; transition: background var(--ease); }
 .conversa-ligar:hover { background: var(--cyan-d); }
+/* (vídeo, etapa 2) O Ligar com vídeo antes do Ligar: o mesmo círculo de 40, só o contorno (o cabeçalho é escuro nos dois temas). */
+.conversa-ligar.conversa-video { background: transparent; color: #ffffff; box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.4); }
+.conversa-ligar.conversa-video:hover { background: rgba(255, 255, 255, 0.1); box-shadow: inset 0 0 0 1.5px var(--cyan); }
 .conversa-grupo { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; margin: -4px 0; padding: 4px; border: 0; border-radius: 14px;
   background: transparent; color: #ffffff; font-family: inherit; text-align: left; transition: background var(--ease); }
 .conversa-grupo:hover { background: rgba(255, 255, 255, 0.08); }
@@ -1187,6 +1226,264 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .btn.membros-sair { flex: none; width: 100%; background: var(--card); font-size: 14px; }
 
 /* ---------------------------------------------------------------------------------------------------------
+   0.3.0: o vídeo (o quadro "Starsonic Phone — telas da videochamada", com os tokens de sempre). */
+
+/* A vista de vídeo (VistaDeVideo.tsx): o canvas cobre a caixa, por cima do fundo da área do vídeo. Ele fica fora do
+   fluxo: o tamanho dele (a caixa vezes o devicePixelRatio) nunca muda o tamanho da caixa, que vem de quem a usa. */
+.vista-video { position: relative; overflow: hidden; background: var(--video-bg); }
+.vista-video > canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+
+/* As Configurações (ConfigDoVideo.tsx; os quadros Configuracoes e ConfiguracoesEscuro): o "Testar a câmera"
+   (desativado sem câmeras) e, com o teste ligado, a prévia 16:9 na largura do cartão, com o "Parar o teste" embaixo. */
+.cfg-teste-ligado { flex-direction: column; align-items: flex-start; gap: 10px; }
+.cfg-previa { align-self: stretch; aspect-ratio: 16 / 9; border-radius: 12px; }
+.cfg-teste .btn:disabled, .cfg-teste .btn:disabled:hover { opacity: 0.45; border-color: var(--outline); }
+
+/* A tela da ligação com vídeo (CaixaDoVideo.tsx; os quadros Video, VideoCompacto e VideoMinimo): a área do vídeo fica com
+   o espaço que sobra, quem fala vem embaixo dela, e os controles ficam um pouco menores (o Desligar e o resto, como na
+   ligação só de voz). A área é a vista da outra ponta, com a sua imagem embaixo à direita e o Abrir grande em cima à
+   direita, por cima dela. */
+.call-com-video { padding-top: 16px; gap: 12px; }
+.call-com-video .call-middle { flex: none; }
+.video-caixa { position: relative; flex: 1 1 0; min-height: 0; width: 100%; }
+.video-remoto { position: absolute; inset: 0; border-radius: 18px; border: 1px solid rgba(255, 255, 255, 0.1); }
+.video-sua { position: absolute; right: 10px; bottom: 10px; width: 96px; height: 72px; border-radius: 10px; border: 1.5px solid rgba(255, 255, 255, 0.55); }
+.video-abrir { position: absolute; top: 10px; right: 10px; height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px 0 10px;
+  border: 0; border-radius: 999px; background: rgba(7, 11, 24, 0.62); color: #ffffff; font: 700 12.5px/1 var(--font-sans); white-space: nowrap;
+  transition: background var(--ease); }
+.video-abrir:hover { background: rgba(7, 11, 24, 0.85); }
+.video-abrir .ic { width: 14px; height: 14px; }
+.who-video { gap: 3px; margin-top: 0; }
+.who-video .who-name { font-size: 20px; }
+.who-video .who-sub { font-size: 13px; }
+.who-video .timer { font-size: inherit; }
+.call-com-video .ctrls { gap: 12px 6px; }
+.call-com-video .ctrl-c { width: 54px; height: 54px; }
+.win.call[data-layout="compacto"] .video-sua { width: 80px; height: 60px; }
+.win.call[data-layout="compacto"] .who-video .who-name { font-size: 18px; }
+.win.call[data-layout="compacto"] .call-com-video .ctrls { gap: 10px 4px; }
+.win.call[data-layout="compacto"] .call-com-video .ctrl { font-size: 11px; }
+.win.call[data-layout="compacto"] .call-com-video .ctrl-c { width: 46px; height: 46px; }
+.win.call[data-layout="minimo"] .video-remoto { border-radius: 14px; }
+.win.call[data-layout="minimo"] .video-sua { right: 8px; bottom: 8px; width: 64px; height: 48px; border-radius: 8px; }
+.win.call[data-layout="minimo"] .video-abrir { height: 28px; }
+.win.call[data-layout="minimo"] .call-com-video .ctrl-c { width: 40px; height: 40px; }
+/* No Mínimo, quem fala numa linha só: um nome comprido sai com as reticências, e o tempo fica inteiro. */
+.who-linha { display: flex; align-items: baseline; max-width: 100%; margin: 0; font-size: 15px; line-height: 1.3; }
+.who-linha-nome { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 800; color: #ffffff; }
+.who-linha-tempo { flex: none; white-space: pre; color: #b9c4e6; }
+
+/* A sua imagem flutuante (o quadro VozComCamera): fora da área do vídeo, com a câmera ligada, a 16 do canto de cima à
+   direita da tela da ligação, por cima do resto, também com um painel aberto. Com um cartão em cima (a segunda que toca,
+   a outra em espera), ela fica embaixo dele, no mesmo canto: o Recusar, o Atender e o Desligar do cartão ficam livres.
+   Quem fala fica mais estreito, para o nome nunca passar por baixo dela. */
+.sua-flutuante { position: absolute; top: 16px; right: 16px; z-index: 2; width: 96px; height: 72px; border-radius: 10px;
+  border: 1.5px solid rgba(255, 255, 255, 0.55); }
+.call-alto { position: relative; width: 100%; flex: none; }
+.call-alto > .sua-flutuante { top: calc(100% + 14px); right: -6px; }
+.call-sua-imagem .who { max-width: calc(100% - 180px); }
+.win.call[data-layout="compacto"] .sua-flutuante { width: 80px; height: 60px; }
+.win.call[data-layout="compacto"] .call-alto > .sua-flutuante { top: calc(100% + 10px); right: 0; }
+.win.call[data-layout="compacto"] .call-sua-imagem .who { max-width: calc(100% - 160px); }
+.win.call[data-layout="minimo"] .sua-flutuante { width: 64px; height: 48px; border-radius: 8px; }
+.win.call[data-layout="minimo"] .call-alto > .sua-flutuante { top: calc(100% + 8px); right: 4px; }
+.win.call[data-layout="minimo"] .call-sua-imagem .who { max-width: calc(100% - 136px); }
+/* Com o cartão em cima e um painel aberto (o Transferir, os Atalhos), a sua imagem vai para o canto de baixo à direita, a
+   16 dele, ao lado do Desligar (o único botão embaixo do painel). Embaixo do cartão, ela cobriria o painel na janela
+   baixa, onde quem fala sai e o painel sobe até o cartão (o campo, o Fechar atalhos). */
+.call-painel-cartao .call-alto { position: static; }
+.call-painel-cartao .call-alto > .sua-flutuante,
+.win.call[data-layout="compacto"] .call-painel-cartao .call-alto > .sua-flutuante,
+.win.call[data-layout="minimo"] .call-painel-cartao .call-alto > .sua-flutuante { top: auto; right: 16px; bottom: 16px; }
+/* (0.4.0) Com o painel de adicionar aberto (o quadro Adicionar não a mostra; a regra da 0.3.0 a deixa à vista), a sua
+   imagem também fica no canto de baixo à direita, a 16 dele, ao lado do Desligar: no canto de cima, ela estreitava o alto
+   do painel, e o "Em videochamada" do quadro não cabia numa linha. Quem fala fica com a largura toda. */
+.call-sua-embaixo > .sua-flutuante { top: auto; bottom: 16px; }
+
+/* ---------------------------------------------------------------------------------------------------------
+   0.4.0: a sala de vídeo na tela da ligação (TelaDaSala.tsx, MosaicoDaSala.tsx e EncerrarSala.tsx; os quadros Sala,
+   SalaEstados, SalaCheia, SalaCompacto, SalaMinimo e Encerrar). A área do vídeo é uma caixa de contêiner: o mosaico fica no
+   retângulo 16:9 encaixado nela (o mesmo em que o desenho da vista encaixa o 1280×720), e cada convidado no quadro dele,
+   em frações, também um contêiner, com a imagem 4:3 encaixada. */
+.sala-caixa { position: relative; flex: 1 1 0; min-height: 0; width: 100%; container-type: size; overflow: hidden; border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.1); background: var(--video-bg); }
+.sala-caixa > .sala-vista { position: absolute; inset: 0; }
+.sala-mosaico { position: absolute; inset: 0; margin: auto; width: min(100cqw, 177.78cqh); height: min(100cqh, 56.25cqw); }
+.sala-quadro { position: absolute; container-type: size; }
+/* Quem tem a imagem: o quadro é transparente (o mosaico aparece), com a imagem 4:3 no meio e o nome no canto dela. */
+.sala-enc { position: absolute; inset: 0; margin: auto; width: min(100cqw, 133.33cqh); height: min(100cqh, 75cqw); }
+.sala-imagem { position: absolute; inset: 0; }
+.sala-nome { position: absolute; left: 6px; bottom: 6px; max-width: calc(100% - 12px); padding: 3px 8px; border-radius: 999px; background: rgba(7, 11, 24, 0.72);
+  color: #ffffff; font: 700 11px/1.3 var(--font-sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* O nome segue como os quadros se arrumam (1 ou 2 convidados, a grade 2×2 de 3 ou 4, e 3 + 2 de 5), não a conta. */
+.sala-g4 .sala-nome { font-size: 10.5px; padding: 2px 7px; }
+.sala-g5 .sala-nome { font-size: 9.5px; padding: 2px 6px; left: 4px; bottom: 4px; }
+/* Quem chama, está sem vídeo ou em espera: um painel no meio do quadro, com as iniciais, o nome e o estado. */
+.sala-painel { box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 0 4px;
+  overflow: hidden; background: #0b1226; border: 1px solid var(--video-bg); }
+.sala-iniciais { flex: none; box-sizing: border-box; width: 34px; height: 34px; border-radius: 999px; background: var(--gradient-brand); color: #ffffff;
+  font: 800 12px/1 var(--font-sans); display: grid; place-items: center; }
+.sala-iniciais-chamando { border: 2px solid rgba(0, 194, 203, 0.7); }
+.sala-iniciais-espera { background: rgba(255, 255, 255, 0.12); color: #b9c4e6; }
+.sala-nome-painel { max-width: 100%; min-width: 0; font: 700 11px/1.2 var(--font-sans); color: #ffffff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sala-estado { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; min-width: 0; font: 600 10.5px/1.2 var(--font-sans); color: #b9c4e6;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sala-estado .ic { width: 11px; height: 11px; }
+/* O Tirar da sala: no canto de cima à direita do quadro, escondido (e sem pegar o clique) até o ponteiro estar no quadro ou o foco
+   chegar nele pelo Tab. O contorno ciano de 2px fica por dentro do quadro, num ::after por cima de tudo e sem pegar o clique (o
+   painel opaco do quadro cobriria um box-shadow dele). */
+.sala-tirar { position: absolute; top: 6px; right: 6px; z-index: 2; box-sizing: border-box; height: 24px; padding: 0 9px 0 7px; display: inline-flex;
+  align-items: center; justify-content: center; gap: 4px; border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 999px; background: rgba(7, 11, 24, 0.86);
+  color: #ffffff; font: 700 10.5px/1 var(--font-sans); white-space: nowrap; cursor: pointer; opacity: 0; pointer-events: none; }
+.sala-tirar .ic { width: 11px; height: 11px; flex: none; }
+.sala-quadro:hover .sala-tirar, .sala-quadro:focus-within .sala-tirar { opacity: 1; pointer-events: auto; }
+.sala-quadro::after { content: ""; position: absolute; inset: 0; z-index: 3; box-sizing: border-box; border: 2px solid var(--cyan); pointer-events: none; opacity: 0; }
+.sala-quadro:hover::after, .sala-quadro:focus-within::after { opacity: 1; }
+/* Num quadro estreito, só o ícone (24×24): o texto sai da vista como o .sr-only, e o nome do botão fica. */
+@container (width < 112px) {
+  .sala-tirar { width: 24px; padding: 0; gap: 0; }
+  .sala-tirar-texto { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+}
+.sala-chamando { color: var(--cyan); font-weight: 700; }
+/* Quem fala: "Sala de vídeo" e "3 pessoas · 05:41" (no Mínimo, numa linha só); a conta com o tempo em ciano. */
+.who-video.who-sala .who-sub { font-size: 14px; }
+.who-sala .who-sub, .who-sala .who-sub .timer { white-space: nowrap; }
+.who-video.who-sala .who-sub .timer { font-size: inherit; }
+.sala-baixo { flex: none; display: flex; flex-direction: column; align-items: center; gap: 12px; width: 100%; }
+.sala-cheia { margin: -2px 0 0; font-size: 13px; font-weight: 600; line-height: 1.3; color: #b9c4e6; text-align: center; }
+
+.win.call[data-layout="compacto"] .call-sala { padding: 12px 16px 16px; gap: 10px; }
+.win.call[data-layout="compacto"] .sala-caixa { border-radius: 16px; }
+.win.call[data-layout="compacto"] .call-sala .video-sua { right: 8px; bottom: 8px; border-radius: 9px; }
+.win.call[data-layout="compacto"] .who-video.who-sala .who-name { font-size: 17px; }
+.win.call[data-layout="compacto"] .who-video.who-sala .who-sub { font-size: 13px; }
+.win.call[data-layout="compacto"] .sala-baixo { gap: 10px; }
+.win.call[data-layout="compacto"] .call-sala .hang { width: 56px; height: 56px; }
+.win.call[data-layout="compacto"] .call-sala .round-action { font-size: 11px; }
+.win.call[data-layout="compacto"] .sala-nome { font-size: 10.5px; padding: 2px 7px; left: 5px; bottom: 5px; }
+.win.call[data-layout="compacto"] .sala-g4 .sala-nome { font-size: 10px; padding: 2px 6px; }
+.win.call[data-layout="compacto"] .sala-g5 .sala-nome { font-size: 9.5px; padding: 2px 6px; left: 4px; bottom: 4px; }
+.win.call[data-layout="compacto"] .sala-iniciais { width: 30px; height: 30px; font-size: 11px; }
+.win.call[data-layout="compacto"] .sala-nome-painel { font-size: 10.5px; }
+.win.call[data-layout="compacto"] .sala-estado { font-size: 10px; }
+
+.win.call[data-layout="minimo"] .sala-caixa { border-radius: 14px; }
+.win.call[data-layout="minimo"] .call-sala .video-sua { right: 6px; bottom: 6px; }
+.win.call[data-layout="minimo"] .who-sala .who-linha { font-size: 13px; }
+.win.call[data-layout="minimo"] .who-sala .who-linha-nome { color: #ffffff; font-weight: 800; }
+.win.call[data-layout="minimo"] .who-sala .timer { font-size: inherit; }
+.win.call[data-layout="minimo"] .sala-nome { font-size: 10px; padding: 2px 6px; left: 4px; bottom: 4px; }
+.win.call[data-layout="minimo"] .sala-g4 .sala-nome { font-size: 9.5px; padding: 1px 5px; }
+.win.call[data-layout="minimo"] .sala-g5 .sala-nome { font-size: 9px; padding: 1px 5px; left: 3px; bottom: 3px; }
+.win.call[data-layout="minimo"] .sala-iniciais { width: 28px; height: 28px; font-size: 10.5px; }
+.win.call[data-layout="minimo"] .sala-nome-painel { font-size: 10px; }
+.win.call[data-layout="minimo"] .sala-estado { font-size: 9.5px; }
+/* No Mínimo, os quatro controles e o Desligar ficam numa fila só (os rótulos saem da vista, e o nome de cada botão fica), com
+   a sala cheia embaixo dela. */
+.win.call[data-layout="minimo"] .sala-baixo { display: grid; grid-template-columns: auto auto; grid-template-areas: "controles desligar" "cheia cheia";
+  justify-content: center; align-items: center; column-gap: 10px; row-gap: 8px; }
+.win.call[data-layout="minimo"] .sala-baixo > .call-middle { grid-area: controles; width: auto; }
+.win.call[data-layout="minimo"] .sala-baixo > .call-actions { grid-area: desligar; width: auto; margin: 0; }
+.win.call[data-layout="minimo"] .sala-baixo > .sala-cheia { grid-area: cheia; margin: 0; }
+.win.call[data-layout="minimo"] .call-sala .ctrls { display: flex; gap: 10px; width: auto; }
+.win.call[data-layout="minimo"] .call-sala .ctrl { position: relative; width: 44px; }
+.win.call[data-layout="minimo"] .call-sala .ctrl-c { width: 44px; height: 44px; }
+.win.call[data-layout="minimo"] .call-sala .ctrl-rotulo { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.win.call[data-layout="minimo"] .call-sala .hang { width: 48px; height: 48px; }
+.win.call[data-layout="minimo"] .call-sala .round-action > span { display: none; }
+
+/* (0.4.0) A faixa de fora da sala (a FaixaForaDaSala.tsx; os quadros LigacaoDeFora e ForaDaSala): entre a barra da ligação e a tela,
+   com a miniatura do mosaico (um bloco por convidado, no quadro dele; com imagem, o degradê, e sem ela, o painel escuro), o
+   título numa linha, os nomes (com as reticências) e o tempo da sala (inteiro, em ciano), e o Voltar para a sala. No Mínimo, sem
+   a miniatura e mais apertada: o título pode quebrar a linha. */
+.fora-faixa { flex: none; position: relative; z-index: 1; box-sizing: border-box; display: flex; align-items: center; gap: 12px; padding: 12px 14px;
+  background: linear-gradient(90deg, #0c2671 0%, #0a1a4d 100%); border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
+.fora-miniatura { position: relative; flex: none; width: 64px; height: 36px; border-radius: 8px; background: var(--navy-950); overflow: hidden; }
+.fora-bloco { position: absolute; box-sizing: border-box; background: #0b1226; box-shadow: inset 0 0 0 0.5px var(--navy-950); }
+.fora-bloco-imagem { background: linear-gradient(160deg, #3d5079, #19244a); }
+.fora-textos { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.fora-titulo { font: 800 13.5px/1.25 var(--font-sans); color: #ffffff; white-space: nowrap; }
+.fora-sub { display: flex; min-width: 0; font: 500 12px/1.3 var(--font-sans); color: #b9c4e6; }
+.fora-nomes { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fora-tempo { flex: none; white-space: pre; color: var(--cyan); font-weight: 700; }
+.fora-voltar { flex: none; box-sizing: border-box; height: 34px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--cyan); color: var(--on-cyan);
+  font: 700 13px/1 var(--font-sans); white-space: nowrap; cursor: pointer; transition: background var(--ease); }
+.fora-voltar:hover { background: var(--cyan-d); }
+.win.call[data-layout="compacto"] .fora-faixa { gap: 8px; padding: 10px 12px; }
+.win.call[data-layout="compacto"] .fora-miniatura { width: 48px; height: 27px; border-radius: 6px; }
+.win.call[data-layout="compacto"] .fora-titulo { font-size: 13px; }
+.win.call[data-layout="compacto"] .fora-voltar { padding: 0 12px; font-size: 12.5px; }
+.win.call[data-layout="minimo"] .fora-faixa { gap: 8px; padding: 8px 10px; }
+.win.call[data-layout="minimo"] .fora-miniatura { display: none; }
+.win.call[data-layout="minimo"] .fora-titulo { font-size: 12px; white-space: normal; }
+.win.call[data-layout="minimo"] .fora-sub { font-size: 11px; }
+.win.call[data-layout="minimo"] .fora-voltar { height: 30px; padding: 0 10px; font-size: 12px; }
+/* A sala com a ligação de fora em espera, no Mínimo: os cinco controles (com o Alternar) e o Desligar numa fila só, com os círculos de
+   40, o Desligar de 44 e o espaço 6: 274 dos 276 da largura (com os 44, 48 e 10 de quatro controles, ela daria 318). */
+.win.call[data-layout="minimo"] .sala-baixo-5 { column-gap: 6px; }
+.win.call[data-layout="minimo"] .call-sala .sala-baixo-5 .ctrls { gap: 6px; }
+.win.call[data-layout="minimo"] .call-sala .sala-baixo-5 .ctrl { width: 40px; }
+.win.call[data-layout="minimo"] .call-sala .sala-baixo-5 .ctrl-c { width: 40px; height: 40px; }
+.win.call[data-layout="minimo"] .call-sala .sala-baixo-5 .hang { width: 44px; height: 44px; }
+
+/* O Desligar da sala pergunta antes (o EncerrarSala): um diálogo modal no escuro da marca, com o Encerrar no vermelho em que
+   o branco se lê (o #c23b3b, o do :hover do Desligar). O fundo começa embaixo da barra de título (32), e na tela cheia, sem
+   barra, desde o alto. */
+.encerrar { box-sizing: border-box; width: calc(100% - 48px); max-width: 352px; padding: 22px; border-radius: 24px; background: #0f1836; color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.12); box-shadow: 0 40px 100px -30px rgba(7, 11, 24, 0.6); }
+.encerrar::backdrop { top: 32px; background: rgba(4, 6, 14, 0.72); }
+.win-tela-cheia .encerrar::backdrop { top: 0; }
+.encerrar h2 { margin: 0 0 10px; font-size: 19px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.2; color: #ffffff; }
+.encerrar p { margin: 0 0 10px; font-size: 14px; line-height: 1.55; color: #b9c4e6; overflow-wrap: anywhere; }
+.encerrar-botoes { display: flex; gap: 10px; margin-top: 8px; }
+.encerrar-botoes button { flex: 1; min-width: 0; height: 46px; border-radius: 999px; font: 700 15px/1 var(--font-sans); color: #ffffff; transition: background var(--ease), border-color var(--ease); }
+.encerrar-cancelar { background: transparent; border: 1.5px solid rgba(255, 255, 255, 0.28); }
+.encerrar-cancelar:hover { border-color: var(--cyan); }
+.encerrar-ok { background: #c23b3b; border: 0; }
+.encerrar-ok:hover { background: #ad3333; }
+
+/* A faixa da ligação em cima da conversa que o Chat da ligação abriu (FaixaDaLigacao.tsx; os quadros ConversaNaLigacao e
+   ConversaNaLigacaoEscura): navy-950 nos dois temas, com o fio claro em cima; a miniatura de 64×48 (a imagem da outra
+   ponta com a sua pequena dentro, ou só a sua); "Em ligação · 03:12" (o "Em ligação ·" no cinza-azulado, menor, e o
+   tempo em ciano) ou, sem a miniatura, "Ana Souza · 03:12" (o nome em branco e forte, que sai com as reticências, e o
+   "· 03:12" em ciano, inteiro), e o "Voltar para a ligação" em branco, sublinhado; e os botões redondos de 36 (o Mudo e a
+   Câmera acesos em ciano, o Desligar em vermelho). No Mínimo, como na tela da ligação, tudo menor (a miniatura de 48×36,
+   os botões de 32 e os textos), para o "Em ligação · <tempo>" e o "Voltar para a ligação" caberem numa linha cada (numa
+   janela ainda mais estreita, o link quebra a linha). */
+.faixa-ligacao { flex: none; display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--navy-950); color: #ffffff;
+  border-top: 1px solid rgba(255, 255, 255, 0.08); --focus: var(--cyan); }
+.faixa-miniatura { position: relative; flex: none; width: 64px; height: 48px; border-radius: 8px; overflow: hidden; background: var(--video-bg); }
+.faixa-remoto, .faixa-sua-so { position: absolute; inset: 0; }
+.faixa-sua { position: absolute; right: 3px; bottom: 3px; width: 24px; height: 18px; border-radius: 3px; border: 1px solid rgba(255, 255, 255, 0.55); }
+.faixa-textos { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+.faixa-titulo { display: flex; align-items: baseline; max-width: 100%; margin: 0; line-height: 1.3; white-space: nowrap; }
+.faixa-nome { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 14.5px; font-weight: 800; letter-spacing: -0.01em; }
+.faixa-em-ligacao { font-size: 12px; font-weight: 600; letter-spacing: 0; color: #b9c4e6; }
+.faixa-tempo { flex: none; white-space: pre; font-size: 14px; font-weight: 700; letter-spacing: 0.02em; color: var(--cyan);
+  font-variant-numeric: tabular-nums; }
+.faixa-voltar { max-width: 100%; padding: 0; border: 0; border-radius: 4px; background: transparent; font: 700 12.5px/1.3 var(--font-sans);
+  color: #ffffff; text-align: left; text-decoration: underline; text-underline-offset: 3px; }
+.faixa-botoes { flex: none; display: flex; gap: 6px; }
+.faixa-botao { width: 36px; height: 36px; flex: none; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.18); background: rgba(255, 255, 255, 0.1);
+  color: #ffffff; display: grid; place-items: center; padding: 0; transition: background var(--ease), border-color var(--ease); }
+.faixa-botao .ic { width: 18px; height: 18px; }
+.faixa-botao:not(:disabled):hover { background: rgba(255, 255, 255, 0.18); }
+.faixa-on, .faixa-on:not(:disabled):hover { background: var(--cyan); border-color: var(--cyan); color: var(--on-cyan); }
+.faixa-desligar { background: var(--danger); border-color: var(--danger); }
+.faixa-desligar:not(:disabled):hover { background: #c23b3b; border-color: #c23b3b; }
+.faixa-botao:disabled { opacity: 0.45; }
+.win[data-layout="minimo"] .faixa-ligacao { gap: 8px; padding: 8px 10px; }
+.win[data-layout="minimo"] .faixa-miniatura { width: 48px; height: 36px; border-radius: 6px; }
+.win[data-layout="minimo"] .faixa-sua { right: 2px; bottom: 2px; width: 18px; height: 14px; border-radius: 2px; }
+.win[data-layout="minimo"] .faixa-nome { font-size: 13px; }
+.win[data-layout="minimo"] .faixa-em-ligacao { font-size: 11px; }
+.win[data-layout="minimo"] .faixa-tempo { font-size: 12.5px; }
+.win[data-layout="minimo"] .faixa-voltar { font-size: 11px; }
+.win[data-layout="minimo"] .faixa-botoes { gap: 4px; }
+.win[data-layout="minimo"] .faixa-botao { width: 32px; height: 32px; }
+.win[data-layout="minimo"] .faixa-botao .ic { width: 16px; height: 16px; }
+
+/* ---------------------------------------------------------------------------------------------------------
    O modo iPhone (plataforma.ts: o .win leva data-plataforma="ios"); fora dele, nada daqui vale. A área segura (em cima
    a barra de status ou o entalhe, embaixo a barra de voltar ao início) vem do env(safe-area-inset-*), com o
    viewport-fit=cover que a interface põe no primeiro estado do iPhone. As variáveis ficam no :root: os testes trocam o
@@ -1270,7 +1567,7 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 /* O Sobre: a linha "Avisos de licença" inteira é o botão, com a seta, como uma linha dos Ajustes do iPhone. Na linha do
    telefone, o Ligar e o WhatsApp ficam na linha do número, e o horário embaixo dela, na largura toda (ao lado dos dois
    botões, ele quebrava em três linhas). */
-.win[data-plataforma="ios"] .about-avisos { width: 100%; border: 0; border-radius: 10px; background: transparent; font: inherit; color: inherit;
+.about-avisos { width: 100%; border: 0; border-radius: 10px; background: transparent; font: inherit; color: inherit;
   text-align: left; }
 .win[data-plataforma="ios"] .about-telefone { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; row-gap: 2px; }
 .win[data-plataforma="ios"] .about-telefone .row-main { display: contents; }
@@ -1281,13 +1578,117 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
    juntas, quebrando na largura da tela; os itens de lista com o recuo pendente (a marca numa coluna, e as linhas de
    baixo começando no texto); as linhas que ficam como estão no arquivo (as caixas de "*", as com recuo, os traços),
    com os espaços. */
-.win[data-plataforma="ios"] .licencas { gap: 26px; }
-.win[data-plataforma="ios"] .licenca h2 { margin: 0 0 10px; font-size: 15px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.25;
+.licencas { gap: 26px; }
+.licenca h2 { margin: 0 0 10px; font-size: 15px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.25;
   color: var(--text-strong); }
-.win[data-plataforma="ios"] .licenca p { margin: 0 0 10px; font-size: 12.5px; line-height: 1.55; color: var(--text); overflow-wrap: anywhere; }
-.win[data-plataforma="ios"] .licenca p:last-child { margin-bottom: 0; }
-.win[data-plataforma="ios"] .licenca-linha { display: block; }
-.win[data-plataforma="ios"] .licenca-fixa { white-space: pre-wrap; }
-.win[data-plataforma="ios"] .licenca-item { display: flex; }
-.win[data-plataforma="ios"] .licenca-marca { flex: none; white-space: pre; font-variant-numeric: tabular-nums; }
-.win[data-plataforma="ios"] .licenca-texto { flex: 1; min-width: 0; }
+.licenca p { margin: 0 0 10px; font-size: 12.5px; line-height: 1.55; color: var(--text); overflow-wrap: anywhere; }
+.licenca p:last-child { margin-bottom: 0; }
+.licenca-linha { display: block; }
+.licenca-fixa { white-space: pre-wrap; }
+.licenca-item { display: flex; }
+.licenca-marca { flex: none; white-space: pre; font-variant-numeric: tabular-nums; }
+.licenca-texto { flex: 1; min-width: 0; }
+/* O aviso da Cisco embaixo do título do OpenH264 (só no Windows; o quadro Licencas). */
+.licenca p.licenca-destaque { margin: 0 0 10px; padding: 12px 14px; border-radius: 12px; background: rgba(0, 194, 203, 0.14); font-size: 13.5px;
+  font-weight: 700; line-height: 1.45; color: var(--text-strong); }
+
+/* O grande e a tela cheia (Grande.tsx; os quadros Grande e TelaCheia): o vídeo toma a janela toda (a barra de título do
+   grande fica por cima), com a sua imagem no canto, a etiqueta de quem fala, uma sombra embaixo e a barra de baixo. */
+.grande { position: absolute; inset: 0; background: var(--video-bg); }
+.grande-video { position: absolute; inset: 0; }
+.grande .grande-remoto { position: absolute; inset: 0; }
+.grande-sombra { position: absolute; left: 0; right: 0; bottom: 0; height: 220px; pointer-events: none;
+  background: linear-gradient(to top, rgba(4, 6, 14, 0.85), rgba(4, 6, 14, 0)); }
+.grande-etiqueta { position: absolute; top: 40px; left: 24px; z-index: 2; height: 40px; margin: 0; display: inline-flex; align-items: center;
+  padding: 0 16px; border-radius: 999px; background: rgba(7, 11, 24, 0.62); color: #ffffff; font: 700 14px/1 var(--font-sans); white-space: nowrap; }
+.grande .grande-sua { position: absolute; right: 24px; bottom: 128px; z-index: 2; width: 224px; height: 168px; border-radius: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.55); }
+.grande-cartao { position: absolute; top: 48px; left: 50%; transform: translateX(-50%); z-index: 3; width: min(480px, calc(100% - 48px)); }
+.grande-cartao:empty { display: none; }
+/* (Ruling 15) Numa área de trabalho pequena, com o painel do chat, a barra fica toda na janela e fora do painel: os
+   botões encolhem juntos (o círculo também, quando o botão fica mais estreito que ele), e abaixo da largura em que os
+   rótulos cabem numa linha (o "Tela cheia" no grande, o "Sair da tela cheia" na tela cheia), eles saem da vista e ficam
+   só para o leitor de tela, como o .sr-only: o nome de cada botão continua. */
+.grande-barra { position: absolute; left: 0; right: 0; bottom: 22px; z-index: 2; display: flex; justify-content: center; gap: 12px;
+  container: barra-do-grande / inline-size; }
+.grande-item { flex: 0 1 92px; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 7px; border: 0;
+  background: transparent; color: #ffffff; font: 600 12px/1.2 var(--font-sans); padding: 0; border-radius: 12px; text-align: center; }
+.grande-c { width: 56px; max-width: 100%; aspect-ratio: 1; border-radius: 999px; background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.18); display: grid; place-items: center; transition: background var(--ease), border-color var(--ease); }
+@container barra-do-grande (width < 402px) {
+  .grande-rotulo { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0);
+    white-space: nowrap; border: 0; }
+}
+@container barra-do-grande (width < 690px) {
+  .win-tela-cheia .grande-rotulo { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0);
+    white-space: nowrap; border: 0; }
+}
+.grande-item:not(:disabled):hover .grande-c { background: rgba(255, 255, 255, 0.18); }
+.grande-on .grande-c, .grande-on:not(:disabled):hover .grande-c { background: var(--cyan); border-color: var(--cyan); color: var(--on-cyan); }
+.grande-perigo .grande-c, .grande-perigo:not(:disabled):hover .grande-c { background: var(--danger); border-color: var(--danger); }
+.grande-item:disabled { opacity: 0.45; }
+.grande-item:focus-visible { outline: none; }
+.grande-item:focus-visible .grande-c { outline: 3px solid var(--focus, var(--cyan)); outline-offset: 2px; }
+.win-tela-cheia .grande-etiqueta { top: 24px; }
+.win-tela-cheia .grande .grande-sua { right: 32px; bottom: 156px; width: 288px; height: 216px; border-radius: 16px; }
+.win-tela-cheia .grande-cartao { top: 24px; }
+.win-tela-cheia .grande-barra { bottom: 32px; }
+.win-tela-cheia .grande-item { flex-basis: 112px; font-size: 13px; }
+.win-tela-cheia .grande-c { width: 60px; }
+/* O Chat do grande (o quadro GrandeChat): a conversa num painel de 360 à direita, no tema do app (o .tema-do-app),
+   embaixo da barra de título do grande (na tela cheia, desde o alto). O vídeo, a sua imagem e a barra de baixo ficam com
+   o resto da largura (o cartão da segunda não aparece com o painel: com ela, o chat da ligação sai, main.tsx). */
+.grande-com-chat { --largura-do-chat: 360px; }
+.grande-chat { position: absolute; top: 32px; right: 0; bottom: 0; z-index: 3; width: var(--largura-do-chat); display: flex; flex-direction: column;
+  background: var(--surface); color: var(--text); border-left: 1px solid var(--border); }
+.win-tela-cheia .grande-chat { top: 0; }
+.grande-com-chat .grande-video, .grande-com-chat .grande-barra { right: var(--largura-do-chat); }
+.grande.grande-com-chat .grande-sua { right: calc(var(--largura-do-chat) + 24px); }
+.win-tela-cheia .grande.grande-com-chat .grande-sua { right: calc(var(--largura-do-chat) + 32px); }
+
+/* (0.4.0) A sala no grande e na tela cheia (os quadros Grande e TelaCheia; Grande.tsx e MosaicoDaSala.tsx). A área do
+   vídeo é uma caixa de contêiner, como a .sala-caixa da tela da ligação: o mosaico fica no retângulo 16:9 encaixado nela
+   (com o painel de adicionar, nos 920 da esquerda), e cada convidado no quadro dele. A etiqueta tem três partes: a sala, as
+   pessoas e o tempo. */
+.grande-video-sala { container-type: size; }
+.grande-video-sala > .sala-vista { position: absolute; inset: 0; }
+.grande-etiqueta-sala { gap: 10px; }
+.grande-etiqueta-sala .sala-et-nome { font: 800 15px/1 var(--font-sans); }
+.grande-etiqueta-sala .sala-et-pessoas { font: 600 14px/1 var(--font-sans); color: #b9c4e6; }
+.grande-etiqueta-sala .sala-et-tempo { font: 700 14px/1 var(--font-sans); color: var(--cyan); font-variant-numeric: tabular-nums; }
+.win-tela-cheia .grande-etiqueta-sala { height: 46px; padding: 0 18px; gap: 12px; }
+.win-tela-cheia .grande-etiqueta-sala .sala-et-nome { font-size: 16px; }
+.win-tela-cheia .grande-etiqueta-sala .sala-et-pessoas, .win-tela-cheia .grande-etiqueta-sala .sala-et-tempo { font-size: 15px; }
+/* O painel de adicionar à direita: o do chat do grande (360 de largura), no tema escuro da ligação (as cores do .call). */
+.grande-adicionar { box-sizing: border-box; padding: 20px 22px 22px; }
+/* Os quadros: o nome sobre a imagem, o painel de quem não tem imagem e o Tirar da sala, com as medidas do quadro. */
+.sala-mosaico[data-modo="grande"] .sala-nome { left: 12px; bottom: 12px; max-width: calc(100% - 24px); padding: 5px 12px; font-size: 14px; }
+.sala-mosaico[data-modo="telaCheia"] .sala-nome { left: 16px; bottom: 16px; max-width: calc(100% - 32px); padding: 6px 14px; font-size: 16px; }
+/* A linha de baixo (3 a 5 convidados): o nome no canto de cima à esquerda da imagem, longe da barra de baixo. */
+.sala-mosaico[data-modo="grande"] .sala-linha-baixo .sala-nome { bottom: auto; top: 12px; }
+.sala-mosaico[data-modo="telaCheia"] .sala-linha-baixo .sala-nome { bottom: auto; top: 16px; }
+.sala-mosaico[data-modo="grande"] .sala-painel { gap: 8px; }
+.sala-mosaico[data-modo="grande"] .sala-iniciais { width: 64px; height: 64px; font-size: 22px; }
+.sala-mosaico[data-modo="grande"] .sala-nome-painel { font-size: 16px; }
+.sala-mosaico[data-modo="grande"] .sala-estado { font-size: 14px; gap: 5px; }
+.sala-mosaico[data-modo="grande"] .sala-estado .ic { width: 14px; height: 14px; }
+.sala-mosaico[data-modo="grande"] .sala-tirar { top: 10px; right: 10px; height: 30px; padding: 0 12px 0 10px; font-size: 12.5px; }
+.sala-mosaico[data-modo="grande"] .sala-tirar .ic { width: 13px; height: 13px; }
+.sala-mosaico[data-modo="telaCheia"] .sala-painel { gap: 8px; }
+.sala-mosaico[data-modo="telaCheia"] .sala-iniciais { width: 76px; height: 76px; font-size: 26px; }
+.sala-mosaico[data-modo="telaCheia"] .sala-nome-painel { font-size: 18px; }
+.sala-mosaico[data-modo="telaCheia"] .sala-estado { font-size: 15px; gap: 5px; }
+.sala-mosaico[data-modo="telaCheia"] .sala-estado .ic { width: 14px; height: 14px; }
+.sala-mosaico[data-modo="telaCheia"] .sala-tirar { top: 12px; right: 12px; height: 32px; padding: 0 13px 0 11px; font-size: 13px; }
+.sala-mosaico[data-modo="telaCheia"] .sala-tirar .ic { width: 14px; height: 14px; }
+
+/* O cartão Vídeo da área do administrador (os quadros AdmVideo e AdmVideoEscuro). */
+.seg.seg-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.adm-video-titulo { margin: 0; padding: 12px 0 2px; font-size: 12.5px; font-weight: 700; color: var(--text-strong); }
+.adm-qualidade { display: block; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.adm-qualidade legend { float: left; margin: 0 0 8px; font-size: 14px; }
+.adm-qualidade .seg { clear: both; }
+.adm-porteiros { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.adm-video-situacao { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 12px 0; }
+.adm-video-situacao > p { align-self: stretch; }
+.adm-video-situacao .btn .ic { margin-right: 6px; }

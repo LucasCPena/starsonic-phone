@@ -97,6 +97,17 @@ TEST_CASE("the local frame goes to the local view only when visible and not mini
     CHECK(RouteLocal(state) == kNone);
 }
 
+TEST_CASE("the room's mosaic goes to the remote view while the room is the top line") {
+    // (0.4.0) O mosaico de quem montou a sala chega com o id da sala, o ligacao.top.id com a sala em cima: vai ao
+    // remoto. A imagem de um convidado chega com o id da ligacao dele, que nao e a de cima: nenhuma vista (ela ja esta
+    // no mosaico).
+    RouteState state;
+    state.visible = {ViewName::Remoto};
+    state.topCallId = 30;
+    CHECK(RouteRemote(state, 30) == std::vector<ViewName>{ViewName::Remoto});
+    CHECK(RouteRemote(state, 31) == kNone);
+}
+
 TEST_CASE("the views have the bridge names") {
     CHECK(std::string(ViewKey(ViewName::Remoto)) == "remoto");
     CHECK(std::string(ViewKey(ViewName::Local)) == "local");

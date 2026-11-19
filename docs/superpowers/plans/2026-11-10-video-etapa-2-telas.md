@@ -74,7 +74,7 @@
 - **Os nomes dos testes** ficam em inglês, como os de hoje. Os comentários e os documentos ficam em português, no estilo de cada arquivo; o `starsonic/desktop` e o `windows/app/src` são escritos sem acento.
 - **Nenhum "MicroSIP" visível.** O `build/check_branding.py` continua passando.
 - **Os commits** levam os trailers `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` e `Claude-Session: https://claude.ai/code/session_014A5kJDot8KVFeE91pBUqgW`.
-  - O push vai para o `main`, sem force e sem tags, releases ou segredos. O repositório é público.
+  - O push vai para a branch `video-etapa-2`, sem force e sem tags, releases ou segredos. Ela só entra no `main` depois que a 0.2.0 final sair, com o OK do Lucas. O repositório é público.
   - Cada Task termina com o CI verde (o `build` e o `android`), conferido pelo `gh api` REST. O GraphQL está bloqueado.
 - **A 0.3.0-rc.1 é publicada pelo Lucas,** pelo workflow `release`, depois de ele aprovar as fotos e os textos. Este plano não publica nada.
 

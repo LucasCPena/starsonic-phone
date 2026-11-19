@@ -1,6 +1,7 @@
 # Confere o pacote "codigo-fonte completo" (build\Make-SourceBundle.ps1, GPL v3, spec 10): lista o zip e exige o
-# LEIA-ME-FONTES.txt, este repositorio, o pjproject, o codigo-fonte do vcpkg e os pacotes do npm que vao dentro do
-# ui\app.js (npm-packages\<nome>-<versao>.tgz, cada um com o SHA-512 do integrity de windows\ui\package-lock.json).
+# LEIA-ME-FONTES.txt, este repositorio, o pjproject, os patches da PJSIP (pjproject-patches\<arquivo>, cada um de
+# build\patches\pjproject), o codigo-fonte do vcpkg e os pacotes do npm que vao dentro do ui\app.js
+# (npm-packages\<nome>-<versao>.tgz, cada um com o SHA-512 do integrity de windows\ui\package-lock.json).
 # Uso: .\tests\smoke\Test-SourceBundle.ps1 -Zip dist\StarsonicPhone-0.1.0-rc.1-codigo-fonte-completo.zip
 param(
     [Parameter(Mandatory = $true)][string]$Zip
@@ -40,6 +41,17 @@ try {
     }
     if (-not @($entries.Keys | Where-Object { $_ -like ($prefix + 'pjproject-*/pjsip/*') }).Count) {
         $problems.Add('falta o pjproject') | Out-Null
+    }
+    # A PJSIP do app vai com os patches de build\patches\pjproject: cada um ao lado dela, em pjproject-patches/.
+    $patchDir = Join-Path $repoRoot 'build\patches\pjproject'
+    $pjPatches = @()
+    if (Test-Path $patchDir) {
+        $pjPatches = @(Get-ChildItem -Path $patchDir -Filter '*.patch' -File | ForEach-Object { $_.Name })
+    }
+    foreach ($patch in $pjPatches) {
+        if (-not $entries.ContainsKey($prefix + 'pjproject-patches/' + $patch)) {
+            $problems.Add("falta pjproject-patches/$patch (o patch da PJSIP de build\patches\pjproject)") | Out-Null
+        }
     }
 
     # Os pacotes do lock que vao no app (fora do "dev"), cada um com o SHA-512 do integrity.
@@ -90,6 +102,9 @@ try {
         if (-not $readme.Contains('npm-packages/')) {
             $problems.Add('o LEIA-ME-FONTES.txt nao fala do npm-packages/') | Out-Null
         }
+        if ($pjPatches.Count -gt 0 -and -not $readme.Contains('pjproject-patches/')) {
+            $problems.Add('o LEIA-ME-FONTES.txt nao fala do pjproject-patches/') | Out-Null
+        }
     }
 } finally {
     $archive.Dispose()
@@ -97,4 +112,4 @@ try {
 if ($problems.Count -gt 0) {
     throw ("Pacote de fontes incompleto: " + ($problems -join '; '))
 }
-Write-Host 'OK: o pacote de fontes tem o repositorio, o pjproject, o vcpkg e os pacotes do npm do app.'
+Write-Host 'OK: o pacote de fontes tem o repositorio, o pjproject com os patches, o vcpkg e os pacotes do npm do app.'

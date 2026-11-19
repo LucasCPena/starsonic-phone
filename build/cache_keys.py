@@ -2,8 +2,9 @@
 """As chaves dos caches do job windows do build.yml.
 
 - deps: as dependências nativas (work/pjproject, work/vcpkg e work/webview2, uns 13 minutos para refazer): o
-  build/deps.lock sem a chave webview2Bootstrapper, o build/config_site.h e o build/Build-Deps.ps1. O bootstrapper do
-  WebView2 não entra: trocar a versão dele não refaz o pjproject nem o vcpkg.
+  build/deps.lock sem a chave webview2Bootstrapper, o build/config_site.h, o build/Build-Deps.ps1 e os arquivos de
+  build/patches (os patches da PJSIP, que o Build-Deps.ps1 aplica). O bootstrapper do WebView2 não entra: trocar a
+  versão dele não refaz o pjproject nem o vcpkg.
 - bootstrapper: o MicrosoftEdgeWebview2Setup.exe (work/webview2-bootstrapper), pelo SHA-256 dele no deps.lock. Com o
   cache, o build continua quando o endereço da Microsoft do deps.lock sai do ar.
 
@@ -25,8 +26,12 @@ def compute(repo):
     bootstrapper = lock.pop(BOOTSTRAPPER, {}) or {}
     digest = hashlib.sha256()
     digest.update(json.dumps(lock, sort_keys=True, separators=(",", ":")).encode("utf-8"))
-    for name in ("config_site.h", "Build-Deps.ps1"):
-        digest.update(b"\0" + name.encode("ascii") + b"\0")
+    names = ["config_site.h", "Build-Deps.ps1"]
+    patches = build / "patches"
+    if patches.is_dir():
+        names += sorted(path.relative_to(build).as_posix() for path in patches.rglob("*") if path.is_file())
+    for name in names:
+        digest.update(b"\0" + name.encode("utf-8") + b"\0")
         digest.update((build / name).read_bytes().replace(b"\r\n", b"\n"))
     return {
         "deps": "deps-v2-" + digest.hexdigest(),

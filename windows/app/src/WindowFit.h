@@ -58,4 +58,12 @@ constexpr int kBigVideoWidth = 1280;    // pixels logicos
 constexpr int kBigVideoHeight = 800;
 FitBox BigVideoBox(const FitArea& work, unsigned dpi);
 
+// O aviso de ligacao recebida: 380 de largura e a altura pedida pela pagina (168 de fabrica), encostado embaixo e a
+// direita da area de trabalho com a margem de 12, tudo na escala do monitor; a caixa nunca passa da area menos as duas
+// margens.
+constexpr int kNoticeWidth = 380;   // pixels logicos
+constexpr int kNoticeHeight = 168;
+constexpr int kNoticeMargin = 12;
+FitBox NoticeBox(const FitArea& work, unsigned dpi, int logicalHeight);
+
 }  // namespace starsonic

@@ -567,7 +567,8 @@ test.describe('ligação e toque', () => {
     // O aviso continua o mesmo, na mesma página.
     expect(new URL(page.url()).pathname).toBe('/aviso.html');
     await verTextos(page, ['Ana Souza', 'Atender']);
-    expect(await comandos(page)).toEqual([{ v: 1, cmd: 'ready' }]);
+    // Nada foi mandado além do `ready` e da altura do aviso (o noticeHeight, que a página pede sozinha).
+    expect((await comandos(page)).filter((c) => c.cmd !== 'noticeHeight')).toEqual([{ v: 1, cmd: 'ready' }]);
 
     // Também no aviso vazio (nenhuma ligação tocando).
     await mudarEstado(page, (s) => ({ ...s, ligacao: null }));

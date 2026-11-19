@@ -7,9 +7,12 @@
 // (Task 7) O arquivo: o ícone, o nome, "<tamanho> · <tipo>" e a seta de baixar; um clique pede ao núcleo o download.
 // A foto: a miniatura (o blob: da conversa aberta, já com a medida dela) ou, sem ela, o quadro com o ícone e o nome; um
 // clique abre a foto grande. Um arquivo expirado mostra "Arquivo expirado" e não faz nada no clique. Um Pendente de
-// arquivo mostra o progresso do upload. Todo nome de arquivo vai sem as marcas de direção (semDirecao).
+// arquivo mostra o progresso do upload. Todo nome de arquivo vai sem as marcas de direção (semDirecao). (vídeo, etapa
+// 2, Ruling 14) A foto e o arquivo ignoram o segundo clique de um clique duplo (o semSegundoClique; o chat só existe no
+// Windows): a conversa que o Chat da ligação abre embaixo do ponteiro não abre uma foto nem baixa um arquivo com ele.
 import { clockTime } from '../../format';
 import { IconAlert, IconArquivo, IconBaixar, IconImagem } from '../../icons';
+import { semSegundoClique } from '../../plataforma';
 import type { Miniatura } from '../aberta';
 import type { Pendente } from '../envios';
 import { semDirecao, tamanhoDoArquivo, tipoDoArquivo } from '../formato';
@@ -116,7 +119,7 @@ function ArquivoDoBalao({ arquivo: a, onBaixar }: { arquivo: Arquivo; onBaixar(a
   const tamanho = tamanhoDoArquivo(a.tamanho);
   const rotulo = abrirOArquivo(nome, tamanho);
   return (
-    <button type="button" class="balao-arquivo" aria-label={rotulo} title={rotulo} onClick={() => onBaixar(a)}>
+    <button type="button" class="balao-arquivo" aria-label={rotulo} title={rotulo} onClick={semSegundoClique(true, () => onBaixar(a))}>
       <DesenhoDoArquivo nome={nome} linha={`${tamanho} · ${tipoDoArquivo(a)}`} baixar />
     </button>
   );
@@ -134,7 +137,7 @@ function FotoDoBalao({ arquivo: a, miniatura, onAbrir }: { arquivo: Arquivo; min
   const rotulo = abrirAFoto(nome);
   // Com a largura e a altura, a miniatura já ocupa o lugar dela antes de a imagem abrir: o balão cresce de uma vez só.
   return (
-    <button type="button" class="balao-foto" aria-label={rotulo} title={rotulo} onClick={() => onAbrir(a)}>
+    <button type="button" class="balao-foto" aria-label={rotulo} title={rotulo} onClick={semSegundoClique(true, () => onAbrir(a))}>
       {miniatura ? <img src={miniatura.url} width={miniatura.largura} height={miniatura.altura} alt="" /> : <QuadroDaFoto nome={nome} />}
     </button>
   );

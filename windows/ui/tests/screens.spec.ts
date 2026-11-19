@@ -445,6 +445,10 @@ for (const tema of ['light', 'dark'] as const) {
       await expect(page.getByRole('heading', { name: 'Editar contato' })).toBeVisible();
       await formularioDoContatoPronto(page);
       await expect(page.getByLabel('Número')).toHaveValue('2007');
+      // O formulário põe o foco no Nome num efeito, depois do primeiro quadro de tela, e o fill('') da Observação são dois
+      // passos (o campo selecionado e, depois, a tecla Delete): com o efeito no meio, a tecla caía no Nome, e o Salvar
+      // mandava a Observação de antes (os runs 43204892724 e 43269164970).
+      await expect(page.getByLabel('Nome', { exact: true })).toBeFocused();
       await page.getByLabel('Observação (opcional)').fill('');
       await page.getByRole('button', { name: 'Salvar contato' }).click();
       await esperarComando(page, { cmd: 'saveContact', id: 'b7c8d9e0f1a20344', nome: 'Carlos Lima', numero: '2007', observacao: '' });
@@ -473,10 +477,14 @@ for (const tema of ['light', 'dark'] as const) {
         'Caixa 2 · 2015',
         'starcloud-starsonic.com.br · TCP',
         'Adicionar conta',
-        'Áudio',
+        // (0.3.0) Com o vídeo ligado, como o app de fábrica.
+        'Áudio e vídeo',
         'Microfone',
         'Alto-falante',
         'Toque',
+        'Câmera',
+        'Testar a câmera',
+        'H.264 da Cisco',
         'Ligações',
         'Atender automaticamente',
         'Depois de 3 segundos tocando',

@@ -10,8 +10,9 @@ import type { ChatCliente } from '../chat/cliente';
 import { BackBar } from '../components/BackBar';
 import { Confirm } from '../components/Confirm';
 import { IconPlus } from '../icons';
-import type { AdminServer, AdminState, ChatSummary, Command } from '../state';
+import type { AdminServer, AdminState, ChatSummary, Command, VideoSettings } from '../state';
 import type { Send } from '../types';
+import { CartaoVideo } from './AdminVideo';
 
 type AdminAberta = Extract<AdminState, { aberto: true }>;
 
@@ -23,6 +24,8 @@ interface Props {
   onLeave(): void;
   /** (0.2.0) O chat deste computador (o `chat` do estado, só no Windows) e o cliente do chat: o cartão Chat. */
   chat?: { resumo: ChatSummary; cliente: ChatCliente };
+  /** (0.3.0) O vídeo do app (o `video` do estado, só no Windows): o cartão Vídeo. Sem ele (iPhone), o cartão não aparece. */
+  video?: VideoSettings;
 }
 
 /** A porta dos servidores fora da tabela: a da [conta] do perfil (a ponte não a manda; Ruling 3). */
@@ -281,7 +284,7 @@ function Servidores({ servidores, send }: { servidores: AdminServer[]; send: Sen
   );
 }
 
-export function Admin({ admin, send, onBack, onLeave, chat }: Props) {
+export function Admin({ admin, send, onBack, onLeave, chat, video }: Props) {
   // Ruling 4: o canal "" é o do build, o de teste nestas versões.
   const canal = admin.canal === '' ? 'teste' : admin.canal;
   return (
@@ -328,6 +331,8 @@ export function Admin({ admin, send, onBack, onLeave, chat }: Props) {
 
         <h2 class="eyebrow">Servidores</h2>
         <Servidores servidores={admin.servidores} send={send} />
+
+        {video && <CartaoVideo admin={admin} video={video} send={send} />}
 
         <h2 class="eyebrow">Atualizações</h2>
         <div class="card">

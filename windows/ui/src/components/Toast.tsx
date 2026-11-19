@@ -1,4 +1,5 @@
-// O aviso de 2 s (o `toast` da ponte). A região fica sempre na página para o leitor de tela anunciar o texto.
+// O aviso de 2 s (o `toast` da ponte; os do vídeo ficam 5 s, main.tsx). A região fica sempre na página para o leitor de
+// tela anunciar o texto.
 interface Props {
   texto: string | null;
   /** Muda a cada toast (um novo toma o lugar do que está na tela). */

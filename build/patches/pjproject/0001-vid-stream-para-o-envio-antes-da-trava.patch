@@ -1,0 +1,62 @@
+From 82ab9d7e99d2f212e32ba08580edb9f114906133 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 14:55:04 +0000
+Subject: [PATCH] vid_stream: para a thread de envio antes de pegar a trava da
+ stream
+
+O pjmedia_vid_stream_destroy pegava a trava do grupo da stream
+(c_strm->grp_lock) e, com ela presa, chamava o detach_send_manager, que
+junta a thread de envio da stream (pj_thread_join). A thread de envio
+(send_worker_thread), depois de mandar cada pacote, pega essa mesma trava
+(o ss->grp_lock e o c_strm->grp_lock) para devolver o buffer a lista
+livre da stream. Um destroy que chegava com um pacote da stream em envio
+travava para sempre: a thread de envio esperava a trava, e o destroy
+esperava a thread. Quem chamou o destroy ficava preso junto (no pjsua, a
+thread da midia, que tambem espera essa trava).
+
+A stream tem a thread de envio com o controle de taxa
+PJMEDIA_VID_STREAM_RC_SEND_THREAD, o padrao da
+pjmedia_vid_stream_rc_config_default e do pjsua. Todo encerrar de uma
+stream que manda video passa pelo destroy: desligar, por em espera, um
+re-INVITE que refaz a stream.
+
+A correcao: o destroy para e junta a thread de envio (o is_quitting, o
+pj_thread_join, o pj_thread_destroy e o thread = NULL do gerente) antes
+de pegar a trava. Cada stream tem o seu gerente de envio (o send_manager
+ainda nao e dividido entre streams), entao parar a thread so mexe nesta
+stream. O detach_send_manager continua sob a trava, como antes: tira da
+fila os pacotes da stream que nao sairam e solta as referencias; ele nao
+acha mais thread para juntar.
+---
+ pjmedia/src/pjmedia/vid_stream.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/pjmedia/src/pjmedia/vid_stream.c b/pjmedia/src/pjmedia/vid_stream.c
+index bef30bd..fed7d76 100644
+--- a/pjmedia/src/pjmedia/vid_stream.c
++++ b/pjmedia/src/pjmedia/vid_stream.c
+@@ -1981,6 +1981,21 @@ PJ_DEF(pj_status_t) pjmedia_vid_stream_destroy( pjmedia_vid_stream *stream )
+ 
+     /* Detach from sending manager */
+     if (stream->send_stream) {
++        send_manager *mgr = stream->send_stream->mgr;
++
++        /* Para a thread de envio antes de pegar a trava do grupo da
++         * stream: a thread pega essa trava depois de mandar cada pacote
++         * (para devolver o buffer), e esperar por ela com a trava presa
++         * deixaria o destroy preso para sempre. O detach_send_manager,
++         * abaixo, nao acha mais thread para juntar.
++         */
++        if (mgr->thread) {
++            mgr->is_quitting = PJ_TRUE;
++            pj_thread_join(mgr->thread);
++            pj_thread_destroy(mgr->thread);
++            mgr->thread = NULL;
++        }
++
+         pj_grp_lock_acquire(c_strm->grp_lock);
+         detach_send_manager(stream->send_stream);
+         pj_grp_lock_release(c_strm->grp_lock);
+-- 
+2.43.0
+

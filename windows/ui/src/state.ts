@@ -99,6 +99,48 @@ export interface AutoAnswer {
   segundos: number;
 }
 
+/** (0.3.0, só no Windows) O vídeo de uma ligação (os campos `offered`, `active`, `remote`, `camera`, `early` e `doorphone` do CallVideo). */
+export interface CallVideo {
+  /** A recebida oferece vídeo com um codec em comum. */
+  oferece: boolean;
+  /** O vídeo negociado e a ligação sem pausa. */
+  ativo: boolean;
+  /** A imagem da outra ponta está chegando. */
+  imagem: boolean;
+  /** A nossa câmera está mandando. */
+  camera: boolean;
+  /** O 183 com imagem de um Porteiro, até o atender ou o fim. */
+  cedo: boolean;
+  /**
+   * (0.3.0-rc.2) A recebida de um número dos Porteiros que oferece vídeo com um codec em comum, do toque ao fim, também
+   * depois de atender: com outra ligação, a imagem dele segue à vista, só chegando (a decisão do responsável de
+   * 11/11/2026).
+   */
+  porteiro: boolean;
+}
+
+/** (0.3.0) O módulo H.264 da Cisco. */
+export type H264Situacao = 'desligado' | 'baixando' | 'instalado' | 'falhou';
+/** (0.3.0) O modo da janela do vídeo. */
+export type VideoJanela = 'normal' | 'grande' | 'telaCheia';
+export type CodecDeVideo = 'h264' | 'vp8' | 'vp9';
+export type QualidadeDeVideo = 'baixa' | 'media' | 'alta';
+/** (0.3.0) As vistas de vídeo: o `remoto` e o `local` são da página principal, o `porteiro` é do aviso. */
+export type VistaDeVideoNome = 'remoto' | 'local' | 'porteiro';
+export type PaginaDeVideo = 'principal' | 'aviso';
+
+/** (0.3.0) O bloco `video` do estado: as escolhas do vídeo, a câmera e o módulo H.264. */
+export interface VideoSettings {
+  ligado: boolean;
+  cameras: string[];
+  /** A câmera escolhida; "" é a primeira. */
+  camera: string;
+  cameraDesconectada: boolean;
+  teste: boolean;
+  h264: { cartao: boolean; pessoa: boolean; situacao: H264Situacao };
+  janela: VideoJanela;
+}
+
 /** Um cartão da tela da ligação (os nomes do CallSnapshot do C++). */
 export interface CallCard {
   /** O id da ligação no motor; 0 numa feita que ainda não tem id. */
@@ -111,6 +153,45 @@ export interface CallCard {
   /** ms desde 1970; 0: ainda não atendida. */
   activeSinceMs: number;
   held: boolean;
+  /** (0.3.0) Sempre vem do núcleo; o `?` protege o estado montado à mão nos testes de antes. */
+  video?: CallVideo;
+}
+
+/** (0.4.0) O estado de um convidado na sala. */
+export type EstadoNaSala = 'chamando' | 'naSala' | 'emEspera';
+
+/** (0.4.0) O quadro do convidado no mosaico do `remoto`, em frações de 0 a 1 da imagem. */
+export interface QuadroDaSala {
+  /** O canto de cima à esquerda. */
+  x: number;
+  y: number;
+  largura: number;
+  altura: number;
+}
+
+/** (0.4.0) Um convidado da sala (não é uma linha da tela). */
+export interface ParticipanteDaSala {
+  /** O id da ligação dele no motor (o do `salaTirar`). */
+  id: number;
+  numero: string;
+  /** Já resolvido, como nos cartões; "" sem nenhum (a interface mostra o número). */
+  nome: string;
+  estado: EstadoNaSala;
+  /** A imagem dele está chegando (sem ela, o quadro dele fica com o fundo). */
+  imagem: boolean;
+  quadro: QuadroDaSala;
+}
+
+/** (0.4.0) A sala de vídeo em grupo (docs/ponte-windows.md, "O ligacao.sala"). */
+export interface SalaDaLigacao {
+  /** O id da linha da sala (`top.id`, ou `second.id` com você fora). */
+  id: number;
+  /** Você está fora da sala (a ligação de fora): a nossa voz e a nossa câmera saíram dela. */
+  fora: boolean;
+  /** 5 convidados, contando os chamados: o `salaAdicionar` não faz nada. */
+  cheia: boolean;
+  /** Na ordem em que entraram; o primeiro é a ligação de onde a sala nasceu. Quem monta não está na lista. */
+  participantes: ParticipanteDaSala[];
 }
 
 export interface CallState {
@@ -123,6 +204,11 @@ export interface CallState {
   conferenceSinceMs: number;
   consulting: boolean;
   colleagueActive: boolean;
+  /**
+   * (0.4.0) A sala de pé (em cima ou em espera), ou `null`. Sempre vem do núcleo; o `?` protege o estado montado à mão
+   * nos testes de antes.
+   */
+  sala?: SalaDaLigacao | null;
 }
 
 export interface RecentCall {
@@ -221,7 +307,21 @@ interface AdminVisible {
 /** (rc.3) A área do administrador: completa só com `aberto`. */
 export type AdminState =
   | ({ aberto: false } & AdminVisible)
-  | ({ aberto: true; puxar: boolean; codigoPuxar: string; servidores: AdminServer[]; canal: UpdateChannel } & AdminVisible);
+  | ({
+      aberto: true;
+      puxar: boolean;
+      codigoPuxar: string;
+      servidores: AdminServer[];
+      canal: UpdateChannel;
+      /** (0.3.0) O cartão Vídeo. */
+      videoH264: boolean;
+      videoVp8: boolean;
+      videoVp9: boolean;
+      videoPrimeiro: CodecDeVideo;
+      videoQualidade: QualidadeDeVideo;
+      porteiros: string[];
+    } & AdminVisible);
+export type AdminAberto = Extract<AdminState, { aberto: true }>;
 
 /** (rc.3) O resultado do último adminLogin. */
 export interface AdminLoginResult {
@@ -261,6 +361,8 @@ export interface AppState {
   empresa: CompanyList;
   /** (0.2.0) Só no Windows: o estado do iPhone vem sem o campo. */
   chat?: ChatSummary;
+  /** (0.3.0) As escolhas do vídeo; sempre vem do núcleo (neutro no iPhone), o `?` protege o estado montado à mão. */
+  video?: VideoSettings;
   /** (iPhone) Os campos abaixo só vêm no modo iPhone. */
   plataforma?: Platform;
   agenda?: AgendaSummary;
@@ -309,8 +411,8 @@ export type Command =
     }
   | { cmd: 'selectAccount'; contaId: string }
   | { cmd: 'removeAccount'; contaId: string }
-  | { cmd: 'dial'; numero: string; contato?: boolean }
-  | { cmd: 'answer' }
+  | { cmd: 'dial'; numero: string; contato?: boolean; video?: boolean }
+  | { cmd: 'answer'; video?: boolean }
   | { cmd: 'reject' }
   | { cmd: 'hangup'; id?: number }
   | { cmd: 'hold'; on?: boolean }
@@ -352,6 +454,13 @@ export type Command =
       codigoPuxar?: string;
       servidores?: AdminServer[];
       canal?: UpdateChannel;
+      /** (0.3.0) O cartão Vídeo. */
+      videoH264?: boolean;
+      videoVp8?: boolean;
+      videoVp9?: boolean;
+      videoPrimeiro?: CodecDeVideo;
+      videoQualidade?: QualidadeDeVideo;
+      porteiros?: string[];
     }
   /** rc.4: Importar e Exportar planilha (as janelas do Windows; o resultado vem num toast) e a planilha da empresa
    *  (`link` "" tira a lista; "Atualizar agora" lê de novo). */
@@ -373,7 +482,22 @@ export type Command =
   | { cmd: 'chatUnlink' }
   | { cmd: 'chatNotify'; conversa: number; titulo: string; texto: string }
   | { cmd: 'chatBadge'; n: number }
-  | { cmd: 'chatDownload'; arquivo: string; nome: string };
+  | { cmd: 'chatDownload'; arquivo: string; nome: string }
+  /** (0.3.0; o iPhone recusa) O vídeo: a nossa câmera na ligação, a câmera e o H.264 das Configurações, o teste da câmera,
+   *  as vistas à vista de cada página, o modo da janela, o novo download do H.264 e a altura do aviso. */
+  | { cmd: 'camera'; on: boolean }
+  | { cmd: 'setVideo'; camera?: string; h264?: boolean }
+  | { cmd: 'cameraTest'; on: boolean }
+  | { cmd: 'videoViews'; pagina: PaginaDeVideo; vistas: VistaDeVideoNome[] }
+  | { cmd: 'videoWindow'; modo: VideoJanela }
+  | { cmd: 'h264Retry' }
+  | { cmd: 'noticeHeight'; altura: number }
+  /** (0.4.0; o iPhone recusa) A sala: o Adicionar à sala (`contato`: o número de um contato, com a regra dos contatos,
+   *  como no `dial`), o Tirar da sala (o `id` de um convidado), o Encerrar a sala e o Voltar para a sala. */
+  | { cmd: 'salaAdicionar'; numero: string; contato?: boolean }
+  | { cmd: 'salaTirar'; id: number }
+  | { cmd: 'salaEncerrar' }
+  | { cmd: 'salaVoltar' };
 
 /**
  * Os únicos endereços que o openExternal aceita. O `suporte` (o discador do iPhone) só vale no modo iPhone: no Windows o

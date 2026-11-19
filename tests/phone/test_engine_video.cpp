@@ -12,11 +12,8 @@
 #if PJMEDIA_HAS_VIDEO
 #include <pjmedia-videodev/videodev_imp.h>
 #include <pjmedia/event.h>
-
-// A fábrica das câmeras de barras coloridas da PJSIP (PJMEDIA_VIDEO_DEV_HAS_CBAR_SRC, ligada no Linux dos testes).
-// Nenhum cabeçalho da PJSIP a declara: ela só serve de chave para tirar a fábrica (pjmedia_vid_unregister_factory).
-extern "C" pjmedia_vid_dev_factory* pjmedia_cbar_factory(pj_pool_factory* poolFactory);
 #endif
+#include "video_devices_fixture.h"
 
 #include <algorithm>
 #include <atomic>
@@ -30,6 +27,8 @@ extern "C" pjmedia_vid_dev_factory* pjmedia_cbar_factory(pj_pool_factory* poolFa
 #include "SipEngine.h"
 #include "Video.h"
 #if PJMEDIA_HAS_VIDEO
+#include "EngineCall.h"       // os ids dos temporizadores da tabela (CallTable::kKeyframeTimer)
+#include "EngineEndpoint.h"   // o FailNextSchedule
 #include "VideoRenderer.h"
 #endif
 
@@ -37,12 +36,15 @@ using namespace starsonic;
 using phone_test::Phone;
 
 #if PJMEDIA_HAS_VIDEO
+using phone_test::AddColorbar;
 using phone_test::CallEvent;
 using phone_test::Contains;
+using phone_test::FindDevice;
 using phone_test::kWaitSeconds;
 using phone_test::Last;
 using phone_test::Lines;
 using phone_test::RecordingListener;
+using phone_test::RemoveColorbar;
 using phone_test::TestSink;
 using phone_test::Transfers;
 using phone_test::VideoEvent;
@@ -65,6 +67,9 @@ VideoSettings TestSettings() {
 void NullVideo(EngineConfig& config) { config.nullVideo = true; }
 
 bool CameraOn(const CallVideo& video) { return video.active && video.camera; }
+
+// A ligação em pausa: sem o vídeo, sem a câmera e sem a imagem da outra ponta.
+bool VideoPaused(const CallVideo& video) { return !video.active && !video.camera && !video.remote; }
 
 bool WaitVideo(Phone& phone, int id, const std::function<bool(const CallVideo&)>& condition) {
     return phone.listener.WaitForVideo(id, condition, kWaitSeconds);
@@ -96,18 +101,6 @@ std::string DeviceNames(const std::vector<VideoDevice>& devices) {
     std::string names;
     for (const VideoDevice& device : devices) names += device.name + "; ";
     return names;
-}
-
-// O id de agora do dispositivo com esse nome (e a direção) na lista de vídeo da PJSIP, ou PJMEDIA_VID_INVALID_DEV.
-pjmedia_vid_dev_index FindDevice(const std::string& name, pjmedia_dir dir) {
-    for (unsigned id = 0; id < pjmedia_vid_dev_count(); ++id) {
-        pjmedia_vid_dev_info info;
-        if (pjmedia_vid_dev_get_info(static_cast<pjmedia_vid_dev_index>(id), &info) == PJ_SUCCESS &&
-            name == info.name && (info.dir & dir) != 0) {
-            return static_cast<pjmedia_vid_dev_index>(id);
-        }
-    }
-    return PJMEDIA_VID_INVALID_DEV;
 }
 
 // A câmera que a conta do motor (a única do pjsua) guarda para as próximas ligações. Numa thread que já chamou o motor
@@ -458,12 +451,31 @@ void RegisterTestCamera() {
     REQUIRE(FindDevice(kTestCamera, PJMEDIA_DIR_CAPTURE) != PJMEDIA_VID_INVALID_DEV);
 }
 
-// Tira da PJSIP a fábrica das câmeras de barras coloridas, que vem antes do desenhista na lista: na próxima releitura,
-// os ids dos dispositivos de depois dela mudam.
-void RemoveColorbar() {
-    REQUIRE(FindDevice("Colorbar generator", PJMEDIA_DIR_CAPTURE) != PJMEDIA_VID_INVALID_DEV);
-    REQUIRE(pjmedia_vid_unregister_factory(&pjmedia_cbar_factory, nullptr) == PJ_SUCCESS);
+// O porteiro tocando como a segunda ligação (com o TestCameraScope do ruído e o sink já no motor): uma ligação com
+// vídeo ao 2003, com o eco, e depois o 9001, um Porteiro, com o 183 e a imagem dele chegando. A PORTA guarda os
+// datagramas da primeira (VP8, a câmera de teste com o canto de ruído), que o registrador manda de volta como a imagem
+// do porteiro: a reprodução dura uns 2,5 s depois do 183, e o que confere a imagem dele vem logo. *first: o id da
+// primeira ligação.
+int DoorphoneRingsAsSecond(Phone& phone, const TestSink& sink, int* first) {
+    VideoSettings settings = TestSettings();
+    settings.h264 = false;
+    settings.doorphones = {"9001"};
+    phone.engine->SetVideoSettings(settings);
+    RegisterTestCamera();
+    REQUIRE(phone.engine->SetCaptureDevice(kTestCamera));
+    REQUIRE(phone.registrar.Control("VIDEO ECHO on") == Lines{"OK"});
+    phone.registrar.ResetVideoPackets();
+    *first = phone.engine->MakeCall("2003", true);
+    REQUIRE(*first > 0);
+    REQUIRE(phone.registrar.WaitForVideoPackets(300, 10));
+    REQUIRE(sink.WaitFor(*first, 10, 5));
+    const int doorphone = phone.RingVideo("9001", "VP8", true);
+    REQUIRE(phone.registrar.WaitForLog("sdp-out 2001 183 video=sim", kWaitSeconds));
+    return doorphone;
 }
+
+// Um porteiro com a imagem chegando e sem a nossa câmera.
+bool DoorphoneImage(const CallVideo& video) { return video.doorphone && video.active && video.remote && !video.camera; }
 
 }  // namespace
 
@@ -576,6 +588,127 @@ TEST_CASE("the camera stops and starts without a re-INVITE") {
     CHECK(PacketsRise(phone));
     CHECK(WaitVideo(phone, id, CameraOn));
     CHECK(LinesStartingWith(phone, "reinv-in") == reinvites);
+}
+
+TEST_CASE("our video sends a keyframe every 3 seconds without a request") {
+    Phone phone;
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.VideosText());
+    INFO(phone.listener.LogTail());
+
+    // Nenhuma linha no log por quadro-chave (o diagnóstico do app grava o nível 4: seria uma a cada 3 s). O pjsua
+    // escreve "set video stream, op=<op>" a cada pjsua_call_set_vid_strm, e o motor não passa adiante a do
+    // quadro-chave; a do STOP_TRANSMIT, quando a câmera desliga, passa: a contagem enxerga a linha.
+    const std::string setVideoStream = "set video stream, op=";
+    phone.listener.CountLog(setVideoStream);
+
+    // Os quadros-chave que saem em 7 s numa ligação com vídeo ao 2003, com as escolhas dadas, depois dos do começo do
+    // stream (um por segundo: o PJMEDIA_VID_STREAM_START_KEYFRAME_CNT da PJSIP), que a contagem também enxerga; nos
+    // 7 s, nenhuma linha "set video stream". O registrador falso nunca pede um quadro-chave (nem o INFO, nem o RTCP):
+    // os que chegam são os do motor. *call: a ligação, de pé.
+    auto measure = [&](const VideoSettings& settings, int* call) {
+        phone.engine->SetVideoSettings(settings);
+        phone.registrar.ResetVideoPackets();
+        *call = VideoCall(phone, "2003");
+        const Clock::time_point ready = Clock::now();
+        std::this_thread::sleep_until(ready + std::chrono::seconds(5));
+        const int startKeyframes = phone.registrar.VideoKeyframes();
+        CHECK(startKeyframes >= 5);
+        // Os do começo acabam até uns 5 s daqui, e o primeiro periódico vem em até 3 s depois do último deles: os
+        // pedidos que a PJSIP recusa no começo (a menos de 1 s de um quadro-chave) voltam em 1 s. Sem isso, o do H.264
+        // vinha quase 4 s depois do último do começo, e estes 3 s ficavam sem nenhum.
+        std::this_thread::sleep_until(ready + std::chrono::seconds(8));
+        CHECK(phone.registrar.VideoKeyframes() > startKeyframes);
+        phone.registrar.ResetVideoPackets();
+        const size_t setVideoStreamLines = phone.listener.LogCount(setVideoStream);
+        std::this_thread::sleep_for(std::chrono::seconds(7));
+        CHECK(phone.registrar.VideoPackets() > 0);   // a imagem seguiu saindo
+        CHECK(phone.listener.LogCount(setVideoStream) == setVideoStreamLines);
+        return phone.registrar.VideoKeyframes();
+    };
+
+    VideoSettings h264 = TestSettings();
+    h264.vp8 = false;
+    int call = 0;
+    const int h264Keyframes = measure(h264, &call);
+    CHECK(h264Keyframes >= 2);
+    REQUIRE(phone.engine->Hangup(call));
+    REQUIRE(phone.WaitState(call, CallState::Disconnected));
+
+    VideoSettings vp8 = TestSettings();
+    vp8.h264 = false;
+    const int vp8Keyframes = measure(vp8, &call);
+    CHECK(vp8Keyframes >= 2);
+
+    // Com a nossa câmera desligada, nada sai: nem a imagem, nem um quadro-chave.
+    const size_t linesBeforeCameraOff = phone.listener.LogCount(setVideoStream);
+    REQUIRE(phone.engine->SetCamera(call, false));
+    CHECK(PacketsStop(phone));
+    CHECK(phone.listener.LogCount(setVideoStream) > linesBeforeCameraOff);   // a do STOP_TRANSMIT
+    phone.registrar.ResetVideoPackets();
+    std::this_thread::sleep_for(std::chrono::seconds(7));
+    const int cameraOffKeyframes = phone.registrar.VideoKeyframes();
+    CHECK(cameraOffKeyframes == 0);
+    CHECK(phone.registrar.VideoPackets() == 0);
+
+    // A câmera de volta, na mesma ligação: o envio volta com um quadro-chave (o do pjsua ao retomar), e o temporizador,
+    // que parou com ela desligada, volta a pedir um a cada 3 s (o SyncVideo o marca de novo).
+    REQUIRE(phone.engine->SetCamera(call, true));
+    CHECK(WaitUntil([&] { return phone.registrar.VideoKeyframes() >= 1; }, 5));
+    phone.registrar.ResetVideoPackets();
+    std::this_thread::sleep_for(std::chrono::seconds(7));
+    const int cameraOnKeyframes = phone.registrar.VideoKeyframes();
+    CHECK(cameraOnKeyframes >= 2);
+}
+
+// O agendamento que falha (EngineEndpoint::FailNextSchedule): a linha de nível 2 do motor.
+const char kScheduleFailed[] = "nao foi possivel agendar o temporizador";
+
+TEST_CASE("a keyframe timer that could not be scheduled is armed again by the next video change") {
+    Phone phone;
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.VideosText());
+    INFO(phone.listener.LogTail());
+    EngineEndpoint& endpoint = static_cast<EngineEndpoint&>(pj::Endpoint::instance());
+
+    VideoSettings settings = TestSettings();
+    settings.h264 = false;
+    phone.engine->SetVideoSettings(settings);
+    const int call = VideoCall(phone, "2003");
+    // Depois dos quadros-chave do começo do stream (uns 5 s: os que faltarem voltam com a câmera, sem o temporizador),
+    // a volta do temporizador do quadro-chave (no próximo pedido, em até 3 s) não é agendada: ele para.
+    std::this_thread::sleep_for(std::chrono::milliseconds(6500));
+    phone.listener.CountLog(kScheduleFailed);
+    endpoint.FailNextSchedule(CallTable::kKeyframeTimer);
+    REQUIRE(WaitUntil([&] { return phone.listener.LogCount(kScheduleFailed) == 1; }, 5));
+    // A próxima mudança do vídeo (a câmera desligada e ligada de novo) o marca outra vez: os quadros-chave voltam.
+    REQUIRE(phone.engine->SetCamera(call, false));
+    CHECK(PacketsStop(phone));
+    phone.registrar.ResetVideoPackets();
+    REQUIRE(phone.engine->SetCamera(call, true));
+    CHECK(WaitUntil([&] { return phone.registrar.VideoKeyframes() >= 1; }, 5));   // o do pjsua ao retomar
+    phone.registrar.ResetVideoPackets();
+    std::this_thread::sleep_for(std::chrono::seconds(7));
+    CHECK(phone.registrar.VideoKeyframes() >= 2);
+}
+
+TEST_CASE("remote still goes false after a remote check that could not be scheduled") {
+    Phone phone;
+    INFO(phone.listener.VideosText());
+    INFO(phone.listener.LogTail());
+    EngineEndpoint& endpoint = static_cast<EngineEndpoint&>(pj::Endpoint::instance());
+
+    REQUIRE(phone.registrar.Control("VIDEO ECHO on") == Lines{"OK"});
+    const int id = VideoCall(phone, "2003");
+    REQUIRE(WaitVideo(phone, id, [](const CallVideo& video) { return video.remote; }));
+    // A próxima conferência do remote (a cada 250 ms enquanto a imagem chega) não é agendada; a imagem segue chegando.
+    phone.listener.CountLog(kScheduleFailed);
+    endpoint.FailNextSchedule(CallTable::kRemoteTimer);
+    REQUIRE(WaitUntil([&] { return phone.listener.LogCount(kScheduleFailed) == 1; }, 2));
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    // A imagem para: o remote cai em uns 2 s, como sempre (o próximo quadro tinha agendado a conferência de novo).
+    REQUIRE(phone.engine->SetCamera(id, false));
+    CHECK(WaitVideoMs(phone, id, [](const CallVideo& video) { return !video.remote; }, 3500));
 }
 
 TEST_CASE("a camera that does not open logs camera: falhou once, at level 3") {
@@ -809,11 +942,16 @@ TEST_CASE("a doorphone whose H264 PJSIP cannot answer reports refused once and l
     REQUIRE(WaitUntil([&] { return phone.listener.RefusedCount(id) == 1; }, kWaitSeconds));
     CHECK_FALSE(RefusedEvent(phone, id).early);
     CHECK_FALSE(phone.engine->Video(id).early);
+    // O Porteiro segue sendo ele (a recebida de um número dos Porteiros que oferece vídeo com um codec em comum),
+    // também com o 183 sem o vídeo, até o fim.
+    CHECK(RefusedEvent(phone, id).doorphone);
+    CHECK(phone.engine->Video(id).doorphone);
     REQUIRE(phone.engine->Answer(id, true));
     REQUIRE(phone.WaitState(id, CallState::Confirmed));
     CHECK(phone.registrar.VideoPacketsStay(2));
     CHECK(phone.registrar.VideoPackets() == 0);
     CHECK(phone.listener.RefusedCount(id) == 1);
+    CHECK(phone.engine->Video(id).doorphone);
     // O 200 leva o mesmo número de vídeos do 183: o pjsua guarda o primeiro e reclama de um diferente.
     CHECK(phone.listener.LogCount("The call setting changes is ignored") == 0);
 }
@@ -886,11 +1024,19 @@ TEST_CASE("a second call pauses the first call's image") {
     INFO(phone.listener.CallsText());
 
     const int first = VideoCall(phone, "2003");
-    // Com a segunda tocando, a primeira continua mandando.
-    const int second = phone.Ring();
+    // Com a segunda tocando, a primeira para de mandar e fica sem imagem: com duas ligações, nenhuma tem vídeo (spec da
+    // videochamada, 4.2).
+    const int ringing = phone.Ring();
+    CHECK(WaitVideo(phone, first, VideoPaused));
+    CHECK(PacketsStop(phone));
+    // A segunda recusada: a primeira, sozinha e fora da espera, manda de novo.
+    REQUIRE(phone.engine->Reject(ringing));
+    REQUIRE(phone.WaitState(ringing, CallState::Disconnected));
+    CHECK(WaitVideo(phone, first, CameraOn));
     CHECK(PacketsRise(phone));
-    CHECK(CameraOn(phone.engine->Video(first)));
-    // A segunda atendida: a primeira vai para a espera, sem imagem.
+    // A segunda atendida: a primeira vai para a espera, sem imagem; com a segunda desligada, a retomada a devolve.
+    const int second = phone.Ring();
+    CHECK(WaitVideo(phone, first, [](const CallVideo& video) { return !video.camera && !video.active; }));
     REQUIRE(phone.engine->Answer(second));
     CHECK(WaitVideo(phone, first, [](const CallVideo& video) { return !video.camera; }));
     CHECK(PacketsStop(phone));
@@ -907,7 +1053,10 @@ TEST_CASE("the conference has no image") {
     INFO(phone.listener.VideosText());
 
     const int first = VideoCall(phone, "2002");
-    const int second = VideoCall(phone, "2003");   // a primeira vai para a espera
+    // A segunda, com vídeo, põe a primeira em espera (com duas ligações, nenhuma manda a câmera).
+    const int second = phone.engine->MakeCall("2003", true);
+    REQUIRE(second > 0);
+    REQUIRE(phone.WaitState(second, CallState::Confirmed));
     REQUIRE(phone.engine->Join(first, second));
     for (const int id : {first, second}) {
         CHECK(WaitVideo(phone, id, [](const CallVideo& video) { return !video.active && !video.camera; }));
@@ -1199,20 +1348,32 @@ TEST_CASE("two video calls keep their frames apart and the paused one shows noth
 
     const int first = VideoCall(phone, "2002");
     REQUIRE(sink.WaitFor(first, 10, 5));
-    // A segunda põe a primeira em espera: só a segunda manda e mostra.
-    const int second = VideoCall(phone, "2003");
+    // A segunda põe a primeira em espera, e com duas ligações nenhuma manda nem mostra (spec da videochamada, 4.2).
+    const int second = phone.engine->MakeCall("2003", true);
+    REQUIRE(second > 0);
+    REQUIRE(phone.WaitState(second, CallState::Confirmed));
     CHECK(phone.registrar.WaitForLog("reinv-in 2002 sendonly", kWaitSeconds));
-    CHECK(WaitVideo(phone, first, [](const CallVideo& video) { return !video.active && !video.remote; }));
-    REQUIRE(sink.WaitFor(second, 10, 5));
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    for (const int id : {first, second}) {
+        CHECK(WaitVideo(phone, id, VideoPaused));
+    }
+    CHECK(PacketsStop(phone));
     const Clock::time_point paused = Clock::now();
     std::this_thread::sleep_for(std::chrono::seconds(1));
-    CHECK(sink.Count(second, 0, 0, paused) > 0);
+    CHECK(sink.Count(first, 0, 0, paused) == 0);
+    CHECK(sink.Count(second) == 0);
+    CHECK_FALSE(phone.engine->Video(first).remote);
+    CHECK_FALSE(phone.engine->Video(second).remote);
+
+    // A primeira acaba: a segunda, sozinha e fora da espera, manda e mostra, com o id dela; a primeira, nada mais.
+    REQUIRE(phone.engine->Hangup(first));
+    REQUIRE(phone.WaitState(first, CallState::Disconnected));
+    CHECK(WaitVideo(phone, second, CameraOn));
+    CHECK(PacketsRise(phone));
+    REQUIRE(sink.WaitFor(second, 10, 5));
     CHECK(sink.Count(first, 0, 0, paused) == 0);
     for (const TestSink::Frame& frame : sink.Frames()) {
         CHECK((frame.callId == first || frame.callId == second || frame.callId == TestSink::kLocal));
     }
-    CHECK_FALSE(phone.engine->Video(first).remote);
 }
 
 TEST_CASE("no frame reaches the sink after SetFrameSink(nullptr)") {
@@ -1328,7 +1489,7 @@ TEST_CASE("a doorphone's image arrives before the answer and nothing goes out") 
     CHECK_FALSE(phone.engine->Video(id).early);
 }
 
-TEST_CASE("a doorphone ringing during a video call is paused and its image does not reach the sink") {
+TEST_CASE("a doorphone ringing as the second call shows its image and the first call keeps only voice") {
     TestCameraScope cameras(1, 0, true);
     TestSink sink;
     Phone phone;
@@ -1337,32 +1498,105 @@ TEST_CASE("a doorphone ringing during a video call is paused and its image does 
     INFO(phone.listener.VideosText());
     phone.engine->SetFrameSink(&sink);
 
-    VideoSettings settings = TestSettings();
-    settings.h264 = false;
-    settings.doorphones = {"9001"};
-    phone.engine->SetVideoSettings(settings);
-    RegisterTestCamera();
-    REQUIRE(phone.engine->SetCaptureDevice(kTestCamera));
-    REQUIRE(phone.registrar.Control("VIDEO ECHO on") == Lines{"OK"});
-    // A ligação ativa, com o eco: a PORTA guarda os datagramas dela, a imagem do porteiro que toca depois.
-    phone.registrar.ResetVideoPackets();
-    const int active = phone.engine->MakeCall("2003", true);
-    REQUIRE(active > 0);
-    REQUIRE(phone.registrar.WaitForVideoPackets(300, 10));
-    REQUIRE(sink.WaitFor(active, 10, 5));
-
-    // O porteiro toca como a segunda ligação, com o 183 e a imagem dele chegando: a segunda que toca fica em pausa, e
-    // a imagem dela não passa do desenhista.
-    const int ringing = phone.RingVideo("9001", "VP8", true);
-    CHECK(phone.registrar.WaitForLog("sdp-out 2001 183 video=sim", kWaitSeconds));
-    CHECK(WaitVideo(phone, ringing, [](const CallVideo& video) { return video.offered && video.early; }));
+    // Com duas ligações o vídeo pausa (spec da videochamada, 4.2), menos a imagem do porteiro: ela passa do desenhista,
+    // também com ele tocando como a segunda (a exceção do porteiro, decisão do responsável de 11/11/2026). A primeira
+    // fica só com a voz, e nada é mandado, nem a ela nem ao porteiro.
+    int first = 0;
+    const int ringing = DoorphoneRingsAsSecond(phone, sink, &first);
     const Clock::time_point rang = Clock::now();
-    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
-    CHECK(sink.Count(ringing) == 0);
-    CHECK(sink.Count(active, 0, 0, rang) > 0);
-    const CallVideo video = phone.engine->Video(ringing);
-    CHECK_FALSE(video.active);
-    CHECK_FALSE(video.remote);
+    CHECK(sink.WaitFor(ringing, 5, 5));
+    CHECK(WaitVideo(phone, ringing,
+                    [](const CallVideo& video) { return video.offered && video.early && DoorphoneImage(video); }));
+    CHECK(WaitVideo(phone, first, VideoPaused));
+    CHECK(PacketsStop(phone));
+    CHECK(sink.Count(first, 0, 0, rang) == 0);
+    CHECK_FALSE(phone.engine->Video(first).doorphone);
+}
+
+TEST_CASE("a doorphone answered with the first call on hold keeps its image and our camera stays off") {
+    TestCameraScope cameras(1, 0, true);
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.VideosText());
+    phone.engine->SetFrameSink(&sink);
+
+    int first = 0;
+    const int doorphone = DoorphoneRingsAsSecond(phone, sink, &first);
+    REQUIRE(sink.WaitFor(doorphone, 5, 5));
+    // Atendido, o porteiro fica com a imagem, e a primeira vai para a espera. O envio segue a regra das duas ligações:
+    // a câmera não manda ao porteiro enquanto a outra existir, nem com o desejo dela ligado (o Atender com vídeo).
+    REQUIRE(phone.engine->Answer(doorphone, true));
+    REQUIRE(phone.WaitState(doorphone, CallState::Confirmed));
+    const Clock::time_point answered = Clock::now();
+    CHECK(WaitUntil([&] { return sink.Count(doorphone, 0, 0, answered) >= 5; }, 5));
+    CHECK(WaitVideo(phone, doorphone, [](const CallVideo& video) { return !video.early && DoorphoneImage(video); }));
+    CHECK(phone.registrar.WaitForLog("reinv-in 2003 sendonly", kWaitSeconds));
+    CHECK(PacketsStop(phone));
+    CHECK(sink.Count(TestSink::kLocal, 0, 0, answered) == 0);   // a câmera nem abre
+    CHECK_FALSE(phone.engine->Video(doorphone).camera);
+    CHECK(VideoPaused(phone.engine->Video(first)));
+}
+
+TEST_CASE("a doorphone on hold pauses its image") {
+    TestCameraScope cameras(1, 0, true);
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.VideosText());
+    phone.engine->SetFrameSink(&sink);
+
+    int first = 0;
+    const int doorphone = DoorphoneRingsAsSecond(phone, sink, &first);
+    REQUIRE(sink.WaitFor(doorphone, 5, 5));
+    REQUIRE(phone.engine->Answer(doorphone, false));
+    REQUIRE(phone.WaitState(doorphone, CallState::Confirmed));
+    const Clock::time_point answered = Clock::now();
+    REQUIRE(WaitUntil([&] { return sink.Count(doorphone, 0, 0, answered) >= 3; }, 5));
+    // A espera pausa a imagem do porteiro como a de qualquer ligação: a exceção é só a da outra ligação.
+    REQUIRE(phone.engine->SetHold(doorphone, true));
+    CHECK(WaitVideo(phone, doorphone, VideoPaused));
+    // 200 ms para o que já estava a caminho; o segundo seguinte cabe na reprodução do registrador, que acaba uns 2,6 s
+    // depois do 183 (com 500 ms aqui, ela às vezes acabava no meio dele).
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    const Clock::time_point held = Clock::now();
+    const int replayed = phone.registrar.VideoReplayed();
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    // O registrador ainda mandava a imagem do porteiro nesse segundo: nenhum quadro desenhado é a espera que segura, e
+    // não o fim da imagem.
+    CHECK(phone.registrar.VideoReplayed() > replayed);
+    CHECK(sink.Count(doorphone, 0, 0, held) == 0);
+    CHECK(phone.engine->Video(doorphone).doorphone);
+}
+
+TEST_CASE("a doorphone in a conference pauses its image") {
+    TestCameraScope cameras(1, 0, true);
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.VideosText());
+    phone.engine->SetFrameSink(&sink);
+
+    int first = 0;
+    const int doorphone = DoorphoneRingsAsSecond(phone, sink, &first);
+    REQUIRE(sink.WaitFor(doorphone, 5, 5));
+    REQUIRE(phone.engine->Answer(doorphone, false));
+    REQUIRE(phone.WaitState(doorphone, CallState::Confirmed));
+    // Na conferência as duas ficam só com a voz, também o porteiro: a imagem dele ainda chega ao motor (a reprodução
+    // segue), mas para no desenhista.
+    REQUIRE(phone.engine->Join(first, doorphone));
+    for (const int id : {first, doorphone}) CHECK(WaitVideo(phone, id, VideoPaused));
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    const Clock::time_point joined = Clock::now();
+    const int replayed = phone.registrar.VideoReplayed();
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    // O registrador ainda mandava a imagem do porteiro nesse segundo (a reprodução não tinha acabado): nenhum quadro
+    // desenhado é o portão que segura, e não o fim da imagem.
+    CHECK(phone.registrar.VideoReplayed() > replayed);
+    CHECK(sink.Count(doorphone, 0, 0, joined) == 0);
 }
 
 TEST_CASE("a refresh finds our renderer and the camera again by name") {
@@ -1460,6 +1694,44 @@ TEST_CASE("the camera in use that disappears on a refresh reports Disconnected a
     INFO(DeviceNames(devices));
     CHECK(std::none_of(devices.begin(), devices.end(),
                        [](const VideoDevice& device) { return device.name == kTestCamera; }));
+}
+
+TEST_CASE("a second refresh before the camera opens again finds it by its name and reports nothing") {
+    TestCameraScope cameras(1);
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.listener.CameraProblemsText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetFrameSink(&sink);
+    EngineEndpoint& endpoint = static_cast<EngineEndpoint&>(pj::Endpoint::instance());
+
+    RegisterTestCamera();
+    REQUIRE(phone.engine->SetCaptureDevice(kTestCamera));
+    REQUIRE(phone.engine->StartCameraTest());
+    REQUIRE(sink.WaitFor(TestSink::kLocal, 5, 3));
+    const pjmedia_vid_dev_index opened = FindDevice(kTestCamera, PJMEDIA_DIR_CAPTURE);
+
+    // Sem as barras, a câmera do teste muda de lugar, mas a passada que a abre de novo não é agendada: a prévia segue
+    // aberta no id de antes. As barras voltam, no fim da lista, e saem de novo: o id de antes não vale mais.
+    phone.listener.CountLog(kScheduleFailed);
+    endpoint.FailNextSchedule(CallTable::kCallTableTimer);
+    RemoveColorbar();
+    phone.engine->RefreshVideoDevices();
+    REQUIRE(WaitUntil([&] { return phone.listener.LogCount(kScheduleFailed) == 1; }, 5));
+    REQUIRE(FindDevice(kTestCamera, PJMEDIA_DIR_CAPTURE) != opened);
+    AddColorbar();
+    RemoveColorbar();
+    pjmedia_vid_dev_info info;
+    REQUIRE(pjmedia_vid_dev_get_info(opened, &info) != PJ_SUCCESS);
+
+    // A segunda releitura acha a câmera pelo nome de quando ela abriu (ela segue na lista): nenhum problema, e a
+    // passada dela fecha a prévia e a abre de novo, no id novo.
+    phone.engine->RefreshVideoDevices();
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    const Clock::time_point reopened = Clock::now();
+    CHECK(WaitUntil([&] { return sink.Count(TestSink::kLocal, 0, 0, reopened) >= 5; }, 3));
+    CHECK(phone.listener.CameraProblems().empty());
 }
 
 TEST_CASE("a capture error reports Disconnected and stops the camera test") {

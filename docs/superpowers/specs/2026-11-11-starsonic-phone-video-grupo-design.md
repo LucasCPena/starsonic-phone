@@ -7,9 +7,9 @@
   3. o que pode dar errado;
   4. os testes e a entrega.
 
-  As telas de verdade vão para um quadro novo, "Starsonic Phone — sala de vídeo", que o responsável aprova antes do código das telas (seção 12). Esta spec escrita espera a aprovação dele.
+  As telas de verdade vão para um quadro novo, "Starsonic Phone — sala de vídeo", que o responsável aprova antes do código das telas (seção 12). Esta spec escrita foi aprovada pelo responsável em 11/11/2026, às 17:06.
 - **Versão alvo:** o app do Windows 0.4.0-rc.1.
-- **Base:** a 0.3.0-rc.1, isto é, a branch `video-etapa-2`, com:
+- **Base:** a branch `video-etapa-2` (a 0.3.0-rc.2, publicada em 11/11/2026), com:
   - a videochamada de duas pessoas (spec `docs/superpowers/specs/2026-11-09-starsonic-phone-video-design.md`);
   - o motor com o vídeo da PJSIP (`starsonic/phone`, a tabela das ligações em `EngineCallVideo.cpp`);
   - o núcleo com as memórias de vídeo (`starsonic/desktop`, o `VideoSink`);

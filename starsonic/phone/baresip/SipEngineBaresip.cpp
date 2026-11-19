@@ -347,6 +347,13 @@ public:
         return -1;
     }
 
+    // A sala de vídeo em grupo também é só do motor do PJSIP com o vídeo: nenhum convidado é chamado, e o OnRoom nunca
+    // sai.
+    int RoomAdd() const {
+        Log(2, "convidado da sala recusado: sem video neste motor");
+        return -1;
+    }
+
     // O caminho do som é do iPhone (spec 6.1): a lista só tem o dispositivo nulo, com nullAudio, e escolher um
     // dispositivo não muda nada no som.
     std::vector<AudioDevice> AudioDevices() {
@@ -585,6 +592,10 @@ void SipEngine::RefreshVideoDevices() {}
 bool SipEngine::StartCameraTest() { return false; }
 
 void SipEngine::StopCameraTest() {}
+
+int SipEngine::RoomAdd(const std::string&) { return impl_->RoomAdd(); }
+
+RoomInfo SipEngine::Room() const { return RoomInfo(); }
 
 bool SipEngine::Reject(int callId) { return impl_->Reject(callId); }
 

@@ -4,4 +4,4 @@
 #define PJMEDIA_HAS_VIDEO        1
 #define PJMEDIA_HAS_VPX_CODEC_VP9 1
 #define PJMEDIA_HAS_SRTP         1
-#define PJSUA_MAX_CALLS          4
+#define PJSUA_MAX_CALLS          8

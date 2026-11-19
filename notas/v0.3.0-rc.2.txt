@@ -1,0 +1,2 @@
+Videochamada: a imagem do porteiro aparece mesmo durante outra ligação, também no aviso do canto com o app na frente. E se a imagem da sua câmera travar do outro lado, como depois de uma transferência, ela volta em até 3 segundos.
+Esta é uma versão de teste.

@@ -77,6 +77,7 @@ public:
     bool Transfer(int callId, const std::string& number) override;
     bool TransferAttended(int callId, int targetCallId) override;
     int CallCount() const override;
+    int RoomAdd(const std::string& number) override;   // (0.4.0) a sala de video: espera o motor, como o MakeCall
 
     // RegistrationPort
     int SetAccount(const AccountInput& input) override;
@@ -104,6 +105,7 @@ public:
     void OnBlf(const std::string& number, BlfState state) override;
     void OnCallVideo(int callId, const CallVideo& video) override;
     void OnCameraProblem(CameraProblem problem) override;
+    void OnRoom(const RoomInfo& room) override;   // (0.4.0) a sala de video
     void OnLog(int level, const std::string& line) override;
 
 private:
