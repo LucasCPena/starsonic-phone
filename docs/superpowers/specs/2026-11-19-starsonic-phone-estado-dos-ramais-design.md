@@ -1,7 +1,7 @@
 # Starsonic Phone — o estado dos ramais na administração do chat — especificação de design
 
 - **Data:** 19/11/2026
-- **Status:** para o responsável aprovar. O pedido é de 18/11, às 17:48. Em 19/11 ele disse para que serve ("consigo monitorar os clientes"), confirmou que esses clientes usam o app do Windows com o chat ligado, e aceitou a proposta dos três estados, só com a página, sem aviso por e-mail ("pode fazer", 00:24).
+- **Status:** aprovada em 19/11. O pedido é de 18/11, às 17:48. Em 19/11 o responsável disse para que serve ("consigo monitorar os clientes"), confirmou que esses clientes usam o app do Windows com o chat ligado, aceitou a proposta dos três estados, só com a página, sem aviso por e-mail ("pode fazer", 00:24), e, às 03:50, com este desenho na mão, respondeu "Continue". O plano da primeira entrega (o servidor do chat e as páginas) é o `docs/superpowers/plans/2026-11-19-estado-dos-ramais-servidor.md`. O que o plano mudou neste desenho está no fim da seção 13.
 - **Telas:** o quadro "Starsonic Phone — telas do chat", na linha "O estado dos ramais": as duas telas novas da página de administração.
 - **Base:** a spec do chat (`2026-11-04-starsonic-phone-chat-design.md`), que deixou "quem está online" fora da 1ª versão. Esta spec traz isso só para a página de administração.
 
@@ -36,13 +36,13 @@ As duas estão no quadro, e valem como referência do que aparece e de onde.
 - **A primeira página (as empresas):**
   - um cartão de número a mais: quantos ramais estão sem registro agora (ele some quando são zero);
   - o cartão "Sem registro agora": uma linha para cada ramal nesse estado, de todas as empresas, com a empresa, o nome, o ramal, há quanto tempo e o que o app diz. O mais antigo vem primeiro. Com mais de 50, mostra os 50 e diz quantos faltam. Sem nenhum, o cartão diz "Nenhum ramal sem registro agora.";
-  - na tabela das empresas, a coluna "Ramais agora", com as contas da empresa: online, sem registro (só quando há) e offline.
+  - na tabela das empresas, a coluna "Ramais agora", com as contas da empresa: online, sem registro (só quando há), no chat (só quando há) e offline. As contas somam o número de pessoas da empresa.
 - **A página de uma empresa:**
-  - as mesmas três contas, ao lado do título da tabela;
+  - as mesmas contas, ao lado do título da tabela;
   - a coluna "Estado" no lugar da "Última vez": o desenho, o nome do estado e uma segunda linha com o tempo;
   - uma bolinha em cada computador, com o estado daquele computador;
   - a legenda dos estados, embaixo da tabela.
-- **Nas duas:** a frase que diz que a página se atualiza sozinha a cada 30 segundos, e que o celular e os aparelhos de mesa não aparecem.
+- **Nas duas:** a frase que diz que a página se atualiza sozinha a cada 30 segundos, e que o celular e os aparelhos de mesa não aparecem. Sem o JavaScript, a parte do "se atualiza sozinha" não aparece.
 
 ### 4.2 Os estados
 
@@ -82,7 +82,7 @@ O que o app diz, na segunda linha do "Sem registro":
 
 Cada estado tem um desenho e um texto diferentes. A cor nunca diz o estado sozinha.
 
-**Quem entra na conta.** As linhas e as contas são as das pessoas que a página da empresa já lista hoje, as que entraram no chat e não foram tiradas dele. Cada pessoa é um ramal. Uma pessoa sem computador nenhum (todos foram tirados) aparece offline, com a "última vez" dela.
+**Quem entra na conta.** As linhas e as contas são as das pessoas que a página da empresa já lista hoje, as que entraram no chat e não foram tiradas dele. Cada pessoa é um ramal. Uma pessoa sem computador nenhum (todos foram tirados) aparece offline, com "sem computador no chat" na segunda linha: a "última vez" de uma pessoa é a dela nos computadores, e ela não tem nenhum.
 
 **O computador compartilhado.** A página lista, em cada pessoa, todos os computadores em que ela já entrou. Um computador só conta para a pessoa quando está ligado ao chat como ela, agora. Na linha de quem já usou aquele PC e não é a pessoa da vez, ele aparece fora.
 
@@ -91,7 +91,11 @@ Cada estado tem um desenho e um texto diferentes. A cor nunca diz o estado sozin
 - **O app** manda o estado do ramal ao chat toda vez que o canal dos eventos dele com o chat abre (a primeira vez e cada volta), depois de cada troca de conta, e a cada mudança. Uma mudança espera 2 s antes de ir, e só a última vai: um ramal que pisca não vira dez pedidos.
 - **O app conta o tempo.** Ele guarda o instante em que o ramal passou de registrado para sem registrar, ou o contrário, e manda os segundos desde então. Logo depois de abrir, o tempo conta desde que o app abriu.
 - **O chat** guarda o último estado de cada computador ligado nele, na memória, com o instante que sai da conta "agora menos os segundos". Quando o computador se desliga do chat, o estado é esquecido.
-- **A página** é montada no servidor, como hoje, com o que a memória tem naquela hora. Um arquivo pequeno de JavaScript busca a página de novo a cada 30 s e troca o conteúdo, sem mexer na rolagem. Ele não troca nada enquanto a pessoa está com o foco num campo ou num botão de formulário da página. Se a busca falha, a página avisa desde quando está sem atualizar.
+- **A página** é montada no servidor, como hoje, com o que a memória tem naquela hora. Um arquivo pequeno de JavaScript busca a página de novo a cada 30 s e troca o conteúdo, sem mexer na rolagem.
+  - Ele troca só as partes que mudam sozinhas (os números, as listas e as tabelas). O cartão do código da empresa, com o `Copiar o código`, e o de apagar a empresa ficam como estão.
+  - Ele não troca nada enquanto a pessoa está com o foco num campo ou num botão de formulário da página, ou em qualquer coisa dentro de uma parte que seria trocada (um link `Abrir` alcançado pelo teclado, por exemplo). Se isso passar de uma rodada, a página avisa desde quando está sem atualizar, e por quê.
+  - Se a busca falha, a página avisa desde quando está sem atualizar, e continua tentando a cada 30 s.
+  - Se a sessão da administração venceu (ela dura 12 horas) ou a empresa foi apagada, a página se recarrega: aparece a entrada, ou a página de "não encontrada". A atualização automática não estica a sessão.
 - **Depois de o chat reiniciar,** todos aparecem offline por alguns segundos, até os apps se ligarem de novo e mandarem o estado, já com o tempo certo.
 
 ## 5. Fora do escopo
@@ -143,9 +147,12 @@ Um app que recebe `404` nessa operação está falando com um chat antigo. Ele p
 
 ### 7.2 O servidor do chat
 
-- **O hub dos eventos** (`internal/eventos`) passa a dizer quais computadores estão ligados agora (com o canal aberto, ou abrindo: do `Reservar` em diante) e como qual pessoa, e avisa quando um se desliga. O aviso sai quando a ligação fecha e quando uma reserva desiste, e só quando a ligação que saiu ainda era a do computador: uma ligação antiga, que fecha depois de a nova entrar, não avisa nada. O hub já trata assim a troca de uma ligação pela outra.
-- **A memória dos estados** é uma peça pequena e nova: guarda, para cada computador ligado, o último estado e o instante desde quando ele vale (agora menos os segundos que o app mandou); esquece o computador quando o hub avisa que ele se desligou; responde, para uma lista de computadores, o estado de cada um. Ela usa o relógio do servidor que os testes já trocam.
-- **A operação** (`internal/api`) confere a chave, a pessoa, o corpo, o limite e se o computador está ligado, e escreve na memória.
+- **O hub dos eventos** (`internal/eventos`) passa a dizer quais computadores estão ligados agora (com o canal aberto, ou abrindo: do `Reservar` em diante) e como qual pessoa.
+- **A memória dos estados fica dentro do hub,** na ligação de cada computador: o último estado que o app disse, o instante desde quando ele vale (agora menos os segundos que o app mandou, pelo relógio do servidor que os testes já trocam) e a pessoa para quem ele foi dito. Assim, o estado some junto com a ligação, sem aviso nenhum entre duas peças e sem corrida entre o pedido do app e o desligamento. Três regras:
+  - o estado só aparece enquanto a pessoa da vez do computador é a pessoa para quem ele foi dito (é assim que a troca de pessoa o apaga);
+  - quando uma ligação nova do mesmo computador toma o lugar da antiga, ela herda o estado, e a antiga, que fecha depois, não apaga nada;
+  - quando a ligação sai do hub sem outra no lugar (o app fechou, a rede caiu, o computador foi tirado do chat, o servidor vai desligar), o estado vai junto.
+- **A operação** (`internal/api`) confere a chave, o limite, a pessoa e o corpo, e escreve no hub. Se o computador não está no hub, responde `409 semLigacao`. Quando mais de um erro cabe, vale o primeiro desta ordem: `401 chave`, `429 limite`, `409 pessoa`, `400 invalido`, `409 semLigacao`.
 - **A página de administração** (`internal/admin`) junta o que o banco já dá (as empresas, as pessoas, os computadores, a última vez) com a memória, e calcula os estados e as contas da seção 4.2. A regra dos estados fica numa função só, sem banco e sem HTTP, para os testes. A primeira página lê as pessoas e os computadores de todas as empresas com um número fixo de consultas, e não com uma consulta por empresa.
 - **O JavaScript da atualização** é um arquivo externo, como o `copiar.js`: a regra de segurança das páginas (CSP) não deixa script dentro da página.
 
@@ -183,8 +190,8 @@ O hub já fecha a ligação de um computador que não responde: ele manda um pin
 
 **Testes automáticos:**
 
-- **O servidor:** a operação (cada valor, o valor errado, os segundos fora da faixa, sem chave, sem pessoa, o computador que não está ligado, o limite, a troca de pessoa que apaga); o hub (quem está ligado, o aviso do desligamento, a ligação antiga que fecha depois da nova e não apaga nada); a função dos estados, com o relógio de teste (a tabela inteira da seção 4.2, o minuto do "Sem registro" contado pelos segundos do app, a pessoa com dois computadores e qual tempo ela mostra, o computador compartilhado, que só conta para a pessoa da vez, o app antigo); as duas páginas (os estados, as contas, a lista, a ordem, o corte nos 50, o cartão vazio, e o tempo da primeira página com 200 empresas e 5.000 pessoas).
-- **O JavaScript da atualização:** que ele troca o conteúdo, que não troca com o foco num formulário, e o aviso quando a busca falha.
+- **O servidor:** a operação (cada valor, o valor errado, os segundos fora da faixa, sem chave, sem pessoa, o computador que não está ligado, o limite, a troca de pessoa que apaga); o hub (quem está ligado, o estado que some com a ligação, a ligação antiga que fecha depois da nova e não apaga nada); a função dos estados, com o relógio de teste (a tabela inteira da seção 4.2, o minuto do "Sem registro" contado pelos segundos do app, a pessoa com dois computadores e qual tempo ela mostra, o computador compartilhado, que só conta para a pessoa da vez, o app antigo); as duas páginas (os estados, as contas, a lista, a ordem, o corte nos 50, o cartão vazio, e o tempo da primeira página com 200 empresas e 5.000 pessoas).
+- **O JavaScript da atualização,** no navegador, contra o chat de verdade: que ele troca o conteúdo, que não troca com o foco num formulário, o aviso quando a busca falha, a sessão vencida, a empresa apagada, e que o `Tirar do chat` e o `Copiar o código` continuam funcionando depois de uma troca.
 - **O app:** a conversão dos estados; o envio a cada abertura do canal e depois da troca de conta; a espera de 2 s com só o último valor; o tempo que não zera quando o ramal troca de "Conectando…" para "Erro no cadastro", e que zera quando ele registra; o `404` que faz parar; a falha que tenta de novo.
 
 **Teste manual:** uma seção nova no `docs/teste-manual.md`, com dois PCs: fechar o app, tirar o cabo de rede, errar a senha do ramal, corrigir, e a pessoa com dois computadores.
@@ -225,3 +232,12 @@ Um revisor que não participou deste desenho o leu como quem vai construir, e fe
 11. **O limite de tempo da primeira página:** menos de 1 s com 200 empresas e 5.000 pessoas.
 
 Duas respostas vieram do que já existe: o código do erro de "ninguém entrou neste computador" é o `409 pessoa` do protocolo, e as pessoas contadas são as que a página da empresa já lista.
+
+Ao escrever o plano da primeira entrega, mais seis escolhas, também para ele corrigir:
+
+12. **A conta "no chat".** As contas eram três (online, sem registro e offline), e quem está "No chat" não entrava em nenhuma. Com os apps de hoje, que não dizem o ramal, uma empresa inteira aberta apareceria como "0 online". As contas ganham a "no chat", que só aparece quando há alguém nesse estado (seção 4.1).
+13. **A memória dos estados dentro do hub** (seção 7.2), no lugar de uma peça à parte avisada pelo hub. O que a página mostra é o mesmo.
+14. **A página troca só as partes que mudam sozinhas** (seção 4.3). Trocando tudo, o `Copiar o código` sumiria na primeira atualização.
+15. **A sessão vencida e a empresa apagada recarregam a página** (seção 4.3), em vez de a página ficar com um aviso de "sem atualizar" para sempre.
+16. **O foco dentro de uma parte que seria trocada também segura a troca** (seção 4.3), e a página avisa quando isso passa de uma rodada. Sem isso, quem anda pela página com o teclado perderia o lugar a cada 30 segundos, ou a página pararia de se atualizar sem dizer nada.
+17. **Os textos que o quadro não tem:** o "sem computador no chat" (seção 4.2); os dois avisos de "sem atualizar" e a frase dos ramais que não cabem na lista dos 50, que estão no plano.
