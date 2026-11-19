@@ -40,6 +40,7 @@ Um erro vem com o status HTTP e um corpo `{"erro": "<código>"}`, às vezes com 
 | 409 | `jaRespondido` | O pedido para entrar já foi respondido, retirado ou venceu. |
 | 409 | `foraDaReuniao` | A pessoa não está na reunião. |
 | 409 | `muitasReunioes` | A pessoa já tem 100 reuniões marcadas que ainda valem. |
+| 409 | `semLigacao` | O computador não está com o canal dos eventos (seção 7) aberto agora. Só no `PUT /api/v1/computadores/eu/ramal`. |
 | 410 | `expirado` | O arquivo passou de 365 dias e saiu do servidor. |
 | 413 | `grande` | O arquivo passa de 25 MB, a miniatura passa de 200 KiB, ou o JSON passa de 64 KiB. |
 | 429 | `tentativas` | Muitos códigos errados deste endereço. Vem com `"esperarSegundos": <n>`. |
@@ -113,6 +114,22 @@ Um erro vem com o status HTTP e um corpo `{"erro": "<código>"}`, às vezes com 
 
 **Desligar o computador** — `DELETE /api/v1/computadores/eu`.
 - `204`. A chave deixa de valer, e o WebSocket do computador fecha.
+
+**Dizer o estado do ramal** — `PUT /api/v1/computadores/eu/ramal`.
+- Corpo: `{"estado": "erro", "segundos": 734}`.
+  - `estado`: `conectado`, `conectando`, `erro` ou `semConexao`. É o estado do ramal da conta em uso, o mesmo que o app mostra.
+  - `segundos`: há quantos segundos o ramal está registrado (com o `conectado`) ou sem registrar (com os outros três). Um inteiro de 0 a 31.536.000 (um ano). Quem conta o tempo é o app.
+- `204`, sem corpo.
+- **O que o servidor guarda:** o último estado de cada computador ligado a ele, com o instante "agora menos os segundos". Fica só na memória, para a página de administração: não vai para o banco nem para os registros, e some quando o canal dos eventos do computador fecha sem outro no lugar (seção 7).
+- Erros. Quando mais de um cabe, vale o primeiro desta ordem:
+  - `401 chave`;
+  - `429 limite`: além do limite geral, esta operação tem um só dela, de 30 por minuto por computador (seção 8);
+  - `409 pessoa`: ninguém entrou neste computador ainda;
+  - `400 invalido`: o `estado` faltou ou está fora da lista (`campo: "estado"`), ou os `segundos` faltaram ou estão fora da faixa (`campo: "segundos"`). Um corpo que o servidor não consegue ler nesse formato (não é JSON, ou um campo veio com outro tipo) vem sem campo;
+  - `409 semLigacao`: o computador não está com o canal dos eventos (seção 7) aberto, nem abrindo, agora. O servidor só guarda o estado de quem está ligado nele. O app manda de novo quando o canal abrir.
+- **A pessoa da vez:** o estado vale para a pessoa da vez do computador. Depois de outra pessoa entrar nele (`POST /api/v1/pessoas/eu`), o estado guardado deixa de valer, e o app manda de novo.
+- **A ordem do app:** abrir o canal dos eventos, e só então dizer o estado. O servidor já conta o computador como ligado antes de aceitar a conexão do WebSocket: um estado mandado logo depois de o canal abrir nunca chega cedo demais.
+- **O app com um servidor antigo:** um `404` nesta operação quer dizer que o servidor ainda não a conhece. O app para de mandar até a próxima vez em que se ligar ao chat, e não mostra erro nenhum.
 
 **Entrar como pessoa** — `POST /api/v1/pessoas/eu`.
 - Corpo: `{"ramal": "2001", "nome": "Recepção"}`.
@@ -241,6 +258,7 @@ Os eventos são mensagens de texto com JSON, sempre com o campo `tipo`:
 | Nome de um grupo | 60 caracteres |
 | Pedidos por computador | 600 por minuto, em todo pedido com chave |
 | Entradas de pessoa por computador | 20 por minuto, no `POST /api/v1/pessoas/eu`, além dos 600 |
+| O estado do ramal, por computador | 30 por minuto, no `PUT /api/v1/computadores/eu/ramal`, além dos 600 |
 | Mensagens por computador | 60 por minuto |
 | Arquivos por computador | 200 MB por hora |
 | Códigos errados por endereço | 10 por hora; depois, 1 hora de espera |
@@ -251,6 +269,7 @@ Os eventos são mensagens de texto com JSON, sempre com o campo `tipo`:
 **Os pedidos por computador.**
 - Todo pedido que leva a chave do computador conta nos 600 por minuto, seja qual for a rota (o `GET /api/v1/eventos`, que entra com o bilhete, não leva a chave e não conta).
 - O `POST /api/v1/pessoas/eu` conta também nos 20 por minuto.
+- O `PUT /api/v1/computadores/eu/ramal` conta também nos 30 por minuto. Todo pedido com a chave boa conta, mesmo o que responde um erro.
 - Acima de um limite, a resposta é `429` com `{"erro": "limite", "esperarSegundos": <n>}`. O app espera esse tempo e tenta de novo.
 - Esses limites valem junto com os de mensagens e de arquivos.
 

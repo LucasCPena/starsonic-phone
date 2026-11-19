@@ -362,6 +362,8 @@ Você deve ver `SHA-256 conferido.` e, no fim, `Pronto: o Starsonic Chat agora e
 
 **Uma reunião no ar quando o chat reinicia.** Atualizar o chat, ou reiniciá-lo, mexe nas reuniões que estão acontecendo no navegador. As pessoas que estão nelas continuam vendo e ouvindo: a imagem e o som não param. Mas a página de cada uma tenta voltar ao chat por alguns segundos e não consegue, porque o chat novo não conhece essa pessoa. Depois disso, a página de cada uma mostra a imagem de todos junta, sem os quadros e sem os nomes, e o `Compartilhar a tela` deixa de funcionar para ela. Fica assim até a pessoa sair da reunião e entrar de novo (ou recarregar a página). Quem é de fora, numa reunião marcada, espera de novo o colega aceitar: a entrada passa outra vez pela sala de espera. Até cada pessoa fazer isso, os outros veem `Participante` no lugar do nome dela. Quem entra depois vê os quadros normalmente, mas com `Participante` no lugar do nome de quem já estava. Por isso, atualize o chat, e reinicie-o, também num horário sem reuniões, como o guia já diz para o servidor de vídeo.
 
+**O estado dos ramais (a partir da `0.2.0-rc.5`).** Com essa versão, a administração passa a mostrar o estado do ramal de cada pessoa: veja o passo 13. Não há nada para configurar. Os apps de hoje ainda não dizem ao chat como está o ramal: com eles, cada pessoa aparece como `No chat` (o app está aberto) ou `Offline`. O `Online` e o `Sem registro` chegam com a próxima versão do app do Windows, em cada PC que aceitar a atualização.
+
 ### Trocar a porta pública
 
 Para mudar a porta do HTTPS de uma instalação que já existe, use o instalador da versão 0.1.1 ou mais nova, o mesmo baixado acima. Isso serve, por exemplo, quando a VM passou a ficar atrás de um roteador e a 443 pública é de outro servidor (passo 1):
@@ -570,3 +572,43 @@ curl -sI https://api.github.com/repos/LucasCPena/starsonic-phone/releases/latest
 A primeira linha deve ter `404`. Se o Windows já tiver uma versão estável, o endereço responde `200`, e isso também está certo, desde que a versão seja a do Windows. O workflow confere isso no último passo e falha se o endereço apontar para outra coisa. Nesse caso, em `Releases`, abra essa release, clique em `Edit` e marque `Set as a pre-release` (ou apague a release e a etiqueta dela). Não instale nada antes disso.
 
 Pronto: agora o passo 2 (instalar) e o passo 7 (atualizar) acham a versão nova.
+
+## 13. Acompanhar os ramais dos clientes
+
+A partir da versão 0.2.0-rc.5, a administração mostra o estado do ramal de cada pessoa que usa o app do Windows ligado ao chat. Serve para você ver quais ramais estão fora do ar sem esperar o cliente ligar reclamando. Não há nada para instalar nem configurar.
+
+Enquanto o app do Windows de um PC não for atualizado, esse PC aparece só como `No chat` ou `Offline`: é a próxima versão do app que diz ao chat se o ramal está registrado (passo 7).
+
+**Onde olhar.**
+
+1. Abra `https://<endereço>/admin/` e entre.
+2. Na lista das empresas, a coluna `RAMAIS AGORA` mostra as contas de cada empresa: quantos ramais estão online, sem registro, no chat e offline. O `sem registro` e o `no chat` só aparecem quando há alguém nesse estado. As contas somam o número de pessoas da empresa.
+3. O cartão `SEM REGISTRO AGORA`, acima da lista, junta os ramais sem registro de todas as empresas: a empresa, o nome, o ramal, há quanto tempo e o que o app diz (`Conectando…`, `Erro no cadastro` ou `Sem conexão com a central`). O que está assim há mais tempo vem primeiro. O cartão mostra até 50 ramais e diz quantos ficaram de fora. Sem nenhum, ele diz `Nenhum ramal sem registro agora.` Quando há algum, o alto da página ganha também um número com quantos são.
+4. Clique em `Abrir` para ver a empresa. Na página dela, a coluna `ESTADO` mostra o estado de cada pessoa, e cada computador da pessoa tem um desenho com o estado daquele computador.
+
+**Os quatro estados.** Cada um tem um desenho e um nome: a cor nunca diz o estado sozinha.
+
+| Estado | O que quer dizer | A segunda linha |
+|---|---|---|
+| `Online` (bolinha verde) | O app está aberto e o ramal está registrado na central. | Há quanto tempo, como `há 2 h`. |
+| `Sem registro` (triângulo vermelho) | O app está aberto, mas o ramal não registra há 1 minuto ou mais. É o caso para olhar. | Há quanto tempo e o que o app diz, como `há 12 min · o app diz “Conectando…”`. |
+| `No chat` (bolinha ciano) | O app acabou de abrir e está registrando o ramal, ou é um app antigo, que ainda não diz como está o ramal. | `registrando o ramal…` ou `o app é antigo e não diz o ramal`. |
+| `Offline` (anel cinza) | O chat perdeu o computador. O app foi fechado, o PC desligou ou a internet caiu. | A última vez da pessoa no chat, como `última vez ontem, 18:02`. |
+
+**O que entra na conta.**
+
+- Cada pessoa é um ramal. O estado dela vem dos computadores em que ela está agora: com dois computadores, um aberto e registrado e outro fechado, ela aparece `Online`.
+- Um computador que duas pessoas usam conta só para quem está nele agora. Na linha da outra pessoa, ele aparece com o anel cinza.
+- Uma pessoa sem computador nenhum no chat (todos foram tirados) aparece `Offline`, com `sem computador no chat`.
+- O celular e os aparelhos de mesa não aparecem: a página só vê os PCs com o app do Windows ligado ao chat.
+- A página mostra o que o app diz. O chat não fala com a central: se o app travar, ele pode continuar dizendo que o ramal está registrado.
+- Um ramal que registra e cai de novo o tempo todo não chega a ficar 1 minuto sem registrar, e por isso não aparece em vermelho: ele fica trocando entre `Online` e `No chat`.
+
+**A página se atualiza sozinha.**
+
+- Ela busca os dados de novo a cada 30 segundos, sem recarregar e sem mexer na rolagem.
+- Um PC que perde a rede pode levar até 2 minutos para aparecer `Offline`: o chat espera a resposta do computador antes de desistir dele.
+- Logo depois de o chat reiniciar (numa atualização, por exemplo), todos aparecem `Offline` por alguns segundos, até os apps se ligarem de novo.
+- A sessão da administração dura 12 horas. Quando ela vence, a página volta sozinha para a entrada: entre de novo.
+- Se a página não consegue buscar os dados (a sua internet caiu, ou o chat está fora do ar), ela avisa no alto, por exemplo: `Sem atualizar desde as 14:32. A página tenta de novo sozinha.` O aviso some na primeira busca que der certo.
+- Enquanto você está num campo ou num botão da página (andando com o teclado, por exemplo), ela espera, para não tirar você do lugar. Se a espera passar de uma atualização, o aviso é: `Sem atualizar desde as 14:32: a página espera você sair do campo ou do botão em que está.` Clique fora, e ela volta a se atualizar em até 30 segundos.
