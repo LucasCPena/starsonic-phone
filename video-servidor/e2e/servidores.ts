@@ -140,6 +140,14 @@ export function segredosDoAmbiente(): Array<[string, string]> {
   return segredos as Array<[string, string]>;
 }
 
+/** A senha do ESL do ambiente (do config.json da pasta privada). Só para abrir o ESL: nunca numa mensagem, no console
+ * ou num arquivo. */
+export function senhaDoEsl(): string {
+  const { senhaEsl } = JSON.parse(readFileSync(join(PRIVADO, 'config.json'), 'utf8')) as { senhaEsl?: string };
+  if (!senhaEsl) throw new Error('falta a senha do ESL (o ambiente.ts não rodou)');
+  return senhaEsl;
+}
+
 /** O que os registros têm e não podiam ter: um nome, um código de reunião, uma sala, um participante, uma senha, um
  * bilhete, uma chave de volta ou um segredo do ambiente, e qualquer senha de uso único (a carga começa por {"v":1, em
  * base64url), também as que os testes não viram. Cada achado diz a saída, o que é e a linha, nunca o valor. */

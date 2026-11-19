@@ -1,0 +1,124 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Starsonic Phone <starsonic-phone@example.invalid>
+Date: Thu, 19 Nov 2026 00:00:00 +0000
+Subject: [PATCH] mod_conference: o vid-res anota o tamanho, e a thread do
+ mosaico o aplica
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+No FreeSWITCH 1.11.3, o conference_video_change_res troca o tamanho do
+mosaico na thread do comando. Ela solta a imagem que a thread do mosaico
+pode estar codificando (um "VPX encode error", ou a queda do processo) e,
+com mais de 2 processadores, espera a trava de escrita segurando as travas
+do mosaico, enquanto a thread do mosaico espera a thread de uma pessoa, que
+espera a trava do mosaico: a imagem congela para todos.
+
+Com esta correção, o comando só anota o tamanho pedido, e a thread do
+mosaico o aplica no começo da volta seguinte, com as travas dela.
+
+É o mesmo caminho que o FreeSWITCH já usa para a troca de layout (o
+new_vlayout do vid-layout).
+---
+ .../mod_conference/conference_video.c         | 53 +++++++++++++++++--
+ .../mod_conference/mod_conference.h           |  3 ++
+ 2 files changed, 51 insertions(+), 5 deletions(-)
+
+diff --git a/src/mod/applications/mod_conference/conference_video.c b/src/mod/applications/mod_conference/conference_video.c
+index 9105605..c43bddb 100644
+--- a/src/mod/applications/mod_conference/conference_video.c
++++ b/src/mod/applications/mod_conference/conference_video.c
+@@ -3102,6 +3102,21 @@ static void personal_attach(mcu_layer_t *layer, conference_member_t *member)
+ 	layer->member_id = member->id;
+ }
+ 
++/* Gives the canvas a new size. The caller holds conference->canvas_mutex and canvas->mutex. */
++static void conference_video_apply_res(conference_obj_t *conference, mcu_canvas_t *canvas, int w, int h)
++{
++	canvas->width = w;
++	canvas->height = h;
++	switch_img_free(&canvas->img);
++	canvas->img = switch_img_alloc(NULL, SWITCH_IMG_FMT_I420, canvas->width, canvas->height, 0);
++	conference_video_init_canvas_layers(conference, canvas, canvas->vlayout, SWITCH_TRUE);
++}
++
++/* The muxing thread patches the layers into canvas->img and encodes it without holding canvas->mutex, and with
++   more than 2 CPUs the layer threads patch into it too. Freeing the image from the thread of the API command, as
++   this function used to do, let them use an image that was already freed. While the muxing thread of the canvas
++   runs, the new size is only recorded here: that thread applies it at the top of its loop
++   (conference_video_check_new_res), where nothing is using the image, the same way it applies a new layout. */
+ switch_status_t conference_video_change_res(conference_obj_t *conference, int w, int h, int id)
+ {
+ 	mcu_canvas_t *canvas = NULL;
+@@ -3109,17 +3124,43 @@ switch_status_t conference_video_change_res(conference_obj_t *conference, int w,
+ 	switch_mutex_lock(conference->canvas_mutex);
+ 	canvas = conference->canvases[id];
+ 	switch_mutex_lock(canvas->mutex);
+-	canvas->width = w;
+-	canvas->height = h;
+-	switch_img_free(&canvas->img);
+-	canvas->img = switch_img_alloc(NULL, SWITCH_IMG_FMT_I420, canvas->width, canvas->height, 0);
+-	conference_video_init_canvas_layers(conference, canvas, canvas->vlayout, SWITCH_TRUE);
++	if (canvas->video_muxing_thread && id < (int) conference->canvas_count) {
++		canvas->new_width = w;
++		canvas->new_height = h;
++	} else {
++		/* No muxing thread yet, or the super canvas, whose thread does not look for a new size. */
++		conference_video_apply_res(conference, canvas, w, h);
++	}
+ 	switch_mutex_unlock(canvas->mutex);
+ 	switch_mutex_unlock(conference->canvas_mutex);
+ 
+ 	return SWITCH_STATUS_SUCCESS;
+ }
+ 
++/* The muxing thread calls this at the top of its loop, before it looks for a new layout: a size recorded by
++   conference_video_change_res is applied here. When the API holds conference->canvas_mutex, it waits for the
++   next frame, like the new layout does. */
++static void conference_video_check_new_res(conference_obj_t *conference, mcu_canvas_t *canvas)
++{
++	if (!canvas->new_width || !canvas->new_height) {
++		return;
++	}
++
++	if (switch_mutex_trylock(conference->canvas_mutex) != SWITCH_STATUS_SUCCESS) {
++		return;
++	}
++
++	switch_mutex_lock(canvas->mutex);
++	if (canvas->new_width && canvas->new_height) {
++		int w = canvas->new_width, h = canvas->new_height;
++
++		canvas->new_width = canvas->new_height = 0;
++		conference_video_apply_res(conference, canvas, w, h);
++	}
++	switch_mutex_unlock(canvas->mutex);
++	switch_mutex_unlock(conference->canvas_mutex);
++}
++
+ 
+ void *SWITCH_THREAD_FUNC conference_video_muxing_thread_run(switch_thread_t *thread, void *obj)
+ {
+@@ -3162,6 +3203,8 @@ void *SWITCH_THREAD_FUNC conference_video_muxing_thread_run(switch_thread_t *thr
+ 		int j = 0, personal = conference_utils_test_flag(conference, CFLAG_PERSONAL_CANVAS) ? 1 : 0;
+ 		int video_count = 0;
+ 
++		conference_video_check_new_res(conference, canvas);
++
+ 		if (!personal) {
+ 			if (canvas->new_vlayout && switch_mutex_trylock(conference->canvas_mutex) == SWITCH_STATUS_SUCCESS) {
+ 				conference_video_init_canvas_layers(conference, canvas, NULL, SWITCH_TRUE);
+diff --git a/src/mod/applications/mod_conference/mod_conference.h b/src/mod/applications/mod_conference/mod_conference.h
+index e45a921..247d857 100644
+--- a/src/mod/applications/mod_conference/mod_conference.h
++++ b/src/mod/applications/mod_conference/mod_conference.h
+@@ -574,6 +574,9 @@ typedef struct mcu_canvas_s {
+ 	codec_set_t *write_codecs[MAX_MUX_CODECS];
+ 	int write_codecs_count;
+ 	switch_bool_t disable_auto_clear;
++	/* The size asked by conference_video_change_res that the muxing thread has not applied yet (0: none). */
++	int new_width;
++	int new_height;
+ } mcu_canvas_t;
+ 
+ /* Record Node */
