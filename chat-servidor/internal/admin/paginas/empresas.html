@@ -1,4 +1,6 @@
-{{/* A lista das empresas (a tela Painel do quadro). */}}
+{{/* A lista das empresas (a tela Painel do quadro, com o estado dos ramais): os números, as reuniões, os ramais sem
+     registro agora, de todas as empresas, e a tabela das empresas com as contas de cada uma. As partes com data-ao-vivo
+     são as que se atualizam sozinhas. */}}
 {{define "conteudo"}}{{with .Pagina -}}
 <div class="cabeca">
   <div class="cabeca-titulos">
@@ -7,15 +9,21 @@
   </div>
   <a class="botao botao-acao" href="/admin/empresas/nova">{{template "icone-mais"}}Nova empresa</a>
 </div>
-<div class="numeros">
+<div class="numeros" data-ao-vivo="numeros">
   {{- range .Numeros}}
   <div class="numero">
     <span class="numero-valor">{{.Valor}}</span>
     <span class="numero-legenda">{{.Legenda}}</span>
   </div>
   {{- end}}
+  {{- with .Alerta}}
+  <div class="numero numero-alerta">
+    <span class="numero-valor">{{template "icone-alerta"}}{{.Valor}}</span>
+    <span class="numero-legenda">{{.Legenda}}</span>
+  </div>
+  {{- end}}
 </div>
-<section class="cartao bloco" aria-labelledby="reunioes-titulo">
+<section class="cartao bloco" aria-labelledby="reunioes-titulo" data-ao-vivo="reunioes">
   <h2 class="rotulo" id="reunioes-titulo">REUNIÕES</h2>
   <span class="forte">{{.Reunioes.Agora}}</span>
   <span class="ajuda">{{.Reunioes.Servidor}}</span>
@@ -23,11 +31,49 @@
     <a class="botao botao-secundario" href="/admin/reunioes">Configurar as reuniões</a>
   </div>
 </section>
-<section class="cartao cartao-tabela" aria-label="Empresas no chat">
-  <table class="tabela">
+<section class="cartao cartao-tabela" aria-labelledby="sem-registro-titulo" data-ao-vivo="sem-registro">
+  <div class="cabeca-tabela">
+    <h2 class="rotulo" id="sem-registro-titulo">SEM REGISTRO AGORA</h2>
+    <span class="ajuda">O app está aberto, mas o ramal não registra na central.</span>
+  </div>
+  {{- if .SemRegistro.Linhas}}
+  <table class="tabela tabela-sem-registro">
     <thead>
       <tr>
         <th scope="col">EMPRESA</th>
+        <th scope="col">NOME</th>
+        <th scope="col">RAMAL</th>
+        <th scope="col">HÁ QUANTO TEMPO</th>
+        <th scope="col">O APP DIZ</th>
+        <th scope="col"><span class="so-leitor">Abrir</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{- range .SemRegistro.Linhas}}
+      <tr>
+        <td class="forte">{{.Empresa}}</td>
+        <td class="nome-pessoa">{{.Nome}}</td>
+        <td>{{.Ramal}}</td>
+        <td>{{.Ha}}</td>
+        <td class="suave">{{.Diz}}</td>
+        <td class="fim"><a class="abrir" href="{{.Endereco}}" aria-label="Abrir {{.Empresa}}">Abrir{{template "icone-seta"}}</a></td>
+      </tr>
+      {{- end}}
+    </tbody>
+  </table>
+  {{- with .SemRegistro.Mais}}
+  <p class="nota nota-do-cartao">{{.}}</p>
+  {{- end}}
+  {{- else}}
+  <p class="nota nota-do-cartao">Nenhum ramal sem registro agora.</p>
+  {{- end}}
+</section>
+<section class="cartao cartao-tabela" aria-label="Empresas no chat" data-ao-vivo="empresas">
+  <table class="tabela tabela-empresas">
+    <thead>
+      <tr>
+        <th scope="col">EMPRESA</th>
+        <th scope="col">RAMAIS AGORA</th>
         <th scope="col">PESSOAS</th>
         <th scope="col">ESPAÇO DOS ARQUIVOS</th>
         <th scope="col">NO CHAT DESDE</th>
@@ -38,16 +84,20 @@
       {{- range .Empresas}}
       <tr>
         <td class="forte">{{.Nome}}</td>
+        <td class="ramais-agora">{{template "contas" .Contas}}</td>
         <td>{{.Pessoas}}</td>
         <td>{{.Espaco}}</td>
         <td class="suave">{{.Desde}}</td>
         <td class="fim"><a class="abrir" href="{{.Endereco}}" aria-label="Abrir {{.Nome}}">Abrir{{template "icone-seta"}}</a></td>
       </tr>
       {{- else}}
-      <tr><td colspan="5" class="vazio">Nenhuma empresa ainda. A primeira entra pelo “Nova empresa”.</td></tr>
+      <tr><td colspan="6" class="vazio">Nenhuma empresa ainda. A primeira entra pelo “Nova empresa”.</td></tr>
       {{- end}}
     </tbody>
   </table>
 </section>
-<p class="nota">Os arquivos ficam 1 ano no servidor. Depois disso, saem, e a mensagem mostra “Arquivo expirado”. O texto das conversas fica.</p>
+<div class="notas">
+  <p class="nota"><span data-so-com-script hidden>Esta página se atualiza sozinha a cada 30 segundos. </span>Só aparecem os computadores com o app do Windows ligado ao chat: o celular e os aparelhos de mesa não entram na conta.</p>
+  <p class="nota">Os arquivos ficam 1 ano no servidor. Depois disso, saem, e a mensagem mostra “Arquivo expirado”. O texto das conversas fica.</p>
+</div>
 {{- end}}{{end}}

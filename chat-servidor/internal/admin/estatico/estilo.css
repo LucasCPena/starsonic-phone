@@ -570,6 +570,69 @@ form {
   background: var(--ciano-escuro);
 }
 
+/* A primeira página: o cartão de número dos ramais sem registro, a lista deles e as contas de cada empresa. */
+.numero-alerta {
+  background: var(--alerta-fundo);
+  border: 1.5px solid var(--alerta-borda);
+}
+
+.numero-alerta .numero-valor {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--alerta-texto);
+}
+
+.numero-alerta .numero-legenda {
+  font-weight: 600;
+  color: var(--alerta-texto);
+}
+
+.numero-alerta .icone-alerta {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  stroke-width: 2.2;
+}
+
+.tabela-sem-registro {
+  min-width: 720px;
+}
+
+.tabela-sem-registro th {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.tabela-sem-registro td {
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+
+.nome-pessoa {
+  font-weight: 600;
+}
+
+.tabela-empresas {
+  min-width: 860px;
+}
+
+.tabela-empresas td.ramais-agora {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+/* Uma frase dentro de um cartão de tabela: a lista vazia, e a dos ramais que não couberam nela. */
+.nota-do-cartao {
+  padding: 8px 22px 18px;
+}
+
+.notas {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .legenda {
   border-top: 1px solid var(--borda);
   padding: 16px 22px 18px;

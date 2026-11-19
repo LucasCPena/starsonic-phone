@@ -2,6 +2,7 @@ package admin
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
@@ -131,4 +132,51 @@ func doPC(e ramais.DoComputador) (classe, texto string) {
 		return "no-chat", "no chat"
 	}
 	return "offline", "offline"
+}
+
+// maxSemRegistro é quantas linhas o cartão "Sem registro agora" mostra.
+const maxSemRegistro = 50
+
+// linhaSemRegistro é um ramal sem registro, no cartão da primeira página.
+type linhaSemRegistro struct{ Empresa, Nome, Ramal, Ha, Diz, Endereco string }
+
+// cartaoSemRegistro é o cartão "Sem registro agora": as primeiras linhas e, quando nem todas
+// couberam, a frase que diz quantas ficaram de fora.
+type cartaoSemRegistro struct {
+	Linhas []linhaSemRegistro
+	Mais   string
+}
+
+// semRegistroAgora monta o cartão com os ramais sem registro de todas as empresas, e diz quantos
+// são ao todo. O que está assim há mais tempo vem primeiro; no empate, vale a ordem das empresas
+// (a do nome) e, dentro da empresa, a das pessoas (também a do nome).
+func semRegistroAgora(empresas []banco.ResumoEmpresa, daEmpresa map[int64][]pessoaVista, agora time.Time) (cartaoSemRegistro, int) {
+	type item struct {
+		empresa banco.ResumoEmpresa
+		v       pessoaVista
+	}
+	var itens []item
+	for _, e := range empresas {
+		for _, v := range daEmpresa[e.ID] {
+			if v.Estado.Estado == ramais.SemRegistro {
+				itens = append(itens, item{e, v})
+			}
+		}
+	}
+	sort.SliceStable(itens, func(i, j int) bool { return itens[i].v.Estado.Desde.Before(itens[j].v.Estado.Desde) })
+	var c cartaoSemRegistro
+	for i, x := range itens {
+		if i == maxSemRegistro {
+			break
+		}
+		c.Linhas = append(c.Linhas, linhaSemRegistro{Empresa: x.empresa.Nome, Nome: x.v.Nome, Ramal: x.v.Ramal,
+			Ha: ha(agora.Sub(x.v.Estado.Desde)), Diz: oQueDiz(x.v.Estado.Diz), Endereco: enderecoEmpresa(x.empresa.ID)})
+	}
+	switch fora := len(itens) - len(c.Linhas); {
+	case fora == 1:
+		c.Mais = "Mais 1 ramal sem registro não cabe nesta lista. Abra a empresa para ver."
+	case fora > 1:
+		c.Mais = fmt.Sprintf("Mais %d ramais sem registro não cabem nesta lista. Abra a empresa para ver todos.", fora)
+	}
+	return c, len(itens)
 }

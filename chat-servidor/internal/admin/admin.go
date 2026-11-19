@@ -261,17 +261,29 @@ type numero struct{ Valor, Legenda string }
 type linhaEmpresa struct {
 	Nome, Espaco, Desde, Endereco string
 	Pessoas                       int
+	Contas                        contas // os ramais da empresa agora, por estado
 }
 
 type telaEmpresas struct {
-	Numeros  []numero
-	Reunioes cartaoReunioes
-	Empresas []linhaEmpresa
+	Numeros []numero
+	// Alerta é o cartão de número a mais: quantos ramais estão sem registro agora. Com zero, é nil.
+	Alerta      *numero
+	Reunioes    cartaoReunioes
+	SemRegistro cartaoSemRegistro
+	Empresas    []linhaEmpresa
 }
 
-// GET /admin/: a lista das empresas, com os totais.
+// GET /admin/: a lista das empresas, com os totais, as contas dos ramais de cada uma e os ramais
+// que estão sem registro agora, de todas juntas. O banco é lido com um número fixo de consultas
+// (as do resumo, as duas do PessoasDeTodas e as do cartão das reuniões), seja qual for o número
+// de empresas: esta página é buscada de novo a cada 30 s.
 func (p *painel) empresas(w http.ResponseWriter, r *http.Request, s sessao) {
 	lista, err := p.banco.Empresas(r.Context())
+	if err != nil {
+		p.erroServidor(w, s, err)
+		return
+	}
+	todas, err := p.banco.PessoasDeTodas(r.Context())
 	if err != nil {
 		p.erroServidor(w, s, err)
 		return
@@ -281,10 +293,15 @@ func (p *painel) empresas(w http.ResponseWriter, r *http.Request, s sessao) {
 		p.erroServidor(w, s, err)
 		return
 	}
+	agora := p.banco.Relogio().Agora()
+	daEmpresa := map[int64][]pessoaVista{}
+	for _, v := range verPessoas(todas, p.hub.Ligados(), agora) {
+		daEmpresa[v.EmpresaID] = append(daEmpresa[v.EmpresaID], v)
+	}
 	pessoas, bytes := 0, int64(0)
 	for _, e := range lista {
 		t.Empresas = append(t.Empresas, linhaEmpresa{Nome: e.Nome, Pessoas: e.Pessoas, Espaco: espaco(e.Bytes),
-			Desde: data(e.CriadaEm), Endereco: enderecoEmpresa(e.ID)})
+			Desde: data(e.CriadaEm), Endereco: enderecoEmpresa(e.ID), Contas: contar(daEmpresa[e.ID])})
 		pessoas += e.Pessoas
 		bytes += e.Bytes
 	}
@@ -292,6 +309,10 @@ func (p *painel) empresas(w http.ResponseWriter, r *http.Request, s sessao) {
 		{strconv.Itoa(len(lista)), plural(len(lista), "empresa no chat", "empresas no chat")},
 		{strconv.Itoa(pessoas), plural(pessoas, "pessoa no chat", "pessoas no chat")},
 		{espaco(bytes), "de arquivos guardados"},
+	}
+	var sem int
+	if t.SemRegistro, sem = semRegistroAgora(lista, daEmpresa, agora); sem > 0 {
+		t.Alerta = &numero{strconv.Itoa(sem), plural(sem, "ramal sem registro agora", "ramais sem registro agora")}
 	}
 	p.mostrarComSessao(w, s, http.StatusOK, "empresas", "empresas", t)
 }
