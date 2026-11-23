@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-23-starsonic-phone-reunioes-etapa-2a-design.md` (as seções 4.3, 4.4, 7.2 a 7.5, 7.8, 7.9, 10, 11 e 12). As telas são as 6 a 10 do quadro "Starsonic Phone — reuniões" e a tela 1 do quadro "Starsonic — reunião no navegador". O código delas está na pasta de trabalho, fora do git: `work/quadro-reunioes/` (as telas 6 a 10) e `work/quadro-pagina/Main.dc.html` (a tela "o app ou o navegador"). Os textos e as medidas que valem estão nas seções "Os textos" e "Os desenhos" deste plano.
 
-**O método:** a escolher pelo responsável, na entrega do plano.
+**O método:** um agente novo constrói cada tarefa, e outro a revisa antes da próxima; no fim, uma revisão de tudo (superpowers:subagent-driven-development). O responsável aprovou o plano e este método em 23/11/2026, às 11:32 ("segue").
 
 ## Global Constraints
 
