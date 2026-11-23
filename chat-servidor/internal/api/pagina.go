@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -65,9 +67,10 @@ type paginaReuniaoJSON struct {
 	Inicio  *int64  `json:"inicio"`
 }
 
-// POST /api/v1/pagina/reunioes/{codigo}: sem chave e sem corpo. A janela das aberturas é a mesma do entrar do app, e
+// POST /api/v1/pagina/reunioes/{codigo}: sem chave. O corpo é opcional (ver colegaDoCorpo): sem ele, quem abre é de
+// fora; com o passe ou com a chave do colega, a página o reconhece. A janela das aberturas é a mesma do entrar do app, e
 // é conferida primeiro (sem contar): cheia, é 429 tentativas, até com o código certo. Conta nela só o abrir que falha,
-// o 404, como no entrar. O abrir que dá certo tem a janela própria, aberturasBoas (60 por minuto), também conferida
+// o 404, como no entrar, e o 400 e o 401 do corpo. O abrir que dá certo tem a janela própria, aberturasBoas (60 por minuto), também conferida
 // antes do banco e contada só no 200: assim um endereço não empurra os bilhetes dos outros para fora da fila. O código
 // que não existe, a reunião que não vale e a empresa sem as reuniões liberadas dão o mesmo 404: a página não aprende
 // qual deles foi.
@@ -114,6 +117,11 @@ func (s *servidor) abrirPagina(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// O corpo só é lido depois de tudo que vale hoje: o 404 vem antes de qualquer coisa do passe.
+	colega, trocouPasse, quem, ok := s.colegaDoCorpo(w, r, reuniao, endereco)
+	if !ok {
+		return
+	}
 	j := paginaReuniaoJSON{Tipo: reuniao.Tipo}
 	if reuniao.Assunto != "" {
 		a := reuniao.Assunto
@@ -123,9 +131,123 @@ func (s *servidor) abrirPagina(w http.ResponseWriter, r *http.Request) {
 		inicio := reuniao.Inicio
 		j.Inicio = &inicio
 	}
+	resposta := map[string]any{"reuniao": j}
+	if quem != nil {
+		if trocouPasse {
+			quem["chave"] = s.passes.novaChave(colega)
+		}
+		quem["valeAte"] = nil // a naHora vale até acabar
+		if reuniao.Tipo != banco.TipoNaHora {
+			quem["valeAte"] = reuniao.ValeAte
+		}
+		resposta["colega"] = quem
+	}
+	bilhete := s.bilhetesPagina.novo(reuniao.ID)
+	if quem != nil {
+		s.passes.prenderBilhete(bilhete, colega)
+	}
+	resposta["bilhete"] = bilhete
 	s.aberturasBoas.Contar(endereco, 1)
 	w.Header().Set("Cache-Control", "no-store")
-	escreverJSON(w, http.StatusOK, map[string]any{"reuniao": j, "bilhete": s.bilhetesPagina.novo(reuniao.ID)})
+	escreverJSON(w, http.StatusOK, resposta)
+}
+
+// maxCorpoDoAbrir é o maior corpo do abrir: um objeto com um passe ou uma chave de 43 caracteres cabe com folga.
+const maxCorpoDoAbrir = 256
+
+var formaDoPasseOuChave = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
+
+// colegaDoCorpo lê o corpo do abrir e, com um passe ou uma chave do colega que valem, devolve quem é. Sem corpo,
+// devolve quem == nil e ok: a página é de fora. Qualquer outro corpo tem de ser um objeto JSON com exatamente um
+// campo, passe ou colega, e nada depois dele; senão é 400 invalido, com o campo que está fora da regra ("corpo" nos
+// outros casos). O passe, a chave, a pessoa ou o computador que não valem mais são 401 passe, e a chave que veio é
+// esquecida. O 400 e o 401 contam na janela das tentativas, como o 404. quem já leva o nome; o valeAte e a chave
+// nova quem põe é o abrirPagina.
+func (s *servidor) colegaDoCorpo(w http.ResponseWriter, r *http.Request, reuniao banco.Reuniao, endereco string) (colega colegaDaPagina, trocouPasse bool, quem map[string]any, ok bool) {
+	falhou := func(status int, erro string, extras map[string]any) {
+		s.aberturas.Contar(endereco, 1)
+		escreverErro(w, status, erro, extras)
+	}
+	invalido := func(campo string) {
+		falhou(http.StatusBadRequest, "invalido", map[string]any{"campo": campo})
+	}
+	dados, err := io.ReadAll(io.LimitReader(r.Body, maxCorpoDoAbrir+1))
+	if err != nil {
+		invalido("corpo")
+		return
+	}
+	if len(dados) == 0 {
+		return colega, false, nil, true
+	}
+	if len(dados) > maxCorpoDoAbrir {
+		invalido("corpo")
+		return
+	}
+	var campos map[string]json.RawMessage
+	dec := json.NewDecoder(bytes.NewReader(dados))
+	if err := dec.Decode(&campos); err != nil {
+		invalido("corpo")
+		return
+	}
+	if _, err := dec.Token(); err != io.EOF { // depois do objeto só pode haver espaço em branco
+		invalido("corpo")
+		return
+	}
+	if len(campos) != 1 {
+		invalido("corpo")
+		return
+	}
+	var campo string
+	var bruto json.RawMessage
+	for k, v := range campos {
+		campo, bruto = k, v
+	}
+	if campo != "passe" && campo != "colega" {
+		invalido("corpo")
+		return
+	}
+	var texto string
+	if json.Unmarshal(bruto, &texto) != nil || !formaDoPasseOuChave.MatchString(texto) {
+		invalido(campo)
+		return
+	}
+
+	var achou bool
+	if campo == "passe" {
+		colega, achou = s.passes.gastarPasse(texto, reuniao.ID)
+	} else {
+		colega, achou = s.passes.conferirChave(texto, reuniao.ID)
+	}
+	semPasse := func() {
+		if campo == "colega" {
+			s.passes.esquecerChave(texto)
+		}
+		falhou(http.StatusUnauthorized, "passe", nil)
+	}
+	if !achou {
+		semPasse()
+		return
+	}
+	// Quem o passe reconhece pode ter saído do chat depois: a pessoa, ou o computador que o pediu.
+	pessoa, err := s.banco.PessoaPorID(r.Context(), colega.empresaID, colega.pessoaID)
+	if errors.Is(err, banco.ErrNaoEncontrado) || (err == nil && pessoa.Saiu) {
+		semPasse()
+		return
+	}
+	if err != nil {
+		erroServidor(w, err)
+		return
+	}
+	computador, err := s.banco.ComputadorAtivo(r.Context(), colega.computadorID)
+	if errors.Is(err, banco.ErrNaoEncontrado) || (err == nil && computador.EmpresaID != colega.empresaID) {
+		semPasse()
+		return
+	}
+	if err != nil {
+		erroServidor(w, err)
+		return
+	}
+	return colega, campo == "passe", map[string]any{"nome": pessoa.Nome}, true
 }
 
 // ---------- Os canais abertos ----------
