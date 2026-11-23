@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Starsonic Phone: o app de mentira das reuniões</title>
+<link rel="icon" href="data:,">
+</head>
+<body>
+<!-- A reunião num iframe, com o allow da spec (seção 7.5) só para a origem do chat do teste (o CHAT do servidores.ts).
+     O app-falso.js põe o endereço dela, com o código que vem depois do #. -->
+<iframe id="reuniao" title="Reunião" width="1200" height="760"
+  allow="camera http://127.0.0.1:4191; microphone http://127.0.0.1:4191; display-capture http://127.0.0.1:4191; autoplay http://127.0.0.1:4191"></iframe>
+<script src="/app-falso.js"></script>
+</body>
+</html>

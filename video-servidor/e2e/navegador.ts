@@ -7,12 +7,14 @@ import {
   expect,
   test,
   type Browser,
+  type Frame,
   type Locator,
   type Page,
   type WebSocket as WebSocketDaPagina,
   type WebSocketRoute,
 } from '@playwright/test';
 import {
+  APARELHOS,
   argumentosDoChromium,
   combinam,
   fundo,
@@ -459,6 +461,88 @@ function instrumentar(): void {
   };
 }
 
+/**
+ * Antes da página: dois microfones e duas câmeras com nome, como o app os vê nas Configurações. O primeiro de cada tipo
+ * é o aparelho falso do Chromium (a cor e o tom da pessoa), com outro nome; o segundo é gerado aqui, com a cor e o tom
+ * dados: um oscilador do WebAudio e um canvas repintado a 15 quadros por segundo. A página acha os aparelhos pelo nome
+ * (o label do enumerateDevices) e os pede pelo deviceId exato; a faixa gerada diz o deviceId dela no getSettings, como
+ * a de um aparelho. Os outros pedidos vão ao Chromium como sempre.
+ */
+function doisAparelhos(o: { nomes: { microfones: string[]; cameras: string[] }; cor: readonly number[]; som: number }): void {
+  const aparelhos = navigator.mediaDevices;
+  if (!aparelhos?.getUserMedia) return;
+  const listar = aparelhos.enumerateDevices.bind(aparelhos);
+  const pedir = aparelhos.getUserMedia.bind(aparelhos);
+  const OUTRO_MICROFONE = 'microfone-2-do-teste';
+  const OUTRA_CAMERA = 'camera-2-do-teste';
+  const aparelho = (kind: MediaDeviceKind, deviceId: string, label: string, groupId = '') =>
+    ({ kind, deviceId, label, groupId, toJSON: () => ({ kind, deviceId, label, groupId }) }) as MediaDeviceInfo;
+  aparelhos.enumerateDevices = async () => {
+    const lista = await listar();
+    const primeiro = (tipo: MediaDeviceKind) => lista.find((d) => d.kind === tipo && d.deviceId !== '');
+    const mic = primeiro('audioinput');
+    const cam = primeiro('videoinput');
+    return [
+      ...(mic ? [aparelho('audioinput', mic.deviceId, o.nomes.microfones[0], mic.groupId)] : []),
+      aparelho('audioinput', OUTRO_MICROFONE, o.nomes.microfones[1]),
+      ...(cam ? [aparelho('videoinput', cam.deviceId, o.nomes.cameras[0], cam.groupId)] : []),
+      aparelho('videoinput', OUTRA_CAMERA, o.nomes.cameras[1]),
+      ...lista.filter((d) => d.kind === 'audiooutput'),
+    ];
+  };
+  // A faixa gerada se diz do aparelho, e o stop dela para o que a gera.
+  const doAparelho = (faixa: MediaStreamTrack, deviceId: string, parar: () => void) => {
+    const settings = faixa.getSettings.bind(faixa);
+    const stop = faixa.stop.bind(faixa);
+    faixa.getSettings = () => ({ ...settings(), deviceId });
+    faixa.stop = () => {
+      stop();
+      parar();
+    };
+    return faixa;
+  };
+  const tom = () => {
+    const contexto = new AudioContext();
+    void contexto.resume();
+    const oscilador = contexto.createOscillator();
+    oscilador.frequency.value = o.som;
+    const meia = contexto.createGain();
+    meia.gain.value = 0.5; // a meia escala, como o WAV das pessoas
+    const destino = contexto.createMediaStreamDestination();
+    oscilador.connect(meia).connect(destino);
+    oscilador.start();
+    return doAparelho(destino.stream.getAudioTracks()[0], OUTRO_MICROFONE, () => void contexto.close());
+  };
+  const imagem = () => {
+    const tela = document.createElement('canvas');
+    tela.width = 320;
+    tela.height = 180;
+    const pincel = tela.getContext('2d') as CanvasRenderingContext2D;
+    const [faixa] = tela.captureStream(15).getVideoTracks();
+    const pintar = () => {
+      pincel.fillStyle = `rgb(${o.cor.join(', ')})`;
+      pincel.fillRect(0, 0, tela.width, tela.height);
+    };
+    pintar();
+    const repintar = setInterval(pintar, 1000 / 15);
+    return doAparelho(faixa, OUTRA_CAMERA, () => clearInterval(repintar));
+  };
+  const exato = (c: boolean | MediaTrackConstraints | undefined) => {
+    const id = typeof c === 'object' ? c.deviceId : undefined;
+    return typeof id === 'object' && id !== null && !Array.isArray(id) ? id.exact : undefined;
+  };
+  aparelhos.getUserMedia = async (c: MediaStreamConstraints = {}) => {
+    const outroMic = exato(c.audio) === OUTRO_MICROFONE;
+    const outraCam = exato(c.video) === OUTRA_CAMERA;
+    if (!outroMic && !outraCam) return pedir(c);
+    const resto = { audio: outroMic ? false : (c.audio ?? false), video: outraCam ? false : (c.video ?? false) };
+    const fluxo = resto.audio || resto.video ? await pedir(resto) : new MediaStream();
+    if (outroMic) fluxo.addTrack(tom());
+    if (outraCam) fluxo.addTrack(imagem());
+    return fluxo;
+  };
+}
+
 /** Antes da página: um navegador sem microfone, que recusa todo pedido do som, como um PC que não tem um. */
 function semMicrofone(): void {
   const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
@@ -544,12 +628,32 @@ export interface OpcoesDaPagina {
   semMicrofone?: boolean;
   /** O canal e o WSS do vídeo passam pelas rotas do teste, que pode derrubá-los. */
   derrubavel?: boolean;
+  /** Dois microfones e duas câmeras com nome (os APARELHOS do midia.ts), que o app de mentira escolhe pelo nome. */
+  doisAparelhos?: boolean;
+}
+
+export interface OpcoesDoColega {
+  /** A página dentro do app de mentira (o cliente/app-falso.html), num iframe: o passe chega por mensagem. */
+  noApp?: boolean;
+  /** A câmera desligada na entrada, antes do Entrar. */
+  cameraDesligada?: boolean;
+  /** O app de mentira responde ao primeiro estado com a fase naReuniao com o pausar, sozinho. Só com o noApp. */
+  pausarAoEntrar?: boolean;
+}
+
+/** O app de mentira, como o app-falso.js o põe em window.appFalso. */
+interface AppFalso {
+  mandar(tipo: string, campos?: object): void;
+  recebidas(): Mensagem[];
 }
 
 /** A página da reunião de verdade (o /r/<código> do chat) num Chromium com a câmera e o microfone de uma pessoa. Ela
- * guarda o que o canal da página recebe e manda, e as primeiras linhas das mensagens SIP que a página manda. */
+ * guarda o que o canal da página recebe e manda, e as primeiras linhas das mensagens SIP que a página manda. Dentro do
+ * app de mentira, o que olha a tela olha o quadro da reunião (o iframe). */
 export class Pagina {
   private fechado = false;
+  /** Onde a reunião está: a aba, ou o quadro dela dentro do app de mentira. */
+  private alvo: Page | Frame;
   private readonly console: string[] = [];
   private readonly recebidas: Mensagem[] = [];
   private readonly mandadas: Mensagem[] = [];
@@ -561,7 +665,14 @@ export class Pagina {
     readonly pessoa: Pessoa,
     private readonly browser: Browser,
     readonly page: Page,
-  ) {}
+  ) {
+    this.alvo = page;
+  }
+
+  /** Onde a reunião está: a aba, ou, dentro do app de mentira, o quadro da reunião. */
+  get tela(): Page | Frame {
+    return this.alvo;
+  }
 
   static async abrir(p: Pessoa, opcoes: OpcoesDaPagina = {}): Promise<Pagina> {
     const browser = await chromium.launch({ args: argumentosDoChromium(p) });
@@ -586,6 +697,14 @@ export class Pagina {
           r.json().then(anotarSegredos, () => {}); // o bilhete do abrir
         }
       });
+      // Os aparelhos antes do instrumentar: ele guarda também as câmeras geradas.
+      if (opcoes.doisAparelhos) {
+        const nomes = {
+          microfones: [APARELHOS.primeiros.microfone, APARELHOS.segundos.microfone],
+          cameras: [APARELHOS.primeiros.camera, APARELHOS.segundos.camera],
+        };
+        await page.addInitScript(doisAparelhos, { nomes, cor: APARELHOS.cor, som: APARELHOS.som });
+      }
       await page.addInitScript(instrumentar);
       if (opcoes.semMicrofone) await page.addInitScript(semMicrofone);
       if (opcoes.derrubavel) {
@@ -633,22 +752,79 @@ export class Pagina {
     await this.botao('Pedir para entrar').click();
   }
 
+  /**
+   * Entra como colega, com o passe do app. No navegador, abre o link com o passe no fim (#p=). Dentro do app de
+   * mentira, abre o app com o código depois do #, que o servidor não recebe, e entrega o passe pelo doApp depois do
+   * pronta. Com a entrada do colega à vista ("Você entra como"), clica em Entrar.
+   */
+  async entrarComoColega(codigo: string, passe: string, opcoes: OpcoesDoColega = {}): Promise<void> {
+    anotarSegredos({ codigo, passe });
+    if (opcoes.noApp) {
+      if (opcoes.pausarAoEntrar) {
+        await this.page.addInitScript(() => {
+          (window as unknown as { pausarAoEntrarDoTeste: boolean }).pausarAoEntrarDoTeste = true;
+        });
+      }
+      await this.page.goto(`${PAGINA}/app-falso.html#${codigo}`);
+      await this.esperarDoApp('pronta');
+      const quadro = this.page.frame({ url: (u) => u.origin === CHAT && u.pathname.startsWith('/r/') });
+      if (!quadro) throw new Error('a reunião não está no quadro do app de mentira');
+      this.alvo = quadro;
+      await this.doApp('passe', { passe, aparelhos: {} });
+    } else {
+      await this.page.goto(`${CHAT}/r/${codigo}#p=${passe}`);
+    }
+    await expect(this.alvo.getByText('Você entra como', { exact: true })).toBeVisible();
+    if (opcoes.cameraDesligada) {
+      await this.botao('Câmera').click();
+      await expect(this.botao('Câmera')).toHaveAttribute('aria-pressed', 'false');
+    }
+    await this.botao('Entrar').click();
+  }
+
+  /** O app de mentira manda uma mensagem à página (o starsonic e o tipo vão juntos). */
+  async doApp(tipo: string, campos: object = {}): Promise<void> {
+    await this.page.evaluate(
+      ({ tipo, campos }) => (window as unknown as { appFalso: AppFalso }).appFalso.mandar(tipo, campos),
+      { tipo, campos },
+    );
+  }
+
+  /** O que o app de mentira recebeu da página, na ordem. */
+  async recebidasDoApp(): Promise<Mensagem[]> {
+    const lista = await this.page.evaluate(() => (window as unknown as { appFalso: AppFalso }).appFalso.recebidas());
+    anotarSegredos(lista);
+    return lista;
+  }
+
+  /** A primeira mensagem do tipo que o app de mentira recebeu, esperando até prazo ms. */
+  async esperarDoApp(tipo: string, prazo = 20_000): Promise<any> {
+    const lista = await repetirAte(
+      prazo,
+      100,
+      () => this.recebidasDoApp(),
+      (l) => l.some((m) => m.tipo === tipo),
+      (l) => `o app de ${this.pessoa.letra} não recebeu ${tipo} em ${prazo / 1000} s; recebeu ${texto(l.map((m) => m.tipo))}`,
+    );
+    return lista.find((m) => m.tipo === tipo);
+  }
+
   titulo(texto: string): Locator {
-    return this.page.getByRole('heading', { level: 1, name: texto, exact: true });
+    return this.alvo.getByRole('heading', { level: 1, name: texto, exact: true });
   }
 
   botao(texto: string): Locator {
-    return this.page.getByRole('button', { name: texto, exact: true });
+    return this.alvo.getByRole('button', { name: texto, exact: true });
   }
 
   /** Os controles da reunião: aparecem com a ligação no ar. */
   controles(): Locator {
-    return this.page.getByRole('navigation', { name: 'Controles da reunião' });
+    return this.alvo.getByRole('navigation', { name: 'Controles da reunião' });
   }
 
   /** O aviso da conexão caída, por cima do mosaico. */
   caiu(): Locator {
-    return this.page.getByRole('heading', { level: 2, name: 'A conexão caiu. Entrando de novo…', exact: true });
+    return this.alvo.getByRole('heading', { level: 2, name: 'A conexão caiu. Entrando de novo…', exact: true });
   }
 
   /** As mensagens que o canal da página recebeu, na ordem. */
@@ -680,7 +856,7 @@ export class Pagina {
 
   /** As faixas de câmera no fluxo da página (o das prévias, que a ligação também usa): todas, e as vivas. */
   camerasNoFluxo(): Promise<{ todas: number; vivas: number }> {
-    return this.page
+    return this.alvo
       .locator('video.previa')
       .first()
       .evaluate((v: HTMLVideoElement) => {
@@ -691,7 +867,7 @@ export class Pagina {
 
   /** As faixas de câmera que o navegador deu à página e que ainda estão vivas (a luz acesa), no fluxo ou fora dele. */
   camerasVivas(): Promise<number> {
-    return this.page.evaluate(() => {
+    return this.alvo.evaluate(() => {
       const w = window as unknown as { camerasDoTeste: MediaStreamTrack[] };
       return w.camerasDoTeste.filter((t) => t.readyState === 'live').length;
     });
@@ -700,7 +876,7 @@ export class Pagina {
   /** O próximo pedido só da câmera (o da Câmera ligada de novo na reunião) fica segurado até o soltarACamera, com a
    * câmera já aberta: o pedido que ainda corre quando a conexão cai. */
   segurarACamera(): Promise<void> {
-    return this.page.evaluate(() => {
+    return this.alvo.evaluate(() => {
       const w = window as unknown as { soltarCameraDoTeste?: () => void; cameraSeguradaDoTeste?: MediaStreamTrack };
       const aparelhos = navigator.mediaDevices;
       const original = aparelhos.getUserMedia.bind(aparelhos);
@@ -720,13 +896,13 @@ export class Pagina {
   /** Solta o pedido da câmera segurado, quando ele chegar. */
   async soltarACamera(): Promise<void> {
     const chegou = () => typeof (window as unknown as { soltarCameraDoTeste?: unknown }).soltarCameraDoTeste;
-    await expect.poll(() => this.page.evaluate(chegou), { message: 'o pedido da câmera não chegou' }).toBe('function');
-    await this.page.evaluate(() => (window as unknown as { soltarCameraDoTeste: () => void }).soltarCameraDoTeste());
+    await expect.poll(() => this.alvo.evaluate(chegou), { message: 'o pedido da câmera não chegou' }).toBe('function');
+    await this.alvo.evaluate(() => (window as unknown as { soltarCameraDoTeste: () => void }).soltarCameraDoTeste());
   }
 
   /** O readyState da faixa do pedido segurado, ou null antes dele. */
   cameraSegurada(): Promise<string | null> {
-    return this.page.evaluate(() => {
+    return this.alvo.evaluate(() => {
       const w = window as unknown as { cameraSeguradaDoTeste?: MediaStreamTrack };
       return w.cameraSeguradaDoTeste?.readyState ?? null;
     });
@@ -734,13 +910,13 @@ export class Pagina {
 
   /** Os pacotes de som que a ligação de agora mandou. */
   pacotesDeSomMandados(): Promise<number> {
-    return this.page.evaluate(pacotesDeSomMandados);
+    return this.alvo.evaluate(pacotesDeSomMandados);
   }
 
   /** O aparelho acaba sozinho (desligado da USB, tomado por outro programa): a faixa dele, no fluxo da página, acaba,
    * e o navegador dispara o ended, que ele só dá para um fim que a página não causou. */
   acabarSozinha(tipo: 'audio' | 'video'): Promise<void> {
-    return this.page
+    return this.alvo
       .locator('video.previa')
       .first()
       .evaluate((v: HTMLVideoElement, tipo) => {
@@ -753,7 +929,7 @@ export class Pagina {
 
   private async diagnostico(): Promise<string> {
     try {
-      return texto(await this.page.evaluate(diagnosticoDaPagina));
+      return texto(await this.alvo.evaluate(diagnosticoDaPagina));
     } catch (e) {
       return `(sem diagnóstico: ${(e as Error).message})`;
     }
@@ -761,12 +937,12 @@ export class Pagina {
 
   /** A cor de cada ponto do #mosaico, ou null sem vídeo. */
   amostras(pontos: readonly Ponto[]): Promise<Array<Cor | null>> {
-    return this.page.evaluate(coresDoMosaico, pontos);
+    return this.alvo.evaluate(coresDoMosaico, pontos);
   }
 
   /** O tamanho do vídeo do #mosaico. */
   tamanho(): Promise<Tamanho> {
-    return this.page.evaluate(tamanhoDoVideo, 'mosaico');
+    return this.alvo.evaluate(tamanhoDoVideo, 'mosaico');
   }
 
   /** Espera o vídeo do #mosaico com o tamanho, até prazo ms. */
@@ -796,9 +972,9 @@ export class Pagina {
 
   /** O quadro com a etiqueta: o nome da pessoa, "Você", "Tela de <nome>" ou "A sua tela". */
   quadro(nome: string): Locator {
-    return this.page
+    return this.alvo
       .locator('[data-quadro]')
-      .filter({ has: this.page.locator('.etiqueta').getByText(nome, { exact: true }) });
+      .filter({ has: this.alvo.locator('.etiqueta').getByText(nome, { exact: true }) });
   }
 
   /** A cor do meio do <canvas> do quadro (a média de um quadradinho de 5×5), ou null sem o quadro, sem o canvas ou
@@ -818,7 +994,7 @@ export class Pagina {
     await repetirAte(
       prazo,
       100,
-      () => this.page.evaluate(quadrosNaTela),
+      () => this.alvo.evaluate(quadrosNaTela),
       (vistos) =>
         texto(vistos.map((q) => q.etiqueta).sort()) === texto(esperados) && vistos.every((q) => q.mostra === 'video'),
       async (vistos) =>
@@ -832,7 +1008,7 @@ export class Pagina {
     await repetirAte(
       prazo,
       250,
-      () => this.page.evaluate(frequenciaDoSom),
+      () => this.alvo.evaluate(frequenciaDoSom),
       (f) => f !== null && f.db > -80 && Math.abs(f.hz - hz) <= 25,
       async (f) =>
         `o #som de ${this.pessoa.letra} não tocou ${hz} Hz em ${prazo / 1000} s; o último: ${texto(f)}; ` +
@@ -840,10 +1016,31 @@ export class Pagina {
     );
   }
 
+  /** Espera o som que chega ao #som deixar de ter hz como a frequência mais forte (a até 25 Hz, acima de -80 dB). */
+  async esperarSemFrequencia(hz: number, prazo = 20_000): Promise<void> {
+    await repetirAte(
+      prazo,
+      100,
+      () => this.alvo.evaluate(frequenciaDoSom),
+      (f) => f === null || f.db <= -80 || Math.abs(f.hz - hz) > 25,
+      async (f) =>
+        `o som que chega ao #som de ${this.pessoa.letra} ainda tinha ${hz} Hz depois de ${prazo / 1000} s; ` +
+        `o último: ${texto(f)}; a página: ${await this.diagnostico()}`,
+    );
+  }
+
+  /** O #som toca o que chega (sem o muted da pausa). O analisador do teste lê a faixa, e não o que o elemento toca. */
+  tocaOSom(): Promise<boolean> {
+    return this.alvo.evaluate(() => {
+      const som = document.getElementById('som') as HTMLAudioElement | null;
+      return som !== null && !som.muted && som.srcObject !== null;
+    });
+  }
+
   /** O console da página não tem segredo nenhum nem erro, e nenhuma violação da CSP aconteceu (o WSS do vídeo, por
    * exemplo). Uma linha com segredo é só contada: o relatório do CI é público. */
   async conferirOConsole(): Promise<void> {
-    const violacoes = await this.page.evaluate(
+    const violacoes = await this.alvo.evaluate(
       () => (window as unknown as { violacoesDoTeste: string[] }).violacoesDoTeste,
     );
     expect(violacoes, `as violações da CSP na página de ${this.pessoa.letra}`).toEqual([]);
@@ -867,7 +1064,8 @@ export class Pagina {
       if (await sair.isVisible()) {
         const byes = () => this.sip.filter((l) => l.startsWith('BYE ')).length;
         const antes = byes();
-        await sair.click();
+        // Com um prazo: o cartão modal da pausa deixa o Sair de fora do clique, e o fechar não pode prender o teste.
+        await sair.click({ timeout: 5_000 });
         await repetirAte(5_000, 100, byes, (n) => n > antes, () => 'sem o BYE').catch(() => {});
       }
     } catch {

@@ -15,6 +15,7 @@ export const VERMELHO: Cor = [220, 30, 30];
 export const AZUL: Cor = [30, 60, 220];
 export const AMARELO: Cor = [220, 200, 30];
 export const VERDE: Cor = [30, 180, 60]; // a tela compartilhada
+export const CIANO: Cor = [30, 200, 200]; // a segunda câmera
 
 export interface Pessoa {
   letra: 'A' | 'B' | 'C';
@@ -25,6 +26,18 @@ export interface Pessoa {
 export const A: Pessoa = { letra: 'A', cor: VERMELHO, som: 440 };
 export const B: Pessoa = { letra: 'B', cor: AZUL, som: 880 };
 export const C: Pessoa = { letra: 'C', cor: AMARELO, som: 660 };
+
+/**
+ * Os dois aparelhos de cada tipo da pessoa que entra com o doisAparelhos (navegador.ts), pelos nomes que o app manda: o
+ * primeiro é o aparelho falso do Chromium (a cor e o tom da pessoa), e o segundo, gerado na página, tem a cor e o tom
+ * daqui, que nenhuma pessoa do teste tem.
+ */
+export const APARELHOS = {
+  primeiros: { microfone: 'Microfone 1', altoFalante: '', camera: 'Câmera 1' },
+  segundos: { microfone: 'Microfone 2', altoFalante: '', camera: 'Câmera 2' },
+  cor: CIANO,
+  som: 550, // em Hz
+} as const;
 
 // Os pontos do mosaico, em frações do vídeo recebido (os layouts da seção 7 do docs/video-agente.md, num quadro de
 // 360×360 esticado sobre o mosaico): o centro de cada célula. O agente põe cada pessoa na menor célula livre quando

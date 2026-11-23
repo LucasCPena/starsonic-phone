@@ -1,6 +1,7 @@
-// O servidor do cliente mínimo, em http://127.0.0.1:<porta>: a página (cliente/index.html), o cliente.js e o JsSIP.
-// O JsSIP é o do chat (chat-servidor/internal/pagina/estatico/jssip.js, montado por chat-servidor/pagina/montar-jssip.mjs):
-// o mesmo arquivo que a página da reunião carrega.
+// O servidor do cliente mínimo, em http://127.0.0.1:<porta>: a página (cliente/index.html), o cliente.js, o JsSIP e o
+// app de mentira (cliente/app-falso.html e app-falso.js). O JsSIP é o do chat
+// (chat-servidor/internal/pagina/estatico/jssip.js, montado por chat-servidor/pagina/montar-jssip.mjs): o mesmo arquivo
+// que a página da reunião carrega.
 //
 // Uso: node estatico.mjs <porta>
 import { readFileSync } from 'node:fs';
@@ -17,6 +18,9 @@ const arquivos = {
   '/index.html': ['text/html; charset=utf-8', () => readFileSync(join(raiz, 'cliente', 'index.html'))],
   '/cliente.js': ['text/javascript; charset=utf-8', () => readFileSync(join(raiz, 'cliente', 'cliente.js'))],
   '/jssip.js': ['text/javascript; charset=utf-8', () => jssip],
+  // O app de mentira (colega.spec.ts), que mostra a página da reunião num iframe.
+  '/app-falso.html': ['text/html; charset=utf-8', () => readFileSync(join(raiz, 'cliente', 'app-falso.html'))],
+  '/app-falso.js': ['text/javascript; charset=utf-8', () => readFileSync(join(raiz, 'cliente', 'app-falso.js'))],
 };
 
 createServer((req, res) => {

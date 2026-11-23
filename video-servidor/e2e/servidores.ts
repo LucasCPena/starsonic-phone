@@ -46,12 +46,12 @@ export function ipDaMaquina(): string {
 
 // --- O que os testes anotam ----------------------------------------------------------------------------------------
 
-// Os códigos, as salas, os participantes, as senhas, os bilhetes, as chaves de volta e os textos das mensagens do chat
-// da reunião que passaram pelos testes, para o teste dos registros e a conferência do fim. Ficam num arquivo da pasta
+// Os códigos, as salas, os participantes, as senhas, os bilhetes, as chaves de volta, os passes e as chaves do colega
+// e os textos das mensagens do chat da reunião que passaram pelos testes, para o teste dos registros e a conferência do fim. Ficam num arquivo da pasta
 // privada: um teste que falha troca o processo do Playwright, e o último teste ainda os vê.
 const USADOS = join(PRIVADO, 'usados.jsonl');
 
-type Tipo = 'codigos' | 'salas' | 'participantes' | 'senhas' | 'bilhetes' | 'voltas' | 'textos';
+type Tipo = 'codigos' | 'salas' | 'participantes' | 'senhas' | 'bilhetes' | 'voltas' | 'passes' | 'chaves' | 'textos';
 
 /** O texto de uma mensagem do chat da reunião é anotado com 12 letras ou mais: um texto curto ("Oi") apareceria nas
  * saídas por acaso. Os testes mandam textos únicos e compridos. */
@@ -62,6 +62,7 @@ function anotar(tipo: Tipo, valor: string): void {
 }
 
 const CODIGO = /^[abcdefghjkmnpqrstvwxyz23456789]{10}$/;
+const CHAVE = /^[A-Za-z0-9_-]{43}$/;
 
 /** A carga de uma senha de uso único (<carga>.<assinatura>), ou null. */
 function cargaDe(senha: string): { sala?: unknown; participante?: unknown } | null {
@@ -76,7 +77,8 @@ function cargaDe(senha: string): { sala?: unknown; participante?: unknown } | nu
 
 /** Anota o que houver no valor (um Acesso, uma mensagem da página, um evento, uma lista, uma resposta): os códigos das
  * reuniões, as senhas, a sala e o participante de dentro de cada senha, os bilhetes (o da página e o dos eventos do
- * app), as chaves de volta da página e os textos das mensagens do chat da reunião (o campo texto). */
+ * app), as chaves de volta da página, os passes do colega (o campo passe), as chaves de 43 caracteres (a do colega, na
+ * resposta do abrir, e a de um computador) e os textos das mensagens do chat da reunião (o campo texto). */
 export function anotarSegredos(valor: unknown): void {
   if (Array.isArray(valor)) {
     valor.forEach(anotarSegredos);
@@ -89,6 +91,8 @@ export function anotarSegredos(valor: unknown): void {
       if (campo === 'participante' && /^[0-9a-f]{16}$/.test(v)) anotar('participantes', v);
       if (campo === 'bilhete' && v !== '') anotar('bilhetes', v);
       if (campo === 'volta' && v !== '') anotar('voltas', v);
+      if (campo === 'passe' && v !== '') anotar('passes', v);
+      if (campo === 'chave' && CHAVE.test(v)) anotar('chaves', v);
       if (campo === 'texto' && [...v].length >= MIN_DO_TEXTO) anotar('textos', v);
       if (campo === 'senha' && v !== '') {
         anotar('senhas', v);
@@ -111,6 +115,8 @@ export function segredosUsados(): Record<Tipo, string[]> {
     senhas: new Set(),
     bilhetes: new Set(),
     voltas: new Set(),
+    passes: new Set(),
+    chaves: new Set(),
     textos: new Set(),
   };
   if (existsSync(USADOS)) {
@@ -127,6 +133,8 @@ export function segredosUsados(): Record<Tipo, string[]> {
     senhas: [...usados.senhas],
     bilhetes: [...usados.bilhetes],
     voltas: [...usados.voltas],
+    passes: [...usados.passes],
+    chaves: [...usados.chaves],
     textos: [...usados.textos],
   };
 }
@@ -156,7 +164,7 @@ export function senhaDoEsl(): string {
 }
 
 /** O que os registros têm e não podiam ter: um nome, um código de reunião, uma sala, um participante, uma senha, um
- * bilhete, uma chave de volta, o texto de uma mensagem do chat da reunião ou um segredo do ambiente, e qualquer senha
+ * bilhete, uma chave de volta, um passe, uma chave (do colega ou de um computador), o texto de uma mensagem do chat da reunião ou um segredo do ambiente, e qualquer senha
  * de uso único (a carga começa por {"v":1, em base64url), também as que os testes não viram. Cada achado diz a saída,
  * o que é e a linha, nunca o valor. */
 export function segredosNosRegistros(): string[] {
@@ -169,6 +177,8 @@ export function segredosNosRegistros(): string[] {
     ['uma senha', usados.senhas],
     ['um bilhete', usados.bilhetes],
     ['uma chave de volta', usados.voltas],
+    ['um passe', usados.passes],
+    ['uma chave', usados.chaves],
     ['o texto de uma mensagem', usados.textos],
     ...segredosDoAmbiente().map(([rotulo, valor]): [string, string[]] => [rotulo, [valor]]),
   ];
@@ -227,6 +237,13 @@ export function salaDaSenha(senha: string): string {
   const sala = cargaDe(senha)?.sala;
   if (typeof sala !== 'string') throw new Error('a senha não leva uma sala');
   return sala;
+}
+
+/** O papel de dentro de uma senha de uso único: colega ou fora. */
+export function papelDaSenha(senha: string): string {
+  const papel = (cargaDe(senha) as { papel?: unknown } | null)?.papel;
+  if (typeof papel !== 'string') throw new Error('a senha não leva um papel');
+  return papel;
 }
 
 /** O aviso do agente quando o FreeSWITCH recusa um comando do mosaico (salas.go). */
@@ -301,12 +318,16 @@ function entrarNaAdministracao(): Promise<void> {
   return sessao;
 }
 
-/** Um formulário da administração: o POST com o csrf de pagina. Devolve o status e o HTML da resposta. */
-async function formulario(pagina: string, acao: string, campos: Record<string, string>): Promise<{ status: number; html: string }> {
+/** Um formulário da administração: o POST com o csrf de pagina. Devolve o status, o HTML e o Location da resposta. */
+async function formulario(
+  pagina: string,
+  acao: string,
+  campos: Record<string, string>,
+): Promise<{ status: number; html: string; local: string }> {
   await entrarNaAdministracao();
   const { csrf } = await paginaComCsrf(pagina);
   const r = await admin('POST', acao, { csrf, ...campos });
-  return { status: r.status, html: await r.text() };
+  return { status: r.status, html: await r.text(), local: r.headers.get('location') ?? '' };
 }
 
 /** Uma reunião de teste nova (a anterior acaba): o código dela, lido do link que a página "Reuniões" mostra. */
@@ -332,27 +353,52 @@ export async function prepararChat(chaveDoVideo: string): Promise<string> {
   const limite = await formulario('/admin/reunioes', '/admin/reunioes/limite', { limite: '20' });
   if (limite.status !== 303) throw new Error(`o limite de reuniões respondeu ${limite.status}`);
 
-  const nova = await formulario('/admin/empresas/nova', '/admin/empresas', { nome: 'ACME Comércio Ltda' });
-  if (nova.status !== 303) throw new Error(`criar a empresa respondeu ${nova.status}`);
-  const lista = await (await admin('GET', '/admin/reunioes')).text();
-  const id = /action="\/admin\/reunioes\/empresas\/(\d+)"/.exec(lista)?.[1];
-  if (!id) throw new Error('a página Reuniões não mostra a empresa');
+  const codigoDaEmpresa = await novaEmpresa('ACME Comércio Ltda');
+  // O computador da Ana Souza (2001), ligado pela API.
+  const { chave } = await ligarComputador(codigoDaEmpresa, 'PC-2001', '2001', 'Ana Souza');
+  return chave;
+}
+
+/** Uma empresa nova, com as reuniões liberadas, pelos formulários da administração: o código dela (STAR-…). */
+async function novaEmpresa(nome: string): Promise<string> {
+  const nova = await formulario('/admin/empresas/nova', '/admin/empresas', { nome });
+  // A criação leva à página da empresa: o id vem do Location.
+  const id = /^\/admin\/empresas\/(\d+)$/.exec(nova.local)?.[1];
+  if (nova.status !== 303 || !id) throw new Error(`criar a empresa respondeu ${nova.status}`);
   const liberar = await formulario('/admin/reunioes', `/admin/reunioes/empresas/${id}`, { liberar: '1' });
   if (liberar.status !== 303) throw new Error(`liberar as reuniões da empresa respondeu ${liberar.status}`);
   const empresa = await (await admin('GET', `/admin/empresas/${id}`)).text();
-  const codigoDaEmpresa = /STAR-[A-Z0-9]{4}-[A-Z0-9]{4}/.exec(empresa)?.[0];
-  if (!codigoDaEmpresa) throw new Error('a página da empresa não mostra o código');
+  const codigo = /STAR-[A-Z0-9]{4}-[A-Z0-9]{4}/.exec(empresa)?.[0];
+  if (!codigo) throw new Error('a página da empresa não mostra o código');
+  return codigo;
+}
 
-  // O computador da Ana Souza (2001), ligado pela API.
+/** Um computador da empresa, ligado pela API, com a pessoa da vez: a chave dele e o Computador. */
+async function ligarComputador(
+  codigoDaEmpresa: string,
+  computador: string,
+  ramal: string,
+  nome: string,
+): Promise<{ chave: string; pc: Computador }> {
   const r = await fetch(`${CHAT}/api/v1/computadores`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ codigo: codigoDaEmpresa, computador: 'PC-2001' }),
+    body: JSON.stringify({ codigo: codigoDaEmpresa, computador }),
   });
   if (r.status !== 201) throw new Error(`ligar o computador respondeu ${r.status}`);
   const { chave } = (await r.json()) as { chave: string };
-  await new Computador(chave).entrarComo('2001', 'Ana Souza');
-  return chave;
+  const pc = new Computador(chave);
+  await pc.entrarComo(ramal, nome);
+  return { chave, pc };
+}
+
+/** O computador do Roberto Alves (3001), de outra empresa (a Beta, com as reuniões liberadas), criada na hora. A chave
+ * dele fica anotada. */
+export async function computadorDeOutraEmpresa(): Promise<Computador> {
+  const codigo = await novaEmpresa('Beta Serviços Ltda');
+  const { chave, pc } = await ligarComputador(codigo, 'PC-3001', '3001', 'Roberto Alves');
+  anotarSegredos({ chave });
+  return pc;
 }
 
 // --- A API do chat como um computador ----------------------------------------------------------------------------------
@@ -427,6 +473,18 @@ export class Computador {
 
   async encerrar(codigo: string): Promise<void> {
     await this.certo('POST', '/api/v1/reunioes/{codigo}/encerrar', undefined, 204, codigo);
+  }
+
+  /** O passe do colega para a página da reunião (a resposta o anota como segredo, no pedir). */
+  async passe(codigo: string): Promise<string> {
+    const j = await this.certo('POST', '/api/v1/reunioes/{codigo}/passe', undefined, 200, codigo);
+    if (typeof j?.passe !== 'string') throw new Error('o passe veio sem o passe');
+    return j.passe;
+  }
+
+  /** A pausa (ou o fim dela) da página do colega aberta neste computador: o status da resposta. */
+  async pausa(codigo: string, pausada: boolean, vez: string): Promise<number> {
+    return (await this.pedir('POST', `/api/v1/reunioes/${encodeURIComponent(codigo)}/pausa`, { pausada, vez })).status;
   }
 
   /** O WebSocket dos eventos do app (seção 7), pelo bilhete. O WebSocket do Node não manda a Origin. */
