@@ -208,7 +208,7 @@ func TestAbrirColega_PessoaTirada(t *testing.T) {
 	}
 	esperarErro(t, c.abrirCom(r.Codigo, map[string]string{"passe": passe}), 401, "passe")
 	esperarErro(t, c.abrirCom(r.Codigo, map[string]string{"colega": chave}), 401, "passe")
-	// A chave foi esquecida: o segundo 401 não depende só de a pessoa ter saído.
+	// A chave de quem saiu continua respondendo 401; que ela foi esquecida é o TestAbrirColega_AChaveEsquecidaNaoVolta.
 	esperarErro(t, c.abrirCom(r.Codigo, map[string]string{"colega": chave}), 401, "passe")
 	c.abrirBom(t, r.Codigo, map[string]string{"colega": chaveBia})
 }
@@ -337,4 +337,45 @@ func TestAbrirColega_NaoVaiAoLog(t *testing.T) {
 			t.Fatalf("o log tem %s (%q):\n%s", o, s, texto)
 		}
 	}
+}
+
+// trocaPorChave faz o abrir com o passe do Carlos e devolve a chave do colega.
+func (c *cenaR) trocaPorChave(t *testing.T, codigo string) string {
+	t.Helper()
+	return *c.abrirBom(t, codigo, map[string]string{"passe": c.passe(t, c.kCarlos, codigo).Passe}).Colega.Chave
+}
+
+// A pessoa saiu, mas o computador continua ativo (o TirarPessoa desligaria os dois): só a conferência da pessoa
+// pode recusar.
+func TestAbrirColega_PessoaQueSaiu(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	chave := c.trocaPorChave(t, r.Codigo)
+	passe := c.passe(t, c.kCarlos, r.Codigo).Passe
+
+	c.a.Exec(`UPDATE pessoas SET saiu_em = 1 WHERE id = ?`, c.carlos.ID)
+	esperarErro(t, c.abrirCom(r.Codigo, map[string]string{"colega": chave}), 401, "passe")
+	esperarErro(t, c.abrirCom(r.Codigo, map[string]string{"passe": passe}), 401, "passe")
+}
+
+// A chave que deu 401 por a pessoa ter saído é esquecida: com a pessoa de volta, ela não abre mais.
+func TestAbrirColega_AChaveEsquecidaNaoVolta(t *testing.T) {
+	t.Run("a pessoa que saiu", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		chave := c.trocaPorChave(t, r.Codigo)
+		c.a.Exec(`UPDATE pessoas SET saiu_em = 1 WHERE id = ?`, c.carlos.ID)
+		esperarErro(t, c.abrirCom(r.Codigo, map[string]string{"colega": chave}), 401, "passe")
+		c.a.Exec(`UPDATE pessoas SET saiu_em = NULL WHERE id = ?`, c.carlos.ID)
+		esperarErro(t, c.abrirCom(r.Codigo, map[string]string{"colega": chave}), 401, "passe")
+	})
+	t.Run("o computador desligado", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		chave := c.trocaPorChave(t, r.Codigo)
+		c.a.Exec(`UPDATE computadores SET saiu_em = 1 WHERE pessoa_id = ?`, c.carlos.ID)
+		esperarErro(t, c.abrirCom(r.Codigo, map[string]string{"colega": chave}), 401, "passe")
+		c.a.Exec(`UPDATE computadores SET saiu_em = NULL WHERE pessoa_id = ?`, c.carlos.ID)
+		esperarErro(t, c.abrirCom(r.Codigo, map[string]string{"colega": chave}), 401, "passe")
+	})
 }
