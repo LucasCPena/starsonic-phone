@@ -130,9 +130,11 @@ type mensagemPausa struct {
 }
 
 // Pausa repassa a pausa às páginas de colega daquela pessoa e daquele computador naquela reunião: os participantes
-// que entraram pela página (com Pedido). Sem nenhum participante assim, ErrForaDaReuniao; o que entrou pela rota do
-// app (EntrarColega, sem Pedido) não conta, e quem ainda não entrou na câmera conta. Uma página sem canal não recebe
-// nada, e isso não é erro. Não guarda nada: o app repete a pausa enquanto a ligação dura.
+// que entraram pela página (com Pedido) e estão na reunião ou entrando nela (a câmera no ar, ou uma senha da câmera
+// ainda não usada, como no pessoas da sala). Sem nenhum participante assim, ErrForaDaReuniao: o que entrou pela rota
+// do app (EntrarColega, sem Pedido) não conta, e quem saiu (a câmera saiu, com a página aberta no "Você saiu da
+// reunião") também não, até a senha nova do Entrar de novo. Uma página sem canal não recebe nada, e isso não é erro.
+// Não guarda nada: o app repete a pausa enquanto a ligação dura.
 func (g *Gerente) Pausa(r banco.Reuniao, pessoaID, computadorID int64, pausada bool, vez string) error {
 	g.mu.Lock()
 	s := g.salas[r.Sala]
@@ -143,6 +145,9 @@ func (g *Gerente) Pausa(r banco.Reuniao, pessoaID, computadorID int64, pausada b
 	achou := false
 	for _, p := range s.emOrdem() {
 		if pessoaID == 0 || p.pessoa != pessoaID || p.computador != computadorID || p.pedido == nil {
+			continue
+		}
+		if !p.naReuniao && !p.temSenha(false) {
 			continue
 		}
 		achou = true

@@ -641,6 +641,35 @@ func TestPausa_Entrando(t *testing.T) {
 	}
 }
 
+func TestPausa_DepoisDeSair(t *testing.T) {
+	c := novaCena(t)
+	r := c.marcada()
+	c.dentro(r, c.ana) // a reunião continua sem o Carlos
+	ped, can, carlos := c.pelaPagina(r, c.carlos)
+	c.entrou(r, carlos)
+	if err := c.g.Pausa(r, c.carlos.p.ID, c.carlos.computador, true, "p1"); err != nil {
+		t.Fatalf("Pausa na reunião: %v", err)
+	}
+
+	// O Sair: a câmera saiu, e a página continua aberta, com o canal. Ele não está na reunião nem entrando.
+	c.saiu(r, carlos)
+	conferirErro(t, "o Carlos que saiu", c.g.Pausa(r, c.carlos.p.ID, c.carlos.computador, true, "p2"), ErrForaDaReuniao)
+	if n := len(pausasDe(can)); n != 1 {
+		t.Fatalf("a página de quem saiu recebeu %d pausas; queria só a de antes", n)
+	}
+
+	// O Entrar de novo: com a senha nova, ele está entrando, e volta a contar.
+	if _, err := c.g.NovaSenha(ped); err != nil {
+		t.Fatalf("NovaSenha: %v", err)
+	}
+	if err := c.g.Pausa(r, c.carlos.p.ID, c.carlos.computador, true, "p3"); err != nil {
+		t.Fatalf("Pausa entrando de novo: %v", err)
+	}
+	if got := pausasDe(can); len(got) != 2 || got[1]["vez"] != "p3" {
+		t.Fatalf("a página que entra de novo recebeu %v; queria a p1 e a p3", got)
+	}
+}
+
 func TestPausa_NaoGuarda(t *testing.T) {
 	c := novaCena(t)
 	r := c.marcada()
