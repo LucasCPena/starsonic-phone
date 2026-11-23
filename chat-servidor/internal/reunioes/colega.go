@@ -54,20 +54,20 @@ func (g *Gerente) EntrarPelaPagina(ctx context.Context, r banco.Reuniao, p banco
 }
 
 // ColegaDoPedido diz se o pedido é o de um colega que entrou pela página, e quem ele é: o pedido aceito, ainda na
-// memória, cujo participante tem a pessoa. Vale também depois do Voltar (quem diz que o canal é de colega é o
-// participante, e não o bilhete). O pedido de quem é de fora, o da reunião de teste (o participante sem pessoa), o
-// que acabou e o nil não são.
-func (g *Gerente) ColegaDoPedido(p *Pedido) (pessoaID int64, ok bool) {
+// memória, cujo participante tem a pessoa, e o computador de onde ela entrou. Vale também depois do Voltar (quem diz
+// que o canal é de colega é o participante, e não o bilhete). O pedido de quem é de fora, o da reunião de teste (o
+// participante sem pessoa), o que acabou e o nil não são.
+func (g *Gerente) ColegaDoPedido(p *Pedido) (pessoaID, computadorID int64, ok bool) {
 	if p == nil {
-		return 0, false
+		return 0, 0, false
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	_, part := g.aceitoDe(p)
 	if part == nil || part.pessoa == 0 {
-		return 0, false
+		return 0, 0, false
 	}
-	return part.pessoa, true
+	return part.pessoa, part.computador, true
 }
 
 // ---------- A lista na página do colega ----------

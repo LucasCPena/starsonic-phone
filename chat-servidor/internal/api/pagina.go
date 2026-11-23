@@ -676,8 +676,9 @@ func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo web
 	case "entrar":
 		// O colega que a página reconheceu entra sem a sala de espera. Só no canal de colega (no de quem é de fora, é
 		// fora de ordem, e o canal fica), e uma vez: depois do aceito, ou do voltou, também é fora de ordem. Conta no
-		// prazo como o pedir. A pessoa é lida agora no banco: a que saiu da empresa depois do abrir não entra, e o canal
-		// fecha; o nome que vai à reunião é o do cadastro de agora. Os outros erros são os do pedir.
+		// prazo como o pedir. A pessoa e o computador são lidos agora no banco: a que saiu da empresa depois do abrir,
+		// ou o computador desligado do chat, não entra, e o canal fecha; o nome que vai à reunião é o do cadastro de
+		// agora. Os outros erros são os do pedir.
 		if st.colega == nil {
 			c.Mandar(erroDoCanal("invalido"))
 			return
@@ -687,15 +688,8 @@ func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo web
 			c.Mandar(erroDoCanal("invalido"))
 			return
 		}
-		pessoa, err := s.banco.PessoaPorID(c.ctx, st.colega.empresaID, st.colega.pessoaID)
-		if errors.Is(err, banco.ErrNaoEncontrado) || (err == nil && pessoa.Saiu) {
-			st.acabou = true
-			c.Mandar(erroDoCanal("invalido"))
-			c.Fechar()
-			return
-		}
-		if err != nil {
-			s.erroDoGerente(c, err)
+		pessoa, ok := s.colegaAindaVale(c, st, st.colega.empresaID, st.colega.pessoaID, st.colega.computadorID)
+		if !ok {
 			return
 		}
 		p, err := s.gerente.EntrarPelaPagina(c.ctx, st.reuniao, pessoa, st.colega.computadorID, c)
@@ -820,13 +814,18 @@ func idDaMensagem(dados []byte, campo string) (string, bool) {
 // respostaDoColega trata o aceitar, o recusar (com o pedido), o tirar (com o participante) e o encerrar: as rotas do
 // app com o mesmo nome, pelo canal. Valem só no canal cujo pedido é o de um colega (o ColegaDoPedido), também o que
 // voltou pelo voltar com um bilhete comum; em outro canal, ou com o campo que falta ou não é um id, a resposta é o
-// erro invalido, e o canal fica. As regras são as do gerente, pela pessoa: o colega tem de estar na reunião. O que dá
+// erro invalido, e o canal fica. A pessoa e o computador do participante são lidos de novo a cada resposta, como as
+// rotas do app fazem a cada pedido: a pessoa que saiu da empresa, ou o computador desligado do chat, recebe o erro
+// invalido, e o canal fecha. As regras são as do gerente, pela pessoa: o colega tem de estar na reunião. O que dá
 // certo não tem resposta (a página vê o participantes novo, ou o encerrada); o que falha recebe o recusa. Nada disso
 // vai ao log, a não ser o código de uma falha do servidor de vídeo.
 func (s *servidor) respostaDoColega(c *canalPagina, st *estadoDaPagina, tipo string, dados []byte) {
-	pessoa, ok := s.gerente.ColegaDoPedido(st.pedido)
+	pessoa, computador, ok := s.gerente.ColegaDoPedido(st.pedido)
 	if !ok {
 		c.Mandar(erroDoCanal("invalido"))
+		return
+	}
+	if _, ok := s.colegaAindaVale(c, st, st.reuniao.EmpresaID, pessoa, computador); !ok {
 		return
 	}
 	campo := "pedido"
@@ -857,6 +856,28 @@ func (s *servidor) respostaDoColega(c *canalPagina, st *estadoDaPagina, tipo str
 	if err != nil {
 		c.Mandar(mensagemRecusa{Tipo: "recusa", De: tipo, Motivo: motivoDaRecusa(err)})
 	}
+}
+
+// colegaAindaVale lê de novo a pessoa e o computador de um colega do canal. A pessoa que saiu da empresa (ou que não
+// existe mais) e o computador desligado (ou de outra empresa) recebem o erro invalido, e o canal fecha e não trata mais
+// nada; a falha do banco é a do erroDoGerente. Só com ok o canal segue.
+func (s *servidor) colegaAindaVale(c *canalPagina, st *estadoDaPagina, empresaID, pessoaID, computadorID int64) (banco.Pessoa, bool) {
+	pessoa, err := s.banco.PessoaPorID(c.ctx, empresaID, pessoaID)
+	if err == nil && !pessoa.Saiu {
+		var computador banco.Computador
+		computador, err = s.banco.ComputadorAtivo(c.ctx, computadorID)
+		if err == nil && computador.EmpresaID == empresaID {
+			return pessoa, true
+		}
+	}
+	if err == nil || errors.Is(err, banco.ErrNaoEncontrado) {
+		st.acabou = true
+		c.Mandar(erroDoCanal("invalido"))
+		c.Fechar()
+	} else {
+		s.erroDoGerente(c, err)
+	}
+	return banco.Pessoa{}, false
 }
 
 // motivoDaRecusa é o motivo do recusa para o erro do gerente. Os que não são dele (o servidor de vídeo fora do ar, ou

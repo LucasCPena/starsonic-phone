@@ -656,6 +656,81 @@ func TestCanalDeColega_PessoaSumiu(t *testing.T) {
 	})
 }
 
+func TestCanalDeColega_EntrarDoComputadorDesligado(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	pagina := c.canalDeColega(t, r.Codigo)
+	if resp := c.a.Pedir(c.kCarlos, "DELETE", "/api/v1/computadores/eu", nil); resp.StatusCode != 204 {
+		t.Fatalf("desligar deu %d", resp.StatusCode)
+	}
+	daPagina(t, pagina, map[string]any{"tipo": "entrar"})
+	aPaginaErro(t, pagina, "invalido")
+	fechouCom1000(t, pagina)
+	if _, pessoas := c.a.Gerente.Contagem(c.sala(t, r.Codigo)); pessoas != 0 {
+		t.Fatalf("a reunião tem %d pessoas", pessoas)
+	}
+}
+
+// respostasDeQuemNaoValeMais: o Carlos está na reunião pela página, com a Bia (pelo app) e com o pedido da Maria
+// esperando; depois do mudar, que tira dele o que o reconhecia, cada uma das quatro respostas recebe o erro invalido,
+// o canal fecha, e nada acontece na reunião: a Bia continua, o pedido espera, e o agente não recebe nada.
+func respostasDeQuemNaoValeMais(t *testing.T, mudar func(t *testing.T, c *cenaR)) {
+	for _, tipo := range []string{"aceitar", "recusar", "tirar", "encerrar"} {
+		t.Run(tipo, func(t *testing.T) {
+			c := novaCenaR(t)
+			r := c.marcada(t, c.kAna)
+			pagina, _, _ := c.carlosNaReuniao(t, r.Codigo)
+			bia := c.entrouNaReuniao(t, c.kBia, r.Codigo)
+			for {
+				if ps, _ := aPaginaTipo(t, pagina, "participantes")["participantes"].([]any); len(ps) == 2 {
+					break
+				}
+			}
+			_, pedido := pedeAMaria(t, c, r.Codigo, pagina)
+			mudar(t, c)
+
+			m := map[string]any{"tipo": tipo}
+			switch tipo {
+			case "aceitar", "recusar":
+				m["pedido"] = pedido
+			case "tirar":
+				m["participante"] = bia
+			}
+			daPagina(t, pagina, m)
+			aPaginaErro(t, pagina, "invalido")
+			fechouCom1000(t, pagina)
+
+			l := c.lista(t, c.kBia, r.Codigo)
+			comBia := false
+			for _, p := range l.Participantes {
+				comBia = comBia || p.ID == bia
+			}
+			if !comBia || len(l.Pedidos) != 1 || l.Pedidos[0].ID != pedido {
+				t.Fatalf("a lista é %+v; queria a Bia na reunião e o pedido da Maria esperando", l)
+			}
+			if cs := c.a.Video.Comandos(); len(cs) != 0 {
+				t.Fatalf("o agente recebeu %q", cs)
+			}
+		})
+	}
+}
+
+func TestCanalDeColega_RespostaDeQuemSaiuDaEmpresa(t *testing.T) {
+	respostasDeQuemNaoValeMais(t, func(t *testing.T, c *cenaR) {
+		if _, _, err := c.a.Banco.TirarPessoa(t.Context(), c.acme.ID, c.carlos.ID); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestCanalDeColega_RespostaDoComputadorDesligado(t *testing.T) {
+	respostasDeQuemNaoValeMais(t, func(t *testing.T, c *cenaR) {
+		if resp := c.a.Pedir(c.kCarlos, "DELETE", "/api/v1/computadores/eu", nil); resp.StatusCode != 204 {
+			t.Fatalf("desligar deu %d", resp.StatusCode)
+		}
+	})
+}
+
 func TestCanalDeColega_BilheteComum(t *testing.T) {
 	c := novaCenaR(t)
 	r := c.marcada(t, c.kAna)

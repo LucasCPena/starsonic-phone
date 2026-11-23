@@ -512,8 +512,8 @@ func TestColegaDoPedido(t *testing.T) {
 	c := novaCena(t)
 	r := c.marcada()
 	p, can, carlos := c.pelaPagina(r, c.carlos)
-	if pessoa, ok := c.g.ColegaDoPedido(p); !ok || pessoa != c.carlos.p.ID {
-		t.Fatalf("ColegaDoPedido do Carlos = %d, %v", pessoa, ok)
+	if pessoa, computador, ok := c.g.ColegaDoPedido(p); !ok || pessoa != c.carlos.p.ID || computador != c.carlos.computador {
+		t.Fatalf("ColegaDoPedido do Carlos = %d, %d, %v", pessoa, computador, ok)
 	}
 	c.entrou(r, carlos)
 	got, v, err := c.g.Voltar(r, carlos, voltaDe(t, can), &canalFalso{})
@@ -521,19 +521,19 @@ func TestColegaDoPedido(t *testing.T) {
 		t.Fatalf("Voltar: %v", err)
 	}
 	anotar(v)
-	if pessoa, ok := c.g.ColegaDoPedido(got); !ok || pessoa != c.carlos.p.ID {
-		t.Fatalf("ColegaDoPedido depois do Voltar = %d, %v", pessoa, ok)
+	if pessoa, computador, ok := c.g.ColegaDoPedido(got); !ok || pessoa != c.carlos.p.ID || computador != c.carlos.computador {
+		t.Fatalf("ColegaDoPedido depois do Voltar = %d, %d, %v", pessoa, computador, ok)
 	}
 
 	_, pm, _ := c.aceito(r, c.carlos, "Maria Lima")
-	if _, ok := c.g.ColegaDoPedido(pm); ok {
+	if _, _, ok := c.g.ColegaDoPedido(pm); ok {
 		t.Fatal("o pedido aceito de quem é de fora é de colega")
 	}
 	pt, _ := c.pedir(c.deTeste(), "Bia Ramos")
-	if _, ok := c.g.ColegaDoPedido(pt); ok {
+	if _, _, ok := c.g.ColegaDoPedido(pt); ok {
 		t.Fatal("o pedido da reunião de teste é de colega")
 	}
-	if _, ok := c.g.ColegaDoPedido(nil); ok {
+	if _, _, ok := c.g.ColegaDoPedido(nil); ok {
 		t.Fatal("o pedido nil é de colega")
 	}
 }
