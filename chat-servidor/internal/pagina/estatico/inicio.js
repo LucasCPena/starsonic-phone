@@ -1,5 +1,7 @@
-// O início da página da reunião: liga a tela aos adaptadores de verdade (a rede, a câmera e o microfone, as ligações e
-// o relógio do navegador) e começa, com o abrir do código do link.
+// O início da página da reunião: liga a tela aos adaptadores de verdade (a rede, a câmera e o microfone, as ligações,
+// o relógio do navegador e a conversa com o app, quando a página está no iframe dele) e começa, com o abrir do código
+// do link (ou, no app, com o pedido do passe).
+import { criarApp, origensDoApp } from './app.js';
 import { ehWindows, passeDoEndereco } from './colega.js';
 import { criarLigacoes } from './ligacao.js';
 import { criarMidia } from './midia.js';
@@ -18,9 +20,10 @@ if (location.href.includes('#')) history.replaceState(history.state, '', locatio
 
 iniciar(document.body, {
   rede: (aoEvento) => criarRede(aoEvento, codigo),
-  midia: (aoEvento) => criarMidia(aoEvento, previas),
+  midia: (aoEvento) => criarMidia(aoEvento, previas, document.getElementById('som')),
   ligacao: criarLigacoes,
   relogio: { agora: () => Date.now(), depois: (ms, fn) => setTimeout(fn, ms) },
   passe,
   windows: ehWindows(navigator),
+  app: (aoEvento) => criarApp(aoEvento, { janela: window, origens: origensDoApp(document) }),
 });

@@ -7,8 +7,11 @@
 // sinalizador também não vão a lugar nenhum fora da página. Na página do colega, ela desenha também a entrada dele, o
 // botão Participantes, o cartão do pedido e o painel Participantes (participantes.js); os nomes entram sempre como
 // texto. No Windows, ela desenha a tela "o app ou o navegador" (a escolha), com o link do app para o código do endereço.
+// Dentro do iframe do app (o app.js), ela leva as mensagens dele ao cérebro, manda o que o cérebro avisa e o estado
+// (o paraOApp) quando ele muda, dá ao midia.js os nomes dos aparelhos do app, e o link do chat da reunião vai ao app,
+// que o abre no navegador padrão, em vez de abrir uma janela. O passe, os nomes e as origens não vão ao console.
 import { iniciais, rotuloDoBotao, tituloDoCartao } from './colega.js';
-import { cabecalho, inicial, nomeValido, podeEscrever, quando, transicao } from './estado.js';
+import { cabecalho, inicial, nomeValido, paraOApp, podeEscrever, quando, transicao } from './estado.js';
 import { contagem as numeroDoBotao, dito, escreveu, falha, nomeDoBotao, numaLinha } from './mensagens.js';
 import { criarPainel } from './painel.js';
 import { criarParticipantes } from './participantes.js';
@@ -37,8 +40,9 @@ const SECAO = {
 /**
  * Começa a página. A raiz é o elemento com as telas (o body). Os serviços: rede, midia e ligacao são as fábricas dos
  * adaptadores, que recebem a função que leva os eventos ao cérebro; o relogio é {agora(), depois(ms, fn)}; o passe,
- * opcional, é o que a página recebeu para reconhecer o colega (sem ele, a página é a de quem é de fora); e o windows,
- * opcional, diz que o navegador está no Windows (a tela "o app ou o navegador").
+ * opcional, é o que a página recebeu para reconhecer o colega (sem ele, a página é a de quem é de fora); o windows,
+ * opcional, diz que o navegador está no Windows (a tela "o app ou o navegador"); e o app, opcional, é a fábrica da
+ * conversa com o app ({dentro, mandar}, o app.js), que recebe a função que leva os eventos ao cérebro.
  */
 export function iniciar(raiz, servicos) {
   const um = (seletor) => raiz.querySelector(seletor);
@@ -96,6 +100,7 @@ export function iniciar(raiz, servicos) {
         } catch {
           console.error('desenhar'); // só a palavra: o estado e o palco levam segredos e nomes
         }
+        avisarOEstado();
         for (const efeito of efeitos) rodar(efeito);
         manterOFoco(foco);
       }
@@ -120,7 +125,18 @@ export function iniciar(raiz, servicos) {
   const rede = servicos.rede(despachar);
   const midia = servicos.midia(despachar);
   const ligacao = servicos.ligacao(despachar);
+  const app = servicos.app ? servicos.app(despachar) : { dentro: false, mandar() {} };
   const { relogio } = servicos;
+
+  // O estado vai ao app quando muda, e nunca antes de a página carregar.
+  let estadoAvisado = null;
+  function avisarOEstado() {
+    if (!app.dentro) return;
+    const agora = paraOApp(estado);
+    if (agora === null || (agora.fase === estadoAvisado?.fase && agora.microfone === estadoAvisado?.microfone)) return;
+    estadoAvisado = agora;
+    app.mandar('estado', agora);
+  }
   const quadros = criarQuadros({ raiz: um('.palco'), relogio });
   const painel = criarPainel({
     raiz: raizDoPainel,
@@ -186,10 +202,11 @@ export function iniciar(raiz, servicos) {
         ligacao.desligar(efeito.qual);
         break;
       case 'trocarCamera':
-        ligacao.trocarCamera(efeito.ligada);
+        // Com o nome, a troca do aparelho: o midia.js já tem o nome novo, do desenho.
+        ligacao.trocarCamera(efeito.ligada, efeito.nome !== undefined);
         break;
       case 'trocarMicrofone':
-        ligacao.trocarMicrofone(efeito.ligado);
+        ligacao.trocarMicrofone(efeito.ligado, efeito.nome !== undefined);
         break;
       case 'pararCaptura':
         midia.pararCaptura();
@@ -212,6 +229,11 @@ export function iniciar(raiz, servicos) {
       case 'dizer':
         dizer(efeito.texto);
         break;
+      case 'avisarApp': {
+        const { tipo, ...campos } = efeito.m;
+        app.mandar(tipo, campos);
+        break;
+      }
     }
   }
 
@@ -338,6 +360,7 @@ export function iniciar(raiz, servicos) {
     for (const i of todos('[data-imagem]')) i.dataset.imagem = imagem;
     const reuniao = e.tela !== 'reuniao' ? 'fora' : e.reconectando > 0 ? 'caiu' : 'noAr';
     midia.escolher(e.mic, e.cam, reuniao);
+    midia.aparelhos(e.aparelhos);
   }
 
   function desenharAvisos(e) {
@@ -577,6 +600,18 @@ export function iniciar(raiz, servicos) {
     },
     true,
   );
+  // Dentro do app, o link do chat da reunião não abre nada aqui (nem navega, nem abre outra janela): ele vai ao app,
+  // que o abre no navegador padrão. O clique do meio também.
+  if (app.dentro) {
+    const levarOLink = (ev) => {
+      const a = ev.target.closest?.('a[href]');
+      if (!a || !raizDoPainel.contains(a) || (ev.type === 'auxclick' && ev.button !== 1)) return;
+      ev.preventDefault();
+      app.mandar('link', { url: a.href });
+    };
+    raizDoPainel.addEventListener('click', levarOLink);
+    raizDoPainel.addEventListener('auxclick', levarOLink);
+  }
   nome.addEventListener('input', () => despachar({ tipo: 'nome', valor: nome.value }));
   // O Enter no nome é o Pedir para entrar; o que confirma uma composição (o IME) não conta.
   nome.addEventListener('keydown', (ev) => {
@@ -607,7 +642,7 @@ export function iniciar(raiz, servicos) {
   });
 
   desenhar(estado);
-  despachar({ tipo: 'comecar', passe: servicos.passe ?? null, windows: servicos.windows === true });
+  despachar({ tipo: 'comecar', passe: servicos.passe ?? null, windows: servicos.windows === true, noApp: app.dentro });
 }
 
 // O texto do elemento, mudado só quando é outro.

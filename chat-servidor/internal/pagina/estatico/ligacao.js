@@ -5,7 +5,8 @@
 // #som. A da tela só manda: a imagem da captura da tela e o silêncio.
 //
 // A interface:
-// - criarLigacoes(aoEvento) devolve {ligar, desligar, trocarCamera, trocarMicrofone, numeros};
+// - criarLigacoes(aoEvento) devolve {ligar, desligar, trocarCamera, trocarMicrofone, numeros}. O trocarCamera(true) com
+//   a câmera ligada e o trocarMicrofone(ligado, true) trocam o aparelho (o app trocou o nome nas Configurações dele);
 // - ligar({qual, senha, acesso, fluxo}): o qual é 'principal' ou 'tela'; o acesso, o turn e o video do aceito; o fluxo,
 //   na principal, o MediaStream da câmera e do microfone (o do midia.js), e na da tela, o da captura da tela (do
 //   midia.js também, que a para). A escolha da pessoa vem no da principal: uma faixa de câmera viva quer dizer a câmera
@@ -51,7 +52,7 @@
 //
 // Nada daqui vai ao console: o INVITE leva a senha, e o acesso, as credenciais do TURN. O debug do JsSIP, que
 // escreveria as mensagens SIP no console, fica desligado desde antes do primeiro UA.
-import { CAMERA, faixaDoSilencio } from './midia.js';
+import { faixaDoSilencio, restricoesDaCamera, restricoesDoMicrofone } from './midia.js';
 
 /** O WSS do vídeo que não abre nesse prazo: a ligação falhou, em ms. */
 const PRAZO_CONEXAO_MS = 10000;
@@ -286,17 +287,20 @@ export function criarLigacoes(aoEvento) {
     await t?.sender.replaceTrack(null);
   }
 
-  // Ligar a câmera: um getUserMedia só de vídeo, com as restrições da câmera da página (o CAMERA do midia.js). A faixa
-  // nova entra no fluxo, vigiada, antes de ir à ligação: a conexão que cair no meio deixa a câmera ligada para a volta.
-  // A que chega depois de a ligação descer para: a câmera, então, já é do midia.js. A ligação no ar que recusa a faixa
-  // a para, e a câmera volta a desligada (o ok falso).
+  // Ligar a câmera: um getUserMedia só de vídeo, com as restrições da câmera da página (as do midia.js, com a câmera
+  // escolhida no app). A faixa nova entra no fluxo, vigiada, antes de ir à ligação: a conexão que cair no meio deixa a
+  // câmera ligada para a volta. A que chega depois de a ligação descer para: a câmera, então, já é do midia.js. A
+  // ligação no ar que recusa a faixa a para, e a câmera volta a desligada (o ok falso). Com a câmera já ligada (a troca
+  // do aparelho), a de antes para e sai do fluxo depois de a nova entrar.
   async function acenderACamera(l) {
-    const [faixa] = (await navigator.mediaDevices.getUserMedia({ video: CAMERA })).getVideoTracks();
+    const video = await restricoesDaCamera();
+    const [faixa] = (await navigator.mediaDevices.getUserMedia({ video })).getVideoTracks();
     const t = transceiver(l, 'video');
     if (!l.viva || l.fim || !t) {
       faixa.stop();
       throw new Error('a ligação acabou');
     }
+    const antiga = t.sender.track;
     l.fluxo?.addTrack(faixa);
     vigiar(l, faixa);
     try {
@@ -307,6 +311,36 @@ export function criarLigacoes(aoEvento) {
         l.fluxo?.removeTrack(faixa);
       }
       throw erro;
+    }
+    if (antiga && antiga !== faixa) {
+      antiga.stop();
+      l.fluxo?.removeTrack(antiga);
+    }
+  }
+
+  // Trocar o microfone pelo escolhido no app: a faixa nova toma o lugar da de antes no envio e no fluxo, desligada se o
+  // microfone está desligado (o mute do JsSIP), e a de antes para. Sem a faixa nova, fica a de antes.
+  async function trocarOMicrofone(l) {
+    const audio = await restricoesDoMicrofone();
+    const [faixa] = (await navigator.mediaDevices.getUserMedia({ audio })).getAudioTracks();
+    const t = transceiver(l, 'audio');
+    if (!l.viva || l.fim || !t) {
+      faixa.stop();
+      return;
+    }
+    faixa.enabled = !l.sessao.isMuted().audio;
+    try {
+      await t.sender.replaceTrack(faixa);
+    } catch {
+      faixa.stop();
+      return;
+    }
+    const antiga = l.fluxo?.getAudioTracks().find((f) => f !== faixa);
+    l.fluxo?.addTrack(faixa);
+    vigiar(l, faixa);
+    if (antiga) {
+      antiga.stop();
+      l.fluxo.removeTrack(antiga);
     }
   }
 
@@ -328,7 +362,8 @@ export function criarLigacoes(aoEvento) {
   }
 
   // A resposta a uma troca da câmera vai só enquanto a ligação dela não desceu: a de uma que desceu responderia à troca
-  // da próxima. A câmera que não liga (outro programa a tomou, por exemplo) é o ok falso.
+  // da próxima. A câmera que não liga (outro programa a tomou, por exemplo) é o ok falso; na troca do aparelho, a de
+  // antes também desliga, e o botão mostra a câmera desligada, como ela está.
   function trocarCamera(ligada) {
     const l = ligacoes.get('principal');
     if (!l?.confirmada || l.fim) {
@@ -342,15 +377,21 @@ export function criarLigacoes(aoEvento) {
       .then(() => (ligada ? acenderACamera(l) : apagarACamera(l)))
       .then(
         () => responder(true),
-        () => responder(false),
+        async () => {
+          if (ligada && l.viva && !l.fim) await apagarACamera(l).catch(() => {});
+          responder(false);
+        },
       );
   }
 
-  function trocarMicrofone(ligado) {
-    const sessao = ligacoes.get('principal')?.sessao;
+  // O microfone ligado ou desligado; com o troca, também o aparelho, na fila das trocas.
+  function trocarMicrofone(ligado, troca = false) {
+    const l = ligacoes.get('principal');
+    const sessao = l?.sessao;
     if (!sessao) return;
     if (ligado) sessao.unmute({ audio: true });
     else sessao.mute({ audio: true });
+    if (troca && l.confirmada && !l.fim) l.fila = l.fila.then(() => trocarOMicrofone(l)).catch(() => {});
   }
 
   // Os números da ligação principal, para o sinalizador de qualidade: o relatório inteiro do navegador (o getStats da

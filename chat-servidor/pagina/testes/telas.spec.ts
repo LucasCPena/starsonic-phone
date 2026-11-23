@@ -1,7 +1,7 @@
 // As telas da página da reunião, no Chromium: a página de verdade, servida pelo chat no modo de teste, com a rede
 // falsa (o abrir e o canal) e o relógio fixo. O relógio fica parado: os prazos da página só andam pelo runFor.
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { CHAT } from '../chat';
+import { CHAT, ORIGEM_DE_CIMA } from '../chat';
 import {
   AGORA,
   atenderOInvite,
@@ -1736,7 +1736,7 @@ test('os cabeçalhos da página', async ({ page }) => {
   const canalDoChat = CHAT.replace(/^http/, 'ws');
   expect(resposta?.headers()['content-security-policy']).toBe(
     "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; font-src 'self'; " +
-      `connect-src 'self' ${canalDoChat}; frame-ancestors https://app.starsonic.local http://127.0.0.1:4194; base-uri 'none'; form-action 'none'`,
+      `connect-src 'self' ${canalDoChat}; frame-ancestors https://app.starsonic.local ${ORIGEM_DE_CIMA}; base-uri 'none'; form-action 'none'`,
   );
 
   // Do começo ao fim da entrada: a mídia, o nome, o Pedir e a espera.

@@ -16,6 +16,7 @@ import {
   cabecalho,
   inicial,
   nomeValido,
+  paraOApp,
   podeEscrever,
   quando,
   transicao,
@@ -181,6 +182,12 @@ test('o carregar abre', () => {
     encerrando: false,
     cheiaAoAceitar: false,
     respondendo: [],
+    queda: false,
+    noApp: false,
+    aparelhos: { microfone: '', altoFalante: '', camera: '' },
+    esperandoPasse: false,
+    prontas: 0,
+    passeRecusado: false,
   });
   const r = passo(inicial(), COMECAR);
   assert.equal(r.estado.tela, 'carregando');
@@ -2244,6 +2251,9 @@ const abriuColega = (abertura, colega = COLEGA_SEM_CHAVE) => ({ ...abriu(abertur
 const passeRecusado = (abertura) => ({ ...abrirFalhou(abertura, 401), passe: true });
 const ENTRAR = mandar({ tipo: 'entrar' });
 const dizer = (texto) => ({ tipo: 'dizer', texto });
+// A faixa do passe que não valeu, que o leitor de tela ouve quando ela aparece.
+const FAIXA =
+  'Não foi possível reconhecer você como colega. Abra a reunião de novo pelo app, ou entre como convidado.';
 const focar = (alvo) => ({ tipo: 'focar', alvo });
 const focarEm = (alvo, id) => ({ tipo: 'focar', alvo, id });
 const cliqueEm = (botao, id) => ({ tipo: 'clique', botao, id });
@@ -2387,7 +2397,7 @@ test('o passe que não vale, no navegador', () => {
   r = passo(r.estado, abriu(2));
   assert.equal(r.estado.tela, 'entrada');
   assert.equal(r.estado.colega, null);
-  assert.deepEqual(r.efeitos, [PEDIR_MIDIA, FOCAR]);
+  assert.deepEqual(r.efeitos, [PEDIR_MIDIA, FOCAR, dizer(FAIXA)]);
   // A entrada é a de quem é de fora: o nome e o Pedir para entrar.
   r = rodar(r.estado, midia('ligado', 'ligado'), { tipo: 'nome', valor: 'Maria Lima' }, clique('pedir'));
   assert.deepEqual(r.efeitos, [abrir(3), FOCAR]);
@@ -2406,7 +2416,7 @@ test('a chave que deixou de valer, no navegador', () => {
   assert.equal(r.estado.colega, null);
   assert.equal(r.estado.chaveDoColega, null);
   assert.equal(r.estado.canal, 'fechado');
-  assert.deepEqual(r.efeitos, [FOCAR]);
+  assert.deepEqual(r.efeitos, [FOCAR, dizer(FAIXA)]);
   r = rodar(r.estado, { tipo: 'nome', valor: 'Maria Lima' }, clique('pedir'));
   assert.deepEqual(r.efeitos, [abrir(3), FOCAR]);
   // A chave recusada no Entrar de novo também.
@@ -2708,7 +2718,7 @@ test('a escolha no Windows', () => {
   assert.equal(r.estado.tela, 'escolha');
   assert.equal(r.estado.semColega, true);
   assert.equal(r.estado.colega, null);
-  assert.deepEqual(r.efeitos, [FOCAR]);
+  assert.deepEqual(r.efeitos, [FOCAR, dizer(FAIXA)]);
   // Na escolha, o que é da entrada não faz nada.
   for (const evento of [NOME, clique('pedir'), clique('entrar'), clique('tentarMidia')]) semMudar(r.estado, evento);
 });
@@ -2806,4 +2816,346 @@ test('a escolha não volta', () => {
   r = passo({ ...pelaEscolha, tela: 'carregando', abertura: 4 }, abriu(4));
   assert.equal(r.estado.tela, 'entrada');
   assert.deepEqual(r.efeitos, [PEDIR_MIDIA, FOCAR]);
+});
+
+// ---- A conversa com o app ----
+
+// A página dentro do iframe do app (o comecar com o noApp): o passe chega por mensagem, com os nomes dos aparelhos das
+// Configurações do app.
+const COMECAR_NO_APP = { tipo: 'comecar', passe: null, windows: false, noApp: true };
+const doApp = (m) => ({ tipo: 'app', m: { starsonic: 1, ...m } });
+const PASSE_2 = 'q'.repeat(43);
+const CHAVE_2 = 'd'.repeat(43);
+const APARELHOS = { microfone: 'Microfone USB', altoFalante: 'Fone Bluetooth', camera: 'Câmera HD' };
+const passeDoApp = (passe = PASSE, aparelhos = APARELHOS) => doApp({ tipo: 'passe', passe, aparelhos });
+const SAIR_DO_APP = doApp({ tipo: 'sair' });
+const avisarApp = (m) => ({ tipo: 'avisarApp', m });
+const PRONTA = avisarApp({ tipo: 'pronta' });
+const fim = (motivo) => avisarApp({ tipo: 'fim', motivo });
+const prazoDoPasse = (n) => esperar(15000, `passe:${n}`);
+const doAppNos = (efeitos) => efeitos.filter((x) => x.tipo === 'avisarApp');
+
+// Os estados de partida do colega no app. O abrir 1 é o do passe que o app mandou, e o 2, o do Entrar, com a chave.
+const noAppNaEntrada = () =>
+  rodar(inicial(), COMECAR_NO_APP, passeDoApp(), abriuColega(1, COLEGA), midia('ligado', 'ligado')).estado;
+const noAppEntrando = () => rodar(noAppNaEntrada(), clique('entrar'), abriuColega(2), CANAL_ABRIU).estado;
+const noAppNaReuniao = () =>
+  rodar(noAppEntrando(), mensagem(ACEITO_COM_CHAVE), ligacao('principal', 'confirmada')).estado;
+
+test('dentro do app, a página pede o passe', () => {
+  const r = passo(inicial(), COMECAR_NO_APP);
+  assert.equal(r.estado.tela, 'carregando');
+  assert.equal(r.estado.noApp, true);
+  assert.equal(r.estado.esperandoPasse, true);
+  // O pronta, e o prazo de 15 s: nenhum abrir antes do passe.
+  assert.deepEqual(r.efeitos, [PRONTA, prazoDoPasse(1)]);
+  // O passe do endereço não vale dentro do app: o passe é o da mensagem.
+  const s = passo(inicial(), { ...COMECAR_NO_APP, passe: PASSE });
+  assert.equal(s.estado.passe, null);
+  assert.deepEqual(s.efeitos, [PRONTA, prazoDoPasse(1)]);
+});
+
+test('o passe do app começa tudo', () => {
+  let r = rodar(inicial(), COMECAR_NO_APP, passeDoApp());
+  assert.equal(r.estado.passe, PASSE);
+  assert.equal(r.estado.esperandoPasse, false);
+  assert.deepEqual(r.estado.aparelhos, APARELHOS);
+  assert.deepEqual(r.efeitos, [abrirCom(1, { passe: PASSE })]);
+  r = passo(r.estado, abriuColega(1, COLEGA));
+  assert.equal(r.estado.tela, 'entrada');
+  assert.deepEqual(r.estado.colega, { nome: 'Júlia Martins', valeAte: VALE_ATE });
+  assert.equal(r.estado.chaveDoColega, CHAVE_DO_COLEGA);
+  assert.deepEqual(r.efeitos, [PEDIR_MIDIA, FOCAR]);
+  // O prazo do pronta que vence depois, e outro passe que chega sem um pronta, não mudam nada.
+  semMudar(r.estado, tempo('passe:1'));
+  semMudar(r.estado, passeDoApp(PASSE_2));
+  // Um nome que falta, ou vazio, é o padrão do sistema.
+  const s = rodar(inicial(), COMECAR_NO_APP, passeDoApp(PASSE, { microfone: 'Microfone USB', camera: '' }));
+  assert.deepEqual(s.estado.aparelhos, { microfone: 'Microfone USB', altoFalante: '', camera: '' });
+  // O maior nome que vale: 200 caracteres.
+  const longo = 'ã'.repeat(200);
+  const t = rodar(inicial(), COMECAR_NO_APP, passeDoApp(PASSE, { camera: longo }));
+  assert.equal(t.estado.aparelhos.camera, longo);
+});
+
+test('sem o passe em 15 s', () => {
+  let r = rodar(inicial(), COMECAR_NO_APP, tempo('passe:1'));
+  assert.equal(r.estado.tela, 'carregando');
+  assert.equal(r.estado.semColega, true);
+  assert.equal(r.estado.esperandoPasse, false);
+  assert.deepEqual(r.efeitos, [abrir(1)]);
+  r = passo(r.estado, abriu(1));
+  assert.equal(r.estado.tela, 'entrada');
+  assert.equal(r.estado.colega, null);
+  assert.deepEqual(r.efeitos, [PEDIR_MIDIA, FOCAR, dizer(FAIXA)]);
+  // O passe que chega depois fica de fora.
+  semMudar(r.estado, passeDoApp());
+  // O prazo de outro pronta também.
+  semMudar(passo(inicial(), COMECAR_NO_APP).estado, tempo('passe:2'));
+});
+
+test('o passe que não valeu, dentro do app', () => {
+  // O passe venceu antes de a página carregar: ela diz pronta de novo, uma vez.
+  let r = rodar(inicial(), COMECAR_NO_APP, passeDoApp(), passeRecusado(1));
+  assert.equal(r.estado.tela, 'carregando');
+  assert.equal(r.estado.semColega, false);
+  assert.equal(r.estado.passe, null);
+  assert.deepEqual(r.efeitos, [PRONTA, prazoDoPasse(2)]);
+  // O prazo do primeiro pronta não vale mais.
+  semMudar(r.estado, tempo('passe:1'));
+  r = passo(r.estado, passeDoApp(PASSE_2));
+  assert.deepEqual(r.efeitos, [abrirCom(2, { passe: PASSE_2 })]);
+  // O segundo passe que vale: o colega.
+  const ok = passo(r.estado, abriuColega(2, COLEGA));
+  assert.equal(ok.estado.tela, 'entrada');
+  assert.deepEqual(ok.estado.colega, { nome: 'Júlia Martins', valeAte: VALE_ATE });
+  // O segundo que também não vale: o abrir sem corpo, e a entrada de quem é de fora, com a faixa.
+  r = passo(r.estado, passeRecusado(2));
+  assert.equal(r.estado.semColega, true);
+  assert.equal(r.estado.passe, null);
+  assert.deepEqual(r.efeitos, [abrir(3)]);
+  r = passo(r.estado, abriu(3));
+  assert.equal(r.estado.tela, 'entrada');
+  assert.equal(r.estado.colega, null);
+  assert.deepEqual(r.efeitos, [PEDIR_MIDIA, FOCAR, dizer(FAIXA)]);
+  assert.ok(!JSON.stringify(r.estado).includes(PASSE_2));
+});
+
+test('o Entrar de novo com a chave vencida, dentro do app', () => {
+  // O chat reiniciou, e a chave do colega não vale mais: a página pede outro passe sozinha, na tela entrando.
+  let r = rodar(noAppNaEntrada(), clique('entrar'), passeRecusado(2));
+  assert.equal(r.estado.tela, 'entrando');
+  assert.equal(r.estado.semColega, false);
+  assert.equal(r.estado.chaveDoColega, null);
+  assert.deepEqual(r.efeitos, [PRONTA, prazoDoPasse(2)]);
+  r = passo(r.estado, passeDoApp(PASSE_2));
+  assert.deepEqual(r.efeitos, [abrirCom(3, { passe: PASSE_2 })]);
+  r = passo(r.estado, abriuColega(3, { ...COLEGA, chave: CHAVE_2 }));
+  assert.equal(r.estado.chaveDoColega, CHAVE_2);
+  assert.equal(r.estado.passe, null);
+  assert.deepEqual(r.efeitos, [abrirCanal(3)]);
+  // O canal de colega, e o entrar, sem outro clique.
+  r = passo(r.estado, CANAL_ABRIU);
+  assert.equal(r.estado.tela, 'entrando');
+  assert.deepEqual(r.efeitos, [ENTRAR]);
+  // A chave nova que deixa de valer depois pede outro passe de novo.
+  const outra = rodar(r.estado, mensagem({ tipo: 'cheia' }), canalFechou(1000), clique('tentarDeNovo'), passeRecusado(4));
+  assert.deepEqual(outra.efeitos, [PRONTA, prazoDoPasse(3)]);
+
+  // O Entrar de novo depois do Sair, com o canal caído: o mesmo caminho.
+  const deNovo = rodar(noAppNaReuniao(), canalFechou(1006), clique('sair'), clique('entrarDeNovo'));
+  assert.deepEqual(deNovo.efeitos, [PEDIR_MIDIA, abrirDoColega(3), FOCAR]);
+  const e = seguir(deNovo.estado, [
+    [passeRecusado(3), [PRONTA, prazoDoPasse(2)]],
+    [passeDoApp(PASSE_2), [abrirCom(4, { passe: PASSE_2 })]],
+    [abriuColega(4, { ...COLEGA, chave: CHAVE_2 }), [abrirCanal(4)]],
+    [CANAL_ABRIU, [ENTRAR]],
+  ]);
+  assert.equal(e.chaveDoColega, CHAVE_2);
+
+  // O passe novo que também não vale: a entrada de quem é de fora, com a faixa.
+  r = rodar(noAppNaEntrada(), clique('entrar'), passeRecusado(2), passeDoApp(PASSE_2), passeRecusado(3));
+  assert.equal(r.estado.tela, 'entrada');
+  assert.equal(r.estado.semColega, true);
+  assert.equal(r.estado.colega, null);
+  assert.deepEqual(r.efeitos, [FOCAR, dizer(FAIXA)]);
+  // O prazo que vence sem o passe novo, também.
+  r = rodar(noAppNaEntrada(), clique('entrar'), passeRecusado(2), tempo('passe:2'));
+  assert.equal(r.estado.tela, 'entrada');
+  assert.equal(r.estado.semColega, true);
+  assert.deepEqual(r.efeitos, [FOCAR, dizer(FAIXA)]);
+});
+
+test('o estado vai ao app quando muda', () => {
+  // Carregando, nada.
+  assert.equal(paraOApp(inicial()), null);
+  assert.equal(paraOApp(passo(inicial(), COMECAR_NO_APP).estado), null);
+  // A entrada, e o microfone que os outros ouvem.
+  const entrada = noAppNaEntrada();
+  assert.deepEqual(paraOApp(entrada), { fase: 'entrada', microfone: true });
+  assert.deepEqual(paraOApp(passo(entrada, clique('microfone')).estado), { fase: 'entrada', microfone: false });
+  // Os avisos de antes de entrar, e a tela entrando.
+  for (const e of [
+    rodar(noAppNaEntrada(), clique('entrar'), abrirFalhou(2, 0)).estado,
+    rodar(inicial(), COMECAR_NO_APP, passeDoApp(), abrirFalhou(1, 404)).estado,
+    noAppEntrando(),
+  ]) {
+    assert.deepEqual(paraOApp(e), { fase: 'entrada', microfone: true });
+  }
+  // A reunião, também com a conexão caída.
+  const reuniao = noAppNaReuniao();
+  assert.deepEqual(paraOApp(reuniao), { fase: 'naReuniao', microfone: true });
+  assert.deepEqual(paraOApp(passo(reuniao, clique('microfone')).estado), { fase: 'naReuniao', microfone: false });
+  assert.deepEqual(paraOApp(passo(reuniao, SEM_CONEXAO).estado), { fase: 'naReuniao', microfone: true });
+  // A queda: o "Você saiu da reunião" sem o Sair é o fora; o do Sair é a entrada.
+  const caiu = rodar(reuniao, ligacao('principal', 'terminou'), tempo('fimSemAviso')).estado;
+  assert.equal(caiu.aviso, 'saiu');
+  assert.deepEqual(paraOApp(caiu), { fase: 'fora', microfone: true });
+  const saiuPeloBotao = passo(reuniao, clique('sair')).estado;
+  assert.equal(saiuPeloBotao.aviso, 'saiu');
+  assert.deepEqual(paraOApp(saiuPeloBotao), { fase: 'entrada', microfone: true });
+  // O Entrar de novo depois da queda volta à entrada.
+  assert.deepEqual(paraOApp(passo(caiu, clique('entrarDeNovo')).estado), { fase: 'entrada', microfone: true });
+});
+
+test('o fim de cada jeito', () => {
+  const e = noAppNaReuniao();
+  let r = passo(e, clique('sair'));
+  assert.equal(r.estado.aviso, 'saiu');
+  assert.deepEqual(doAppNos(r.efeitos), [fim('saiu')]);
+  for (const [m, motivo] of [
+    [{ tipo: 'tirado' }, 'tirado'],
+    [{ tipo: 'encerrada' }, 'acabou'],
+    [{ tipo: 'linkInvalido' }, 'linkInvalido'],
+  ]) {
+    r = passo(e, mensagem(m));
+    assert.equal(r.estado.aviso, m.tipo);
+    assert.deepEqual(doAppNos(r.efeitos), [fim(motivo)], motivo);
+  }
+  // O linkInvalido de antes de entrar não é um fim.
+  r = rodar(inicial(), COMECAR_NO_APP, passeDoApp(), abrirFalhou(1, 404));
+  assert.equal(r.estado.aviso, 'linkInvalido');
+  assert.deepEqual(doAppNos(r.efeitos), []);
+  // A queda não é um fim: é o fora do estado.
+  r = rodar(e, ligacao('principal', 'terminou'), tempo('fimSemAviso'));
+  assert.equal(r.estado.aviso, 'saiu');
+  assert.deepEqual(doAppNos(efeitosDe(e, ligacao('principal', 'terminou'), tempo('fimSemAviso')).efeitos), []);
+  // Fora do app, nenhum fim.
+  assert.deepEqual(doAppNos(passo(naReuniao(), clique('sair')).efeitos), []);
+  assert.deepEqual(doAppNos(passo(naReuniao(), mensagem({ tipo: 'tirado' })).efeitos), []);
+});
+
+test('o sair do app', () => {
+  // Na reunião, o mesmo que o clique Sair, com o fim.
+  const e = noAppNaReuniao();
+  const r = passo(e, SAIR_DO_APP);
+  assert.deepEqual(r, passo(e, clique('sair')));
+  assert.equal(r.estado.aviso, 'saiu');
+  assert.deepEqual(doAppNos(r.efeitos), [fim('saiu')]);
+  // Entrando, também.
+  assert.deepEqual(passo(noAppEntrando(), SAIR_DO_APP), passo(noAppEntrando(), clique('sair')));
+  // Antes de entrar: a página fica, e o fim responde.
+  for (const antes of [noAppNaEntrada(), passo(inicial(), COMECAR_NO_APP).estado]) {
+    assert.deepEqual(passo(antes, SAIR_DO_APP), { estado: antes, efeitos: [fim('saiu')] });
+  }
+  // Na espera (quem é de fora, depois da faixa): o Desistir de hoje, e o fim.
+  const esperando = rodar(
+    inicial(),
+    COMECAR_NO_APP,
+    tempo('passe:1'),
+    abriu(1),
+    midia('ligado', 'ligado'),
+    NOME,
+    clique('pedir'),
+    abriu(2),
+    CANAL_ABRIU,
+  ).estado;
+  const s = passo(esperando, SAIR_DO_APP);
+  const desistiu = passo(esperando, clique('desistir'));
+  assert.deepEqual(s.estado, desistiu.estado);
+  assert.deepEqual(
+    s.efeitos.filter((x) => x.tipo !== 'avisarApp'),
+    desistiu.efeitos,
+  );
+  assert.deepEqual(doAppNos(s.efeitos), [fim('saiu')]);
+});
+
+test('os aparelhos trocados no meio', () => {
+  const OUTROS = { microfone: 'Headset Bluetooth', altoFalante: 'Headset Bluetooth', camera: 'Câmera do notebook' };
+  const trocar = doApp({ tipo: 'aparelhos', aparelhos: OUTROS });
+  const e = noAppNaReuniao();
+  // Na reunião: a troca do microfone e a da câmera de hoje, com os nomes novos.
+  let r = passo(e, trocar);
+  assert.deepEqual(r.estado.aparelhos, OUTROS);
+  assert.equal(r.estado.trocandoCamera, true);
+  assert.deepEqual(r.efeitos, [
+    { tipo: 'trocarMicrofone', ligado: true, nome: 'Headset Bluetooth' },
+    { tipo: 'trocarCamera', ligada: true, nome: 'Câmera do notebook' },
+  ]);
+  r = passo(r.estado, { tipo: 'cameraTrocada', ok: true });
+  assert.equal(r.estado.cam, 'ligado');
+  assert.equal(r.estado.trocandoCamera, false);
+  // O microfone desligado continua desligado; a câmera desligada só guarda o nome (o ligar dela usa o novo).
+  r = rodar(e, clique('microfone'), clique('camera'), { tipo: 'cameraTrocada', ok: true }, trocar);
+  assert.deepEqual(r.efeitos, [{ tipo: 'trocarMicrofone', ligado: false, nome: 'Headset Bluetooth' }]);
+  assert.deepEqual(r.estado.aparelhos, OUTROS);
+  // Só o alto-falante: nenhum efeito do cérebro (o desenho o acerta).
+  r = passo(e, doApp({ tipo: 'aparelhos', aparelhos: { ...APARELHOS, altoFalante: 'Caixa de som' } }));
+  assert.deepEqual(r.efeitos, []);
+  assert.equal(r.estado.aparelhos.altoFalante, 'Caixa de som');
+  // Os mesmos nomes não mudam nada.
+  semMudar(e, doApp({ tipo: 'aparelhos', aparelhos: APARELHOS }));
+  // Na entrada, a câmera e o microfone são pedidos de novo, com os nomes novos.
+  r = passo(noAppNaEntrada(), trocar);
+  assert.equal(r.estado.esperandoMidia, true);
+  assert.deepEqual(r.efeitos, [PEDIR_MIDIA]);
+});
+
+test('um campo que não vale', () => {
+  const esperando = passo(inicial(), COMECAR_NO_APP).estado;
+  // O passe que não é um texto de 43 caracteres base64url.
+  for (const passe of ['p'.repeat(42), 'p'.repeat(44), `${'p'.repeat(42)}=`, `${'p'.repeat(42)}+`, 43, null, [PASSE]]) {
+    semMudar(esperando, doApp({ tipo: 'passe', passe, aparelhos: APARELHOS }));
+  }
+  semMudar(esperando, doApp({ tipo: 'passe', aparelhos: APARELHOS }));
+  // Os aparelhos que não são um objeto, ou com um nome que não vale.
+  const ruins = [null, 'Microfone USB', ['Microfone USB'], 7, { microfone: 7 }, { camera: 'x'.repeat(201) }];
+  for (const aparelhos of ruins) semMudar(esperando, doApp({ tipo: 'passe', passe: PASSE, aparelhos }));
+  semMudar(esperando, doApp({ tipo: 'passe', passe: PASSE }));
+  const e = noAppNaReuniao();
+  for (const aparelhos of ruins) semMudar(e, doApp({ tipo: 'aparelhos', aparelhos }));
+  semMudar(e, doApp({ tipo: 'aparelhos' }));
+  // Sem o m, ou um tipo que o cérebro não conhece.
+  semMudar(e, { tipo: 'app' });
+  semMudar(e, doApp({ tipo: 'abrir' }));
+  // O pausar, o retomar e o bloqueio chegam, e por enquanto não mudam nada.
+  for (const m of [{ tipo: 'pausar' }, { tipo: 'retomar' }, { tipo: 'bloqueio', ligado: true }]) semMudar(e, doApp(m));
+});
+
+test('dentro do app não há escolha', () => {
+  // Também no Windows (o WebView2 do app diz que é o Windows): a entrada, pelo passe que faltou ou que não valeu.
+  for (const comecar of [COMECAR_NO_APP, { ...COMECAR_NO_APP, windows: true }]) {
+    let r = rodar(inicial(), comecar, tempo('passe:1'), abriu(1));
+    assert.equal(r.estado.tela, 'entrada');
+    r = rodar(inicial(), comecar, passeDoApp(), passeRecusado(1), passeDoApp(PASSE_2), passeRecusado(2), abriu(3));
+    assert.equal(r.estado.tela, 'entrada');
+    assert.equal(r.estado.semColega, true);
+    r = rodar(inicial(), comecar, passeDoApp(), abriuColega(1, COLEGA));
+    assert.equal(r.estado.tela, 'entrada');
+  }
+});
+
+test('fora do app, nada do app vale', () => {
+  const mensagens = [
+    { tipo: 'passe', passe: PASSE, aparelhos: APARELHOS },
+    { tipo: 'aparelhos', aparelhos: APARELHOS },
+    { tipo: 'sair' },
+    { tipo: 'pausar' },
+    { tipo: 'retomar' },
+    { tipo: 'bloqueio', ligado: true },
+  ];
+  const estados = [inicial(), passo(inicial(), COMECAR).estado, naEntrada(), naReuniao(), colegaNaReuniao()];
+  for (const e of estados) {
+    for (const m of mensagens) semMudar(e, doApp(m));
+    semMudar(e, tempo('passe:1'));
+  }
+});
+
+test('a faixa do colega não reconhecido é dita', () => {
+  // No navegador: o passe que não valeu leva à entrada de quem é de fora, e a faixa é dita quando aparece.
+  let r = rodar(inicial(), COMECAR_COM_PASSE, passeRecusado(1));
+  assert.ok(!r.efeitos.some((x) => x.tipo === 'dizer'));
+  r = passo(r.estado, abriu(2));
+  assert.deepEqual(r.efeitos, [PEDIR_MIDIA, FOCAR, dizer(FAIXA)]);
+  // Uma vez: o Desistir que volta à entrada não a diz de novo.
+  r = rodar(r.estado, midia('ligado', 'ligado'), NOME, clique('pedir'), abriu(3), CANAL_ABRIU, clique('desistir'));
+  assert.equal(r.estado.tela, 'entrada');
+  assert.ok(!r.efeitos.some((x) => x.tipo === 'dizer'));
+  // A chave que deixou de valer no Entrar.
+  r = rodar(colegaNaEntrada(), clique('entrar'), passeRecusado(2));
+  assert.deepEqual(r.efeitos, [FOCAR, dizer(FAIXA)]);
+  // No Windows, na escolha; e a entrada depois dela não a diz de novo.
+  r = rodar(inicial(), { ...COMECAR_NO_WINDOWS, passe: PASSE }, passeRecusado(1), abriu(2));
+  assert.deepEqual(r.efeitos, [FOCAR, dizer(FAIXA)]);
+  assert.deepEqual(passo(r.estado, clique('peloNavegador')).efeitos, [PEDIR_MIDIA, FOCAR]);
 });

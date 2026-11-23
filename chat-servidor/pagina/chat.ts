@@ -15,7 +15,7 @@ const PORTA = 4193;
 /** O endereço do chat: o baseURL dos testes. */
 export const CHAT = `http://127.0.0.1:${PORTA}`;
 /** A origem da janela de cima de mentira dos testes da página dentro do app: o chat a põe no frame-ancestors. */
-const ORIGEM_DE_CIMA = 'http://127.0.0.1:4194';
+export const ORIGEM_DE_CIMA = 'http://127.0.0.1:4194';
 
 const SERVIDOR = fileURLToPath(new URL('../', import.meta.url));
 /** A saída do chat, para ler numa falha. */

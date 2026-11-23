@@ -75,6 +75,16 @@
 // não reconheceu como colega leva à escolha, e não à entrada: o "Abrir no app" é um link, e a página fica nela; o
 // "Entrar pelo navegador" (o clique peloNavegador) leva à entrada de quem é de fora, que pede a mídia. A reunião de
 // teste nunca pergunta, e a escolha vale para a página inteira: depois dela, nenhum abrir mostra a escolha de novo.
+//
+// O app (o app.js, a seção 7.5 da spec). Dentro do iframe do app (o comecar com o noApp), a página não abre nada antes
+// do passe: ela diz pronta ao app (o efeito avisarApp) e espera o passe por mensagem (o evento app), até
+// PRAZO_DO_PASSE_MS. O passe que não chega a tempo, ou o segundo seguido que não vale, leva à entrada de quem é de
+// fora, com a faixa; o primeiro que não vale (o passe que venceu antes de a página carregar, ou a chave do colega que
+// deixou de valer porque o chat reiniciou) pede outro, e a página segue sozinha com ele, sem outro clique. O passe
+// leva os nomes dos aparelhos das Configurações do app, que o midia.js procura no navegador; a troca deles na reunião
+// troca o microfone e a câmera da ligação. O app fica sabendo da fase (o paraOApp, que a tela manda quando muda), do
+// fim de quem tinha entrado (o avisarApp com o fim) e, pelo sair, a página sai e responde o fim. Dentro do app não há
+// a tela "o app ou o navegador", e quem não está no app nunca tem nada disso.
 
 import { LISTA_VAZIA, ditoDaResposta, lerLista, tituloDoCartao } from './colega.js';
 import { MAX_MENSAGENS, textoLimpo } from './mensagens.js';
@@ -106,8 +116,26 @@ export const PRAZO_DA_MENSAGEM_MS = 10000;
 export const AVISO_CURTO_MS = 5000;
 /** O tempo mínimo entre dois avisos de conexão ruim, em ms: no máximo um a cada 2 minutos. */
 export const AVISO_DA_CONEXAO_MS = 120000;
+/** A espera pelo passe do app depois do pronta, em ms: sem ele, a página abre como quem é de fora. */
+export const PRAZO_DO_PASSE_MS = 15000;
 
 const MAX_NOME = 80;
+// O nome de um aparelho nas Configurações do app: até 200 caracteres.
+const MAX_NOME_DO_APARELHO = 200;
+// O passe que o app manda: 43 caracteres base64url (32 bytes).
+const PASSE_QUE_VALE = /^[A-Za-z0-9_-]{43}$/;
+// Os aparelhos do padrão do sistema: nenhum nome.
+const APARELHOS_PADRAO = Object.freeze({ microfone: '', altoFalante: '', camera: '' });
+// A faixa do passe que não valeu, no alto da entrada de quem é de fora e da escolha: o leitor de tela a ouve também.
+const FAIXA_SEM_COLEGA =
+  'Não foi possível reconhecer você como colega. Abra a reunião de novo pelo app, ou entre como convidado.';
+// O motivo do fim que o app recebe, pelo aviso do fim de quem tinha entrado. O saiu é só o do Sair (e o do sair do
+// app): o saiu de uma queda é o fora do paraOApp.
+const FIM_DO_AVISO = new Map([
+  ['tirado', 'tirado'],
+  ['encerrada', 'acabou'],
+  ['linkInvalido', 'linkInvalido'],
+]);
 
 // As telas da espera: o pedido saiu, e a página espera a resposta.
 const ESPERA = new Set(['pedindo', 'aguardando', 'naoComecou']);
@@ -136,6 +164,8 @@ const pedidoOuEntrar = (e) => (e.colega !== null ? ENTRAR : pedido(e));
 // Voltar da pergunta "Tirar <Nome>?" (naoTirar).
 const focar = (alvo, id) => (id === undefined ? { tipo: 'focar', alvo } : { tipo: 'focar', alvo, id });
 const dizer = (texto) => ({ tipo: 'dizer', texto }); // o que o leitor de tela ouve
+const avisarApp = (m) => ({ tipo: 'avisarApp', m }); // a mensagem ao app: o tipo e os campos
+const fim = (motivo) => avisarApp({ tipo: 'fim', motivo });
 
 // O chat da reunião sem nada: a lista, as não lidas, o painel fechado e o número da última mensagem.
 const CHAT_VAZIO = Object.freeze({ mensagens: Object.freeze([]), naoLidas: 0, aberto: false, seq: 0 });
@@ -163,11 +193,12 @@ function abrirCom(e, corpo, mudancas, ...efeitos) {
   return com(e, { ...mudancas, abertura }, ...efeitos, abrir);
 }
 
-// O corpo do abrir que leva à reunião: o colega reconhecido abre com a chave; antes de o passe ter resposta, com o
-// passe; quem é de fora, sem corpo. O abrir do voltar nunca leva corpo: a chave de volta é que diz quem é a pessoa.
+// O corpo do abrir que leva à reunião: antes de o passe ter resposta, com o passe; o colega reconhecido abre com a
+// chave; quem é de fora, sem corpo. O abrir do voltar nunca leva corpo: a chave de volta é que diz quem é a pessoa.
+// (Só dentro do app o colega reconhecido tem um passe: o passe novo que toma o lugar da chave que não valeu.)
 function corpoDoAbrir(e) {
-  if (e.colega !== null) return { colega: e.chaveDoColega };
   if (e.passe !== null) return { passe: e.passe };
+  if (e.colega !== null) return { colega: e.chaveDoColega };
   return null;
 }
 
@@ -239,6 +270,16 @@ export function inicial() {
     encerrando: false,
     cheiaAoAceitar: false,
     respondendo: Object.freeze([]),
+    queda: false, // o aviso saiu veio de uma queda, e não do Sair
+    // O app: a página está no iframe dele, os nomes dos aparelhos das Configurações dele ({microfone, altoFalante,
+    // camera}, vazio é o padrão do sistema), o pronta que espera o passe, o número do último pronta (o prazo de um
+    // pronta que passou fica de fora) e o passe anterior que não valeu (o seguinte que não vale leva à entrada de quem
+    // é de fora).
+    noApp: false,
+    aparelhos: APARELHOS_PADRAO,
+    esperandoPasse: false,
+    prontas: 0,
+    passeRecusado: false,
   };
 }
 
@@ -247,14 +288,10 @@ export function transicao(estado, evento) {
   let r;
   switch (evento.tipo) {
     case 'comecar':
-      // O passe que a página recebeu, se houver: o primeiro abrir o leva. E se o navegador está no Windows.
-      r =
-        estado.tela === 'carregando'
-          ? comAbrir(estado, {
-              passe: typeof evento.passe === 'string' && evento.passe !== '' ? evento.passe : null,
-              windows: evento.windows === true,
-            })
-          : nada(estado);
+      r = estado.tela === 'carregando' ? comecar(estado, evento) : nada(estado);
+      break;
+    case 'app':
+      r = estado.noApp ? doApp(estado, evento.m ?? {}) : nada(estado);
       break;
     case 'abriu':
       r = evento.abertura === estado.abertura ? abriu(estado, evento) : nada(estado);
@@ -315,7 +352,28 @@ export function transicao(estado, evento) {
   if (avisaACamera(estado, r.estado)) r.efeitos.push(mandar({ tipo: 'camera', ligada: cameraLigada(r.estado) }));
   // A tela nova, ou o aviso novo, leva o foco ao título dela.
   if (r.estado.tela !== estado.tela || r.estado.aviso !== estado.aviso) r.efeitos.push(FOCAR);
+  // O leitor de tela ouve a faixa do passe que não valeu quando ela aparece.
+  if (aFaixaAparece(estado, r.estado)) r.efeitos.push(dizer(FAIXA_SEM_COLEGA));
+  // O fim de quem tinha entrado, pelo aviso, vai ao app: o app fecha a vista.
+  const motivo = r.estado.aviso !== estado.aviso ? FIM_DO_AVISO.get(r.estado.aviso) : undefined;
+  if (r.estado.noApp && estado.aceito && r.estado.tela === 'aviso' && motivo) r.efeitos.push(fim(motivo));
   return r;
+}
+
+// A faixa do passe que não valeu está à vista: a da entrada de quem é de fora e a da escolha.
+const comAFaixa = (e) => e.semColega && (e.tela === 'entrada' || e.tela === 'escolha');
+// Ela aparece pela primeira vez: o passe acabou de não valer, ou a tela que a mostra chegou depois do carregar. A
+// entrada que volta (o Desistir) e a escolha que dá lugar à entrada não a dizem de novo.
+const aFaixaAparece = (antes, depois) =>
+  !comAFaixa(antes) && comAFaixa(depois) && (!antes.semColega || antes.tela === 'carregando');
+
+// O começo. No navegador, o passe que a página recebeu no endereço, se houver, vai no primeiro abrir; e se o navegador
+// está no Windows. Dentro do app, a página pede o passe ao app, e não abre nada antes dele: o passe do endereço não
+// vale ali.
+function comecar(e, { passe, windows, noApp }) {
+  const noWindows = windows === true;
+  if (noApp === true) return pedirOPasse(e, { noApp: true, windows: noWindows });
+  return comAbrir(e, { passe: typeof passe === 'string' && passe !== '' ? passe : null, windows: noWindows });
 }
 
 // O canal é o da pessoa: o aceito chegou nele, ou o voltou. Só ele leva o aviso da câmera.
@@ -388,6 +446,13 @@ function abriu(e, { reuniao, bilhete, colega }) {
     if (vaiAEscolha(f)) return com(f, { tela: 'escolha' });
     return com(f, { tela: 'entrada', esperandoMidia: true }, PEDIR_MIDIA);
   }
+  if (esperaOAbrir(e) && e.passe !== null) {
+    // O passe novo do app, no lugar da chave que não valeu: a chave nova, e o canal de colega. Sem o colega na
+    // resposta, a página segue como quem é de fora, e o bilhete não serve.
+    const r = reconhecido(e, colega);
+    if (r.semColega) return com(e, { ...r, reuniao, colega: null, chaveDoColega: null, tela: 'entrada' });
+    return com(e, { reuniao, canal: 'abrindo', ...r }, abrirCanal(bilhete));
+  }
   if (esperaOAbrir(e)) {
     // O abrir com a chave responde o colega de novo, sem a chave: o nome e o valeAte de agora.
     const deAgora = e.colega !== null && colegaQueVale(colega) ? { colega: colegaDaResposta(colega) } : {};
@@ -397,9 +462,10 @@ function abriu(e, { reuniao, bilhete, colega }) {
   return nada(e);
 }
 
-// A escolha aparece no Windows, para quem a página não reconheceu, fora da reunião de teste, e só até a pessoa
+// A escolha aparece no Windows, para quem a página não reconheceu, fora da reunião de teste e do app, e só até a pessoa
 // escolher o navegador.
-const vaiAEscolha = (e) => e.windows && e.colega === null && e.reuniao?.tipo !== 'teste' && !e.peloNavegador;
+const vaiAEscolha = (e) =>
+  e.windows && !e.noApp && e.colega === null && e.reuniao?.tipo !== 'teste' && !e.peloNavegador;
 
 // O colega que a resposta do abrir traz: o nome, e o valeAte, que é um número ou null.
 const colegaQueVale = (c) => c !== null && typeof c === 'object' && typeof c.nome === 'string';
@@ -410,15 +476,15 @@ const colegaDaResposta = (c) => ({ nome: c.nome, valeAte: numero(c.valeAte) ? c.
 function reconhecido(e, colega) {
   if (e.passe === null) return {};
   if (colegaQueVale(colega) && typeof colega.chave === 'string' && colega.chave !== '') {
-    return { colega: colegaDaResposta(colega), chaveDoColega: colega.chave, passe: null };
+    return { colega: colegaDaResposta(colega), chaveDoColega: colega.chave, passe: null, passeRecusado: false };
   }
   return { passe: null, semColega: true };
 }
 
 // O 404 é o link que não vale; o 429 conta até poder tentar de novo; o resto (a rede, o 5xx) é o semServidor. No abrir
 // do voltar, o 404 é a reunião que deixou de valer, e o resto é uma tentativa que falhou, sem o aviso tentativas.
-// O passe (ou a chave do colega) que não vale segue como quem é de fora: no carregar, um abrir sem corpo; no Entrar,
-// a entrada de quem é de fora, com o cabeçalho que a página já tem.
+// O passe (ou a chave do colega) que não vale segue como quem é de fora (o comoDeFora). Dentro do app, o primeiro que
+// não vale pede outro passe ao app, na mesma tela; o nome do colega fica para a tela entrando.
 function abrirFalhou(e, { status, esperarSegundos, passe }) {
   if (e.esperandoBilhete) {
     const f = { ...e, esperandoBilhete: false };
@@ -426,8 +492,8 @@ function abrirFalhou(e, { status, esperarSegundos, passe }) {
   }
   if (e.tela !== 'carregando' && !esperaOAbrir(e)) return nada(e);
   if (passe === true && corpoDoAbrir(e) !== null) {
-    const semColega = { colega: null, chaveDoColega: null, passe: null, semColega: true };
-    return e.tela === 'carregando' ? comAbrir(e, semColega) : com(e, { ...semColega, tela: 'entrada' });
+    if (e.noApp && !e.passeRecusado) return pedirOPasse(e, { chaveDoColega: null, passe: null, passeRecusado: true });
+    return comoDeFora(e);
   }
   // O link que não vale é o fim: o passe que o primeiro abrir levava sai do estado.
   if (status === 404) return terminar({ ...e, passe: null }, 'linkInvalido');
@@ -524,6 +590,112 @@ function mensagem(e, m, agora) {
     default:
       return nada(e);
   }
+}
+
+// ---- O app ----
+
+// O pronta: a página pede um passe ao app, e espera por ele até PRAZO_DO_PASSE_MS (o tempo com o número deste pronta).
+function pedirOPasse(e, mudancas = {}) {
+  const prontas = e.prontas + 1;
+  return com(
+    e,
+    { ...mudancas, esperandoPasse: true, prontas },
+    avisarApp({ tipo: 'pronta' }),
+    esperar(PRAZO_DO_PASSE_MS, `passe:${prontas}`),
+  );
+}
+
+// O passe que não valeu, ou que o app não mandou a tempo: a página segue como quem é de fora, com a faixa, e nunca
+// tenta de novo como colega. No carregar, um abrir sem corpo; no Entrar, a entrada de quem é de fora, com o cabeçalho
+// que a página já tem; em outra tela (a pessoa saiu enquanto o app não respondia), só o estado.
+function comoDeFora(e) {
+  const semColega = { colega: null, chaveDoColega: null, passe: null, semColega: true, esperandoPasse: false };
+  if (e.tela === 'carregando') return comAbrir(e, semColega);
+  if (esperaOAbrir(e)) return com(e, { ...semColega, tela: 'entrada' });
+  return com(e, semColega);
+}
+
+// As mensagens do app (o app.js já conferiu a origem, o starsonic e o tipo). O pausar, o retomar e o bloqueio são da
+// pausa, e por enquanto não mudam nada.
+function doApp(e, m) {
+  switch (m.tipo) {
+    case 'passe':
+      return passeDoApp(e, m);
+    case 'aparelhos': {
+      const aparelhos = lerAparelhos(m.aparelhos);
+      return aparelhos === null ? nada(e) : trocarAparelhos(e, aparelhos);
+    }
+    case 'sair':
+      return sairPeloApp(e);
+    default:
+      return nada(e);
+  }
+}
+
+// O passe que o app mandou, com os aparelhos, só em resposta a um pronta. O carregar e o Entrar que o esperavam abrem
+// com ele; em outra tela (a pessoa saiu enquanto ele vinha), o próximo abrir o leva.
+function passeDoApp(e, m) {
+  const aparelhos = lerAparelhos(m.aparelhos);
+  if (!e.esperandoPasse || typeof m.passe !== 'string' || !PASSE_QUE_VALE.test(m.passe) || aparelhos === null) {
+    return nada(e);
+  }
+  const mudancas = { passe: m.passe, aparelhos, esperandoPasse: false };
+  return e.tela === 'carregando' || esperaOAbrir(e) ? comAbrir(e, mudancas) : com(e, mudancas);
+}
+
+// Os nomes dos aparelhos que o app manda: um objeto com o microfone, o altoFalante e a camera, cada um um texto de até
+// 200 caracteres. O que falta, ou vazio, é o padrão do sistema. Fora disso, null: a mensagem não vale.
+function lerAparelhos(a) {
+  if (a === null || typeof a !== 'object' || Array.isArray(a)) return null;
+  const lidos = {};
+  for (const campo of Object.keys(APARELHOS_PADRAO)) {
+    const nome = a[campo] ?? '';
+    if (typeof nome !== 'string' || [...nome].length > MAX_NOME_DO_APARELHO) return null;
+    lidos[campo] = nome;
+  }
+  return lidos;
+}
+
+// A pessoa trocou um aparelho nas Configurações do app. Na entrada, a câmera e o microfone são pedidos de novo, para a
+// prévia; na reunião, com a ligação no ar, a ligação troca o microfone (que continua como estava) e a câmera ligada,
+// uma troca da câmera de cada vez. Nos outros casos, só os nomes mudam: o próximo pedido os usa. O alto-falante é do
+// desenho (o setSinkId do som).
+function trocarAparelhos(e, novos) {
+  const antes = e.aparelhos;
+  const outroMic = novos.microfone !== antes.microfone;
+  const outraCam = novos.camera !== antes.camera;
+  if (!outroMic && !outraCam && novos.altoFalante === antes.altoFalante) return nada(e);
+  const mudancas = { aparelhos: novos };
+  if (e.tela === 'entrada' && (outroMic || outraCam)) {
+    return com(e, { ...mudancas, esperandoMidia: true }, PEDIR_MIDIA);
+  }
+  if (e.tela !== 'reuniao' || e.principal !== 'noAr') return com(e, mudancas);
+  const efeitos = [];
+  if (outroMic && e.mic !== 'indisponivel') {
+    efeitos.push({ tipo: 'trocarMicrofone', ligado: e.mic === 'ligado', nome: novos.microfone });
+  }
+  if (outraCam && e.cam === 'ligado' && !e.trocandoCamera) {
+    mudancas.trocandoCamera = true;
+    efeitos.push({ tipo: 'trocarCamera', ligada: true, nome: novos.camera });
+  }
+  return com(e, mudancas, ...efeitos);
+}
+
+// O sair do app: a pessoa confirmou o fechar. Na reunião e entrando, o Sair de hoje; na espera, o Desistir; antes
+// disso, nada a desfazer. O fim responde sempre: sem ele, o app espera 2 s para fechar a vista.
+function sairPeloApp(e) {
+  if (e.tela === 'reuniao' || e.tela === 'entrando') return sair(e);
+  const r = ESPERA.has(e.tela) ? desistir(e) : nada(e);
+  return so(r.estado, ...r.efeitos, fim('saiu'));
+}
+
+/** O que o app sabe da página: {fase, microfone}, ou null enquanto ela carrega. O microfone é o que os outros ouvem. */
+export function paraOApp(estado) {
+  if (estado.tela === 'carregando') return null;
+  let fase = 'entrada';
+  if (estado.tela === 'reuniao') fase = 'naReuniao';
+  else if (estado.tela === 'aviso' && estado.aviso === 'saiu' && estado.queda) fase = 'fora';
+  return { fase, microfone: estado.mic === 'ligado' };
 }
 
 // ---- O chat da reunião ----
@@ -1000,12 +1172,15 @@ function clique(e, botao, id) {
 }
 
 // Sair: da reunião, ou da tela entrando. O colega que sai antes do aceito larga o canal do entrar (o servidor ainda
-// não o ligou a nada): o Entrar de novo abre outro, com a chave.
+// não o ligou a nada): o Entrar de novo abre outro, com a chave. O saiu do Sair não é uma queda, e dentro do app é o
+// fim.
 function sair(e) {
   if (e.tela !== 'reuniao' && e.tela !== 'entrando') return nada(e);
-  if (e.aceito || e.canal === 'fechado') return terminar(e, 'saiu');
-  const r = terminar({ ...e, canal: 'fechado' }, 'saiu');
-  return so(r.estado, FECHAR_CANAL, ...r.efeitos);
+  const largar = !e.aceito && e.canal !== 'fechado';
+  const r = terminar(largar ? { ...e, canal: 'fechado' } : e, 'saiu');
+  const efeitos = largar ? [FECHAR_CANAL, ...r.efeitos] : r.efeitos;
+  if (e.noApp) efeitos.push(fim('saiu'));
+  return so({ ...r.estado, queda: false }, ...efeitos);
 }
 
 // Desistir retira o pedido: com o canal aberto, o desistir vai antes de fechar. O nome e a mídia ficam.
@@ -1121,6 +1296,9 @@ function tempo(e, chave) {
     case 'avisoCurto':
       // O tempo de um aviso que já saiu, ou que deu lugar a outro, fica de fora.
       return e.avisoCurto !== null && Number(vez) === e.avisoCurto.n ? com(e, { avisoCurto: null }) : nada(e);
+    case 'passe':
+      // O prazo do último pronta, sem o passe: a página segue como quem é de fora.
+      return e.esperandoPasse && Number(vez) === e.prontas ? comoDeFora(e) : nada(e);
     case 'conexaoAvisada':
       // Os 2 minutos do último aviso de conexão ruim passaram, com a pessoa na reunião ou fora dela: a próxima virada
       // para ruim avisa de novo.
@@ -1141,13 +1319,13 @@ function avisar(e, aviso, mudancas = {}, ...efeitos) {
 
 // terminar: o fim da entrada (os avisos sem o Tentar de novo, e o saiu). Depois do aceito, as duas ligações descem, e o
 // canal do voltar, que ainda não voltou, fecha. A mídia para, e a luz da câmera apaga; no carregar, ela nem foi pedida.
-// O Entrar de novo do saiu a pede outra vez.
+// O Entrar de novo do saiu a pede outra vez. O saiu daqui é o de uma queda: o Sair o corrige.
 function terminar(e, aviso) {
   const ligacoes = e.aceito ? desligarAsDuas(e) : { mudancas: {}, efeitos: [] };
   const canal = fecharCanalDoVoltar(e);
   const efeitos = [...ligacoes.efeitos, ...canal.efeitos];
   if (e.tela !== 'carregando') efeitos.push(PARAR_MIDIA);
-  return avisar(e, aviso, { ...ligacoes.mudancas, ...canal.mudancas }, ...efeitos);
+  return avisar(e, aviso, { ...ligacoes.mudancas, ...canal.mudancas, queda: aviso === 'saiu' }, ...efeitos);
 }
 
 // As duas ligações descem de propósito, e a captura da tela, se houver, para junto. A troca da câmera pendente era da

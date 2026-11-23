@@ -361,6 +361,8 @@ test('o passe que não vale', async ({ browser, page }) => {
   await expect(escolha(page)).toBeHidden();
   const faixa = entrada(page).getByText(FAIXA, { exact: true });
   await expect(faixa).toBeVisible();
+  // O leitor de tela a ouve.
+  await expect(anuncio(page)).toHaveText(FAIXA);
   await expect(page.getByText('Você entra como', { exact: true })).toBeHidden();
   // A faixa fica no alto da entrada, por cima do título.
   const titulo = await caixa(entrada(page).getByRole('heading', { level: 1 }));

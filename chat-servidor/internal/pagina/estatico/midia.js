@@ -34,6 +34,14 @@
 // compartilhar" do próprio navegador) é o clique pararDeCompartilhar, uma vez, e nunca um midia. O pararCaptura para
 // todas as faixas dela e vale duas vezes seguidas; a captura que a página para não avisa nada, e a que responde depois
 // de o cérebro desistir dela para assim que chega.
+//
+// Os aparelhos do app (o aparelhos, com os nomes das Configurações do app, dentro do iframe dele): cada pedido da
+// câmera e do microfone, daqui e da ligação (o restricoesDaCamera e o restricoesDoMicrofone), leva o deviceId do
+// aparelho do navegador cujo nome (o label) é o escolhido; e o alto-falante é o setSinkId do <audio> do som da reunião,
+// onde o navegador o tem. O nome vazio, ou que o navegador não tem, é o padrão do sistema. O navegador só diz os nomes
+// depois da primeira permissão: o primeiro pedido que veio com outro aparelho, quando o escolhido aparece só depois
+// dele, é feito de novo. Fora do app, sem nomes, os pedidos são os de sempre, e o alto-falante não muda. Os nomes não
+// vão ao console.
 
 const viva = (faixa) => faixa.readyState === 'live';
 
@@ -62,14 +70,43 @@ const TELA = Object.freeze({
   audio: false,
 });
 
+// Os nomes dos aparelhos escolhidos no app: um só na página, como o silêncio, porque a ligação também pede a câmera e o
+// microfone (o ligacao.js).
+let nomes = { microfone: '', altoFalante: '', camera: '' };
+
+// O deviceId do aparelho do navegador daquele tipo (audioinput, videoinput ou audiooutput) cujo nome é o dado, ou null:
+// sem o nome, sem o aparelho, ou sem a lista.
+async function idDoNome(tipo, nome) {
+  if (!nome) return null;
+  try {
+    const lista = await navigator.mediaDevices.enumerateDevices();
+    return lista.find((d) => d.kind === tipo && d.label === nome && d.deviceId !== '')?.deviceId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** O que pedir do microfone: o aparelho escolhido no app, ou o padrão (o true). */
+export async function restricoesDoMicrofone() {
+  const id = await idDoNome('audioinput', nomes.microfone);
+  return id === null ? true : { deviceId: { exact: id } };
+}
+
+/** O que pedir da câmera: o CAMERA, com o aparelho escolhido no app, se o navegador o tiver. */
+export async function restricoesDaCamera() {
+  const id = await idDoNome('videoinput', nomes.camera);
+  return id === null ? CAMERA : { ...CAMERA, deviceId: { exact: id } };
+}
+
 /**
- * A mídia da página: pedir, parar, escolher(mic, cam, reuniao), fluxo() (o MediaStream de agora, ou null),
+ * A mídia da página: pedir, parar, escolher(mic, cam, reuniao), aparelhos(nomes) (os do app), fluxo() (o MediaStream
+ * de agora, ou null),
  * cameraPedida() (a promessa da resposta do pedido da câmera sozinha que ainda corre, ou null), despertar() (o
  * silêncio, dentro de um clique), e a captura da tela: capturarTela() (dentro do clique), pararCaptura() e captura() (o
  * MediaStream dela, ou null). O reuniao do escolher é 'fora' (fora da reunião), 'noAr' (a ligação no ar: a câmera é
  * dela) ou 'caiu' (a conexão caída, até a volta).
  */
-export function criarMidia(aoEvento, previas) {
+export function criarMidia(aoEvento, previas, som = null) {
   let fluxo = null;
   let vez = 0; // a vez do último pedir ou parar: o pedido de uma vez que passou fica de fora
   let pedindo = false; // o pedir de agora ainda não respondeu
@@ -145,7 +182,9 @@ export function criarMidia(aoEvento, previas) {
     });
     const pedido = { vale: true, respondeu };
     camera = pedido;
-    const nova = await navigator.mediaDevices.getUserMedia({ video: CAMERA }).catch(() => null);
+    const nova = await restricoesDaCamera()
+      .then((video) => navigator.mediaDevices.getUserMedia({ video }))
+      .catch(() => null);
     camera = null;
     const serve = pedido.vale && fluxo !== null && escolha.reuniao !== 'noAr' && escolha.cam === 'ligado';
     if (nova && serve) {
@@ -214,6 +253,13 @@ export function criarMidia(aoEvento, previas) {
     for (const faixa of captura.getTracks()) faixa.addEventListener('ended', oNavegadorParou, { once: true });
   }
 
+  // O alto-falante do app no som da reunião. O navegador sem o setSinkId fica com o padrão; o que recusa também.
+  async function acertarOSom() {
+    if (typeof som?.setSinkId !== 'function') return;
+    const id = (await idDoNome('audiooutput', nomes.altoFalante)) ?? '';
+    if (som.sinkId !== id) await som.setSinkId(id).catch(() => {});
+  }
+
   return {
     async pedir() {
       const minha = ++vez;
@@ -228,6 +274,14 @@ export function criarMidia(aoEvento, previas) {
       pedindo = false;
       mostrar(novo);
       aoEvento({ tipo: 'midia', mic, cam }); // o desenho dele acerta a câmera do fluxo novo com a escolha
+      // Com a permissão, o navegador já diz o nome do alto-falante.
+      if (nomes.altoFalante) acertarOSom();
+    },
+    aparelhos(novos) {
+      const { microfone, altoFalante, camera } = novos;
+      if (microfone === nomes.microfone && altoFalante === nomes.altoFalante && camera === nomes.camera) return;
+      nomes = { microfone, altoFalante, camera };
+      acertarOSom();
     },
     parar() {
       vez++;
@@ -299,15 +353,45 @@ export function faixaDoSilencio() {
   }
 }
 
+// A câmera e o microfone, com os aparelhos escolhidos no app. Antes da primeira permissão, o navegador não diz os nomes,
+// e o pedido vem com o padrão: com a permissão, o que veio com outro aparelho é pedido de novo, uma vez, e o novo só
+// fica com tudo o que o primeiro deu.
 async function obter() {
+  const primeiro = await obterCom();
+  if (!primeiro.fluxo || (await comOsEscolhidos(primeiro.fluxo))) return primeiro;
+  const segundo = await obterCom();
+  if (segundo.mic !== primeiro.mic || segundo.cam !== primeiro.cam) {
+    pararFaixas(segundo.fluxo);
+    return primeiro;
+  }
+  pararFaixas(primeiro.fluxo);
+  return segundo;
+}
+
+// O fluxo tem o microfone e a câmera escolhidos, ou o navegador não tem o escolhido.
+async function comOsEscolhidos(fluxo) {
+  const certo = async (faixas, tipo, nome) => {
+    const faixa = faixas.find(viva);
+    if (!faixa || !nome) return true;
+    const id = await idDoNome(tipo, nome);
+    return id === null || faixa.getSettings?.().deviceId === id;
+  };
+  return (
+    (await certo(fluxo.getAudioTracks(), 'audioinput', nomes.microfone)) &&
+    (await certo(fluxo.getVideoTracks(), 'videoinput', nomes.camera))
+  );
+}
+
+async function obterCom() {
   const aparelhos = navigator.mediaDevices;
   if (!aparelhos?.getUserMedia) return { fluxo: null, mic: 'indisponivel', cam: 'indisponivel' };
+  const [audio, video] = await Promise.all([restricoesDoMicrofone(), restricoesDaCamera()]);
   try {
-    return { fluxo: await aparelhos.getUserMedia({ audio: true, video: CAMERA }), mic: 'ligado', cam: 'ligado' };
+    return { fluxo: await aparelhos.getUserMedia({ audio, video }), mic: 'ligado', cam: 'ligado' };
   } catch (erro) {
     const pedir = erro?.name === 'NotAllowedError' ? await sozinhos() : { som: true, imagem: true };
-    const som = pedir.som ? await aparelhos.getUserMedia({ audio: true }).catch(() => null) : null;
-    const imagem = pedir.imagem ? await aparelhos.getUserMedia({ video: CAMERA }).catch(() => null) : null;
+    const som = pedir.som ? await aparelhos.getUserMedia({ audio }).catch(() => null) : null;
+    const imagem = pedir.imagem ? await aparelhos.getUserMedia({ video }).catch(() => null) : null;
     const faixas = [...(som?.getTracks() ?? []), ...(imagem?.getTracks() ?? [])];
     return {
       fluxo: faixas.length > 0 ? new MediaStream(faixas) : null,
