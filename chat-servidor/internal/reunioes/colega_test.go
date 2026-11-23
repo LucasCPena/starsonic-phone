@@ -537,3 +537,127 @@ func TestColegaDoPedido(t *testing.T) {
 		t.Fatal("o pedido nil é de colega")
 	}
 }
+
+// ---------- A pausa pelo chat ----------
+
+// pausasDe são as mensagens pausa que o canal recebeu, em ordem.
+func pausasDe(can *canalFalso) []map[string]any {
+	var l []map[string]any
+	for _, m := range can.mensagens() {
+		if m["tipo"] == "pausa" {
+			l = append(l, m)
+		}
+	}
+	return l
+}
+
+func TestPausa_ChegaAPagina(t *testing.T) {
+	c := novaCena(t)
+	r := c.marcada()
+	_, can, carlos := c.pelaPagina(r, c.carlos)
+	c.entrou(r, carlos)
+
+	if err := c.g.Pausa(r, c.carlos.p.ID, c.carlos.computador, true, "p1"); err != nil {
+		t.Fatalf("Pausa: %v", err)
+	}
+	if err := c.g.Pausa(r, c.carlos.p.ID, c.carlos.computador, false, "p2"); err != nil {
+		t.Fatalf("Pausa: %v", err)
+	}
+	quer := []map[string]any{{"tipo": "pausa", "pausada": true, "vez": "p1"}, {"tipo": "pausa", "pausada": false, "vez": "p2"}}
+	if got := pausasDe(can); !reflect.DeepEqual(got, quer) {
+		t.Fatalf("a página recebeu %v\nqueria %v", got, quer)
+	}
+}
+
+func TestPausa_SoDaquelaPessoaEComputador(t *testing.T) {
+	c := novaCena(t)
+	r := c.marcada()
+	r2 := c.marcada()
+	_, canC, carlos := c.pelaPagina(r, c.carlos)
+	c.entrou(r, carlos)
+	_, canB, bia := c.pelaPagina(r, c.bia)
+	c.entrou(r, bia)
+	_, canC2, carlos2 := c.pelaPagina(r2, c.carlos)
+	c.entrou(r2, carlos2)
+	maria, _, canM := c.aceito(r, c.carlos, "Maria Lima")
+	c.entrou(r, maria)
+	// O mesmo colega, em outro computador: a pausa do app é de um computador só.
+	outro := colega{p: c.carlos.p, computador: c.carlos.computador + 1000}
+	_, canO, _ := c.pelaPagina(r, outro)
+
+	if err := c.g.Pausa(r, c.carlos.p.ID, c.carlos.computador, true, "p1"); err != nil {
+		t.Fatalf("Pausa: %v", err)
+	}
+	if n := len(pausasDe(canC)); n != 1 {
+		t.Fatalf("a página do Carlos recebeu %d pausas; queria 1", n)
+	}
+	for nome, can := range map[string]*canalFalso{"a Bia": canB, "o Carlos da outra reunião": canC2,
+		"a Maria, de fora": canM, "o Carlos do outro computador": canO} {
+		if n := len(pausasDe(can)); n != 0 {
+			t.Fatalf("%s recebeu %d pausas", nome, n)
+		}
+	}
+}
+
+func TestPausa_ForaDaReuniao(t *testing.T) {
+	c := novaCena(t)
+	r := c.marcada()
+	c.dentro(r, c.ana)
+	// Sem sala, sem participante daquela pessoa, e o do app (sem página) não conta.
+	conferirErro(t, "o Carlos, sem participante", c.g.Pausa(r, c.carlos.p.ID, c.carlos.computador, true, "p1"), ErrForaDaReuniao)
+	c.dentro(r, c.carlos)
+	conferirErro(t, "o Carlos, só pelo app", c.g.Pausa(r, c.carlos.p.ID, c.carlos.computador, true, "p1"), ErrForaDaReuniao)
+
+	c.pelaPagina(r, c.bia)
+	conferirErro(t, "o computador de outro", c.g.Pausa(r, c.bia.p.ID, c.carlos.computador, true, "p1"), ErrForaDaReuniao)
+	conferirErro(t, "a sala que não existe", c.g.Pausa(c.marcada(), c.bia.p.ID, c.bia.computador, true, "p1"), ErrForaDaReuniao)
+}
+
+func TestPausa_SemCanal(t *testing.T) {
+	c := novaCena(t)
+	r := c.marcada()
+	ped, can, carlos := c.pelaPagina(r, c.carlos)
+	c.entrou(r, carlos)
+	c.g.Desistir(ped, can) // o canal caiu
+
+	if err := c.g.Pausa(r, c.carlos.p.ID, c.carlos.computador, true, "p1"); err != nil {
+		t.Fatalf("Pausa com o canal caído: %v", err)
+	}
+	if n := len(pausasDe(can)); n != 0 {
+		t.Fatalf("o canal caído recebeu %d pausas", n)
+	}
+}
+
+func TestPausa_Entrando(t *testing.T) {
+	c := novaCena(t)
+	r := c.marcada()
+	_, can, _ := c.pelaPagina(r, c.carlos) // tem a senha; a câmera ainda não entrou
+
+	if err := c.g.Pausa(r, c.carlos.p.ID, c.carlos.computador, true, "p1"); err != nil {
+		t.Fatalf("Pausa: %v", err)
+	}
+	if n := len(pausasDe(can)); n != 1 {
+		t.Fatalf("quem ainda não entrou recebeu %d pausas; queria 1", n)
+	}
+}
+
+func TestPausa_NaoGuarda(t *testing.T) {
+	c := novaCena(t)
+	r := c.marcada()
+	ped, can, carlos := c.pelaPagina(r, c.carlos)
+	c.entrou(r, carlos)
+	c.g.Desistir(ped, can)
+	if err := c.g.Pausa(r, c.carlos.p.ID, c.carlos.computador, true, "p1"); err != nil {
+		t.Fatalf("Pausa: %v", err)
+	}
+
+	novo := &canalFalso{}
+	_, v, err := c.g.Voltar(r, carlos, voltaDe(t, can), novo)
+	if err != nil {
+		t.Fatalf("Voltar: %v", err)
+	}
+	anotar(v)
+	if n := len(pausasDe(novo)); n != 0 {
+		t.Fatalf("o canal que voltou recebeu %d pausas", n)
+	}
+}

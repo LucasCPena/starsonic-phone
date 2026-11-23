@@ -57,6 +57,7 @@ func (s *servidor) rotasDasReunioes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/reunioes/{codigo}/tirar", liberada(s.tirarDaReuniao))
 	mux.HandleFunc("POST /api/v1/reunioes/{codigo}/encerrar", liberada(s.encerrarReuniao))
 	mux.HandleFunc("POST /api/v1/reunioes/{codigo}/tela", liberada(s.telaDaReuniao))
+	mux.HandleFunc("POST /api/v1/reunioes/{codigo}/pausa", liberada(s.pausarReuniao))
 }
 
 // comReunioes protege uma rota que só vale para a empresa com as reuniões liberadas: sem elas, 403 semReunioes.
@@ -558,4 +559,51 @@ func (s *servidor) telaDaReuniao(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	escreverJSON(w, http.StatusOK, map[string]string{"senha": senha})
+}
+
+// vezDaPausa diz se o vez é o de uma pausa: de 1 a 32 letras ou números.
+func vezDaPausa(v string) bool {
+	if len(v) < 1 || len(v) > 32 {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// POST /api/v1/reunioes/{codigo}/pausa: o app atendeu uma ligação (ou a largou); o chat repassa à página do
+// colega aberta naquele computador. Não guarda nada, e nada dela vai ao log.
+func (s *servidor) pausarReuniao(w http.ResponseWriter, r *http.Request) {
+	c, _ := computadorDe(r)
+	reuniao, ok := s.reuniaoDaEmpresa(w, r)
+	if !ok {
+		return
+	}
+	// Os campos entram como any para que o tipo errado seja um campo ruim, e não um corpo ruim.
+	var corpo struct {
+		Pausada any `json:"pausada"`
+		Vez     any `json:"vez"`
+	}
+	if !lerJSON(w, r, &corpo) {
+		return
+	}
+	pausada, ok := corpo.Pausada.(bool)
+	if !ok {
+		erroCampo(w, "pausada")
+		return
+	}
+	vez, ok := corpo.Vez.(string)
+	if !ok || !vezDaPausa(vez) {
+		erroCampo(w, "vez")
+		return
+	}
+	if err := s.gerente.Pausa(reuniao, c.PessoaID, c.ID, pausada, vez); err != nil {
+		erroDaReuniao(w, err, false)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

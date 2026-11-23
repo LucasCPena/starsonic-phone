@@ -118,3 +118,42 @@ func (g *Gerente) mandarListaA(s *sala, p *participante) {
 		g.mandar(p.pedido.canal, mensagemLista(s.retrato(), p))
 	}
 }
+
+// ---------- A pausa pelo chat ----------
+
+// mensagemPausa é o aviso à página do colega: o app dele atendeu uma ligação (ou a largou). O vez é o do app, e a
+// página o usa para não desfazer uma pausa que já ficou para trás.
+type mensagemPausa struct {
+	Tipo    string `json:"tipo"`
+	Pausada bool   `json:"pausada"`
+	Vez     string `json:"vez"`
+}
+
+// Pausa repassa a pausa às páginas de colega daquela pessoa e daquele computador naquela reunião: os participantes
+// que entraram pela página (com Pedido). Sem nenhum participante assim, ErrForaDaReuniao; o que entrou pela rota do
+// app (EntrarColega, sem Pedido) não conta, e quem ainda não entrou na câmera conta. Uma página sem canal não recebe
+// nada, e isso não é erro. Não guarda nada: o app repete a pausa enquanto a ligação dura.
+func (g *Gerente) Pausa(r banco.Reuniao, pessoaID, computadorID int64, pausada bool, vez string) error {
+	g.mu.Lock()
+	s := g.salas[r.Sala]
+	if s == nil {
+		g.mu.Unlock()
+		return ErrForaDaReuniao
+	}
+	achou := false
+	for _, p := range s.emOrdem() {
+		if pessoaID == 0 || p.pessoa != pessoaID || p.computador != computadorID || p.pedido == nil {
+			continue
+		}
+		achou = true
+		if p.pedido.fase == aceito && p.pedido.canal != nil {
+			g.mandar(p.pedido.canal, mensagemPausa{Tipo: "pausa", Pausada: pausada, Vez: vez})
+		}
+	}
+	g.mu.Unlock()
+	g.despachar()
+	if !achou {
+		return ErrForaDaReuniao
+	}
+	return nil
+}
