@@ -44,7 +44,8 @@
 // A faixa que a principal manda e que acaba sozinha (o aparelho saiu, ou outro programa o tomou): a câmera vai ao
 // caminho da câmera desligada, sem o cameraTrocada, e o silêncio toma o lugar do microfone, para o RTP continuar. O
 // midia.js tira a faixa dele do fluxo e diz ao cérebro que o aparelho falta; a câmera que a ligação pegou de volta ele
-// só vigia quando a conexão caída a devolve, e até lá quem faz isso por ela é a ligação.
+// só vigia quando a conexão caída a devolve, e até lá quem faz isso por ela é a ligação, como pelo microfone que a
+// troca do aparelho pôs no fluxo.
 //
 // A coleta dos candidatos: o JsSIP só manda o INVITE quando ela acaba, e um TURN que não responde pelo UDP (a rede que
 // o bloqueia) a segura por 40 s, mais que os 30 s da senha. A oferta sai com o primeiro candidato do TURN, ou
@@ -245,6 +246,12 @@ export function criarLigacoes(aoEvento) {
         ?.sender.replaceTrack(l.silencio)
         .catch(() => {});
       l.sessao.unmute({ audio: true }); // o silêncio não tem o que desligar
+      // O microfone que a troca do aparelho pôs no fluxo ainda está nele: o midia.js não o vigia. O midia diz só o
+      // microfone: a câmera sem faixa pode estar desligada ou faltar, e quem sabe é o cérebro.
+      if (l.fluxo?.getAudioTracks().includes(faixa)) {
+        l.fluxo.removeTrack(faixa);
+        aoEvento({ tipo: 'midia', mic: 'indisponivel' });
+      }
       return;
     }
     // A câmera que a ligação pegou de volta ainda está no fluxo: o midia.js não a vigia.

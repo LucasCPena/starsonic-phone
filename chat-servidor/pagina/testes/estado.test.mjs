@@ -1272,6 +1272,23 @@ test('a câmera que passa a faltar manda desligada', () => {
   assert.deepEqual(passo(naReuniao(), midia('indisponivel', 'ligado')).efeitos, []);
 });
 
+// O microfone que a ligação trocou e que acaba sozinho: a ligação diz só o microfone, porque não sabe se a câmera sem
+// faixa está desligada ou falta. A câmera fica como estava.
+test('o midia só do microfone deixa a câmera como estava', () => {
+  const desligada = rodar(naReuniao(), clique('camera'), { tipo: 'cameraTrocada', ok: true }).estado;
+  const faltando = passo(naReuniao(), midia('ligado', 'indisponivel')).estado;
+  for (const [antes, cam] of [
+    [naReuniao(), 'ligado'],
+    [desligada, 'desligado'],
+    [faltando, 'indisponivel'],
+  ]) {
+    const r = passo(antes, { tipo: 'midia', mic: 'indisponivel' });
+    assert.equal(r.estado.mic, 'indisponivel', cam);
+    assert.equal(r.estado.cam, cam);
+    assert.deepEqual(r.efeitos, [], cam);
+  }
+});
+
 test('sem o canal aberto, nada vai', () => {
   const trocou = [{ tipo: 'trocarCamera', ligada: false }];
   // O canal fechado (sem a chave, ou à espera do religar), abrindo e voltando.

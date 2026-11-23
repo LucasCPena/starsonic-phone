@@ -6,7 +6,7 @@
 // - depois do fecharCanal, nenhum evento daquele canal, nem o canalFechou;
 // - os eventos de uma ligação depois do desligar dela chegam antes do próximo ligar;
 // - o falhou e o terminou dizem que a ligação acabou; o semConexao, que ela ainda existe e desce com o desligar;
-// - o midia diz ligado ou indisponivel de cada aparelho;
+// - o midia diz ligado ou indisponivel de cada aparelho, ou só do microfone (a câmera, então, fica como estava);
 // - o ligar não leva o mic nem a cam: quem roda o efeito os lê do estado (a câmera desligada é o vídeo sem faixa);
 // - todo abrir tem resposta, o abriu ou o abrirFalhou, também o abrir que sai na reunião para voltar com a chave, e a
 //   resposta devolve a abertura que o abrir levou. Quem decide a tela é o cérebro: o abriu do voltar (na volta depois
@@ -1430,10 +1430,11 @@ function pararDeCompartilhar(e) {
   }
 }
 
-// A mídia que o navegador deu: o que falta fica indisponível, e o que a pessoa desligou continua desligado. Com uma
+// A mídia que o navegador deu: o que falta fica indisponível, e o que a pessoa desligou continua desligado; o aparelho
+// que o midia não diz (o do microfone trocado que acaba sozinho, que só diz o microfone) fica como estava. Com uma
 // senha guardada, o ligar sai agora. Num aviso sem o Tentar de novo (o fim, depois do pararMidia dele), a página não a
 // quer mais: ela para logo, sem mudar a escolha da pessoa.
-const escolha = (atual, veio) => (veio === 'ligado' && atual === 'desligado' ? 'desligado' : veio);
+const escolha = (atual, veio) => (veio === undefined || (veio === 'ligado' && atual === 'desligado') ? atual : veio);
 
 function midia(e, { mic, cam }) {
   if (e.tela === 'aviso' && !DE_NOVO.has(e.aviso)) return com(e, { esperandoMidia: false }, PARAR_MIDIA);

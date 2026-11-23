@@ -274,6 +274,24 @@ test.describe.serial('o colega dentro do app de mentira', () => {
     await expect(botaoDosControles(anaP, 'Câmera')).toHaveAttribute('aria-pressed', 'true');
     await anaP.conferirOConsole();
   });
+
+  test('o microfone trocado que acaba sozinho', async () => {
+    if (!anaP || !maria) throw new Error('o primeiro teste não pôs as duas na reunião');
+    // A troca para o segundo microfone, que a Maria ouve.
+    await anaP.doApp('aparelhos', { aparelhos: APARELHOS.segundos });
+    await maria.esperarFrequencia(APARELHOS.som);
+    // Ele acaba sozinho: a Maria deixa de ouvi-lo, e o Microfone da Ana passa a faltar, como o primeiro microfone que
+    // acaba; a câmera fica como estava. O app recebe o estado com o microfone desligado.
+    await anaP.acabarSozinha('audio');
+    await maria.esperarSemFrequencia(APARELHOS.som);
+    await expect(botaoDosControles(anaP, 'Microfone')).toBeDisabled();
+    await expect(botaoDosControles(anaP, 'Câmera')).toHaveAttribute('aria-pressed', 'true');
+    await expect
+      .poll(async () => (await anaP!.recebidasDoApp()).filter((m) => m.tipo === 'estado').at(-1))
+      .toEqual({ starsonic: 1, tipo: 'estado', fase: 'naReuniao', microfone: false });
+    await expect(anaP.controles()).toBeVisible();
+    await anaP.conferirOConsole();
+  });
 });
 
 // A pausa que o app manda assim que a página diz que entrou (Ruling 17): o app de mentira a manda sozinho, sem ida e volta
