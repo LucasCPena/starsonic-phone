@@ -44,7 +44,8 @@ const (
 // O ping do canal, e quanto o servidor espera o pong. Variáveis (em ns) para o teste as encurtar.
 var pingIntervalo, pingEspera atomic.Int64
 
-// pedirEspera é o prazo do primeiro pedir: sem ele, o servidor fecha o canal (1000). Os pongs não contam. Em ns.
+// pedirEspera é o prazo do primeiro pedir (ou do entrar, no canal de colega): sem ele, o servidor fecha o canal (1000).
+// Os pongs não contam. Em ns.
 var pedirEspera atomic.Int64
 
 func init() {
@@ -319,7 +320,7 @@ type canalPagina struct {
 	motivo string
 	drenar chan struct{} // fechado no canalFechando
 
-	pediu    chan struct{} // fechado na primeira mensagem pedir
+	pediu    chan struct{} // fechado na primeira mensagem pedir (ou entrar, no canal de colega)
 	pediuUma sync.Once
 }
 
@@ -430,8 +431,8 @@ func (c *canalPagina) pingar() {
 	}
 }
 
-// esperarPedir fecha o canal (1000) se nenhum pedir chegar em pedirEspera: um canal parado, que só responde ao ping,
-// não fica aberto para sempre.
+// esperarPedir fecha o canal (1000) se nenhum pedir (ou entrar) chegar em pedirEspera: um canal parado, que só responde
+// ao ping, não fica aberto para sempre.
 func (c *canalPagina) esperarPedir() {
 	t := time.NewTimer(time.Duration(pedirEspera.Load()))
 	defer t.Stop()
@@ -446,7 +447,8 @@ func (c *canalPagina) esperarPedir() {
 // ---------- O manipulador do canal ----------
 
 // GET /api/v1/pagina/canal?bilhete=…: o WebSocket da página. A ordem das conferências: a origem (sem gastar o
-// bilhete), o bilhete, a reunião dele; só então o 101.
+// bilhete), o bilhete, a reunião dele; só então o 101. O bilhete que o abrir prendeu a um colega desta reunião abre o
+// canal de colega (o entrar, sem a sala de espera); qualquer outro abre o de quem é de fora, como sempre.
 func (s *servidor) canalDaPagina(w http.ResponseWriter, r *http.Request) {
 	// A página é de um navegador, que sempre manda a Origin: sem ela, ou com outra que não a do chat (ou do --origem),
 	// é 403, e o bilhete continua valendo.
@@ -454,7 +456,8 @@ func (s *servidor) canalDaPagina(w http.ResponseWriter, r *http.Request) {
 		escreverErro(w, http.StatusForbidden, "proibido", nil)
 		return
 	}
-	id, ok := s.bilhetesPagina.usar(r.URL.Query().Get("bilhete"))
+	bilhete := r.URL.Query().Get("bilhete")
+	id, ok := s.bilhetesPagina.usar(bilhete)
 	if !ok {
 		escreverErro(w, http.StatusUnauthorized, "chave", nil)
 		return
@@ -467,6 +470,10 @@ func (s *servidor) canalDaPagina(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		erroServidor(w, err)
 		return
+	}
+	var colega *colegaDaPagina
+	if k, ok := s.passes.colegaDoBilhete(bilhete); ok && k.reuniaoID == reuniao.ID {
+		colega = &k
 	}
 	var padroes []string
 	for o := range s.origensPagina {
@@ -483,12 +490,13 @@ func (s *servidor) canalDaPagina(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.canais.tirar(c)
-	s.servirCanal(c, reuniao, limites.Endereco(r))
+	s.servirCanal(c, reuniao, colega, limites.Endereco(r))
 }
 
-// estadoDaPagina é o que a leitura do canal sabe da página: o pedido, depois do pedir.
+// estadoDaPagina é o que a leitura do canal sabe da página: o pedido, depois do pedir (ou do entrar).
 type estadoDaPagina struct {
 	reuniao  banco.Reuniao
+	colega   *colegaDaPagina  // o colega que o bilhete reconheceu: o canal é de colega; nil no de quem é de fora
 	endereco string           // quem abriu o canal, para a janela das falhas do voltar
 	pedido   *reunioes.Pedido // nil até o pedir ou o voltar darem certo; vale uma vez por canal
 	tratou   bool             // o canal já tratou alguma mensagem (qualquer uma): o voltar só vale como a primeira
@@ -509,8 +517,8 @@ func (s *servidor) desistir(st *estadoDaPagina, c *canalPagina) {
 // servirCanal lê as mensagens da página até o canal acabar. Quem quer que feche o canal (a página, o servidor depois
 // de uma resposta final, a fila cheia, o ping, o desligamento), a leitura volta, e o gerente recebe o Desistir uma vez:
 // ele nunca guarda uma página que foi embora.
-func (s *servidor) servirCanal(c *canalPagina, reuniao banco.Reuniao, endereco string) {
-	st := &estadoDaPagina{reuniao: reuniao, endereco: endereco}
+func (s *servidor) servirCanal(c *canalPagina, reuniao banco.Reuniao, colega *colegaDaPagina, endereco string) {
+	st := &estadoDaPagina{reuniao: reuniao, colega: colega, endereco: endereco}
 	var goroutines sync.WaitGroup
 	goroutines.Go(c.escrever)
 	goroutines.Go(c.pingar)
@@ -649,12 +657,48 @@ func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo web
 	}
 	switch m.Tipo {
 	case "pedir":
+		// O colega não pede: ele entra. No canal dele, o pedir é fora de ordem, não conta no prazo, e o canal fica.
+		if st.colega != nil {
+			c.Mandar(erroDoCanal("invalido"))
+			return
+		}
 		c.pediuUma.Do(func() { close(c.pediu) })
 		if st.pedido != nil {
 			c.Mandar(erroDoCanal("invalido"))
 			return
 		}
 		p, err := s.gerente.Pedir(c.ctx, st.reuniao, m.Nome, c)
+		if err != nil {
+			s.erroDoGerente(c, err)
+			return
+		}
+		st.pedido = p
+	case "entrar":
+		// O colega que a página reconheceu entra sem a sala de espera. Só no canal de colega (no de quem é de fora, é
+		// fora de ordem, e o canal fica), e uma vez: depois do aceito, ou do voltou, também é fora de ordem. Conta no
+		// prazo como o pedir. A pessoa é lida agora no banco: a que saiu da empresa depois do abrir não entra, e o canal
+		// fecha; o nome que vai à reunião é o do cadastro de agora. Os outros erros são os do pedir.
+		if st.colega == nil {
+			c.Mandar(erroDoCanal("invalido"))
+			return
+		}
+		c.pediuUma.Do(func() { close(c.pediu) })
+		if st.pedido != nil {
+			c.Mandar(erroDoCanal("invalido"))
+			return
+		}
+		pessoa, err := s.banco.PessoaPorID(c.ctx, st.colega.empresaID, st.colega.pessoaID)
+		if errors.Is(err, banco.ErrNaoEncontrado) || (err == nil && pessoa.Saiu) {
+			st.acabou = true
+			c.Mandar(erroDoCanal("invalido"))
+			c.Fechar()
+			return
+		}
+		if err != nil {
+			s.erroDoGerente(c, err)
+			return
+		}
+		p, err := s.gerente.EntrarPelaPagina(c.ctx, st.reuniao, pessoa, st.colega.computadorID, c)
 		if err != nil {
 			s.erroDoGerente(c, err)
 			return
@@ -690,8 +734,9 @@ func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo web
 		// A última palavra da página sobre um pedido que espera: o pedido sai (um Desistir), e o canal fecha com 1000,
 		// sem mandar nada. Sem pedido, ou com ele já aceito (ou respondido), é fora de ordem e nada muda; depois do
 		// aceito a página sai fechando o canal.
-		// A retirada e o aceito de um colega não se cruzam: o gerente retira o pedido que espera numa trava só.
-		if !s.gerente.DesistirEsperando(st.pedido) {
+		// A retirada e o aceito de um colega não se cruzam: o gerente retira o pedido que espera numa trava só. O canal de
+		// colega nunca tem um pedido esperando: nele, o desistir é sempre fora de ordem.
+		if st.colega != nil || !s.gerente.DesistirEsperando(st.pedido) {
 			c.Mandar(erroDoCanal("invalido"))
 			return
 		}
@@ -749,9 +794,9 @@ func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo web
 	}
 }
 
-// erroDoGerente diz à página o erro de uma entrada (o pedir ou o senha). O nome que não vale é o erro invalido. O
-// linkInvalido é uma resposta final: o canal fecha. O cheia, o esperaCheia, o servidorCheio e o semServidor deixam o
-// canal aberto, e a página pode tentar de novo. Qualquer outro erro (o banco) é do servidor: o canal fecha com 1011, e
+// erroDoGerente diz à página o erro de uma entrada (o pedir, o entrar ou o senha). O nome que não vale é o erro
+// invalido. O linkInvalido é uma resposta final: o canal fecha. O cheia, o esperaCheia, o servidorCheio e o semServidor
+// deixam o canal aberto, e a página pode tentar de novo. Qualquer outro erro (o banco) é do servidor: o canal fecha com 1011, e
 // o log leva só o tipo do erro, nunca o texto, que podia ter dado da página.
 func (s *servidor) erroDoGerente(c *canalPagina, err error) {
 	var campo *regras.Erro

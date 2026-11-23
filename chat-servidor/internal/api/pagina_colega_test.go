@@ -10,7 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
+
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/api"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/apitest"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/video"
 )
 
 // abrirResp é a resposta do abrir da página.
@@ -378,4 +382,294 @@ func TestAbrirColega_AChaveEsquecidaNaoVolta(t *testing.T) {
 		c.a.Exec(`UPDATE computadores SET saiu_em = NULL WHERE pessoa_id = ?`, c.carlos.ID)
 		esperarErro(t, c.abrirCom(r.Codigo, map[string]string{"colega": chave}), 401, "passe")
 	})
+}
+
+// ---------- O canal de colega: o entrar ----------
+
+// canalComBilhete abre o WebSocket da página com o bilhete, com a origem do chat (tem de dar 101).
+func (c *cenaR) canalComBilhete(t *testing.T, bilhete string) *websocket.Conn {
+	t.Helper()
+	conn, resp, err := c.a.CanalDaPagina(bilhete, c.a.Base)
+	if err != nil {
+		s := 0
+		if resp != nil {
+			s = resp.StatusCode
+		}
+		t.Fatalf("canal (status %d): %v", s, err)
+	}
+	return conn
+}
+
+// canalDeColega faz o que a página do Carlos faz: o passe pelo app, o abrir com ele e o canal com o bilhete.
+func (c *cenaR) canalDeColega(t *testing.T, codigo string) *websocket.Conn {
+	t.Helper()
+	a := c.abrirBom(t, codigo, map[string]string{"passe": c.passe(t, c.kCarlos, codigo).Passe})
+	if a.Colega == nil {
+		t.Fatal("o abrir com o passe não reconheceu o colega")
+	}
+	return c.canalComBilhete(t, a.Bilhete)
+}
+
+// fechouCom1000 confere que o servidor fechou o canal com 1000.
+func fechouCom1000(t *testing.T, conn *websocket.Conn) {
+	t.Helper()
+	if cod := apitest.Fechamento(t, conn); cod != websocket.StatusNormalClosure {
+		t.Fatalf("o canal fechou com %d; queria 1000", cod)
+	}
+}
+
+// soOTipo confere que a próxima mensagem é só o tipo, sem outro campo.
+func soOTipo(t *testing.T, conn *websocket.Conn, tipo string) {
+	t.Helper()
+	if m := aPagina(t, conn); len(m) != 1 || m["tipo"] != tipo {
+		t.Fatalf("a página recebeu %v; queria só {tipo: %s}", m, tipo)
+	}
+}
+
+// entrouOCarlos confere o aceito do Carlos: o participante, a senha de colega com o nome do cadastro e a volta.
+// Devolve o participante.
+func entrouOCarlos(t *testing.T, m map[string]any) string {
+	t.Helper()
+	part, _ := m["participante"].(string)
+	senha, _ := m["senha"].(string)
+	volta, _ := m["volta"].(string)
+	if !hex16.MatchString(part) || senha == "" || !formaDoPasse.MatchString(volta) || m["turn"] == nil || m["video"] == nil {
+		t.Fatalf("aceito = %v", m)
+	}
+	carga := cargaDaSenha(t, senha)
+	if carga["papel"] != "colega" || carga["participante"] != part || carga["nome"] != "Carlos Lima" || carga["tela"] != false {
+		t.Fatalf("carga da senha = %v; queria a de colega, do Carlos", carga)
+	}
+	return part
+}
+
+func TestCanalDeColega_Entrar(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	app := c.a.Conectar(c.kCarlos)
+	pagina := c.canalDeColega(t, r.Codigo)
+
+	daPagina(t, pagina, map[string]any{"tipo": "entrar"})
+	part := entrouOCarlos(t, aPaginaTipo(t, pagina, "aceito"))
+
+	// A câmera entra: o Carlos está na reunião, como quem entrou pelo app, e as rotas do app valem para ele.
+	c.entrou(t, r.Codigo, part)
+	l := c.lista(t, c.kCarlos, r.Codigo)
+	if len(l.Participantes) != 1 || l.Participantes[0].ID != part || l.Participantes[0].Nome != "Carlos Lima" ||
+		l.Participantes[0].DeFora {
+		t.Fatalf("a lista é %+v", l)
+	}
+	// O computador do passe recebe os eventos da reunião.
+	maria := c.canal(t, r.Codigo)
+	daPagina(t, maria, map[string]any{"tipo": "pedir", "nome": "Maria Lima"})
+	aPaginaTipo(t, maria, "aguardando")
+	c.aceitar(t, c.kCarlos, r.Codigo, pedidoDe(t, app, "Maria Lima"))
+	aPaginaTipo(t, maria, "aceito")
+
+	// Depois do aceito, o canal é o de uma página aceita: o senha vale.
+	daPagina(t, pagina, map[string]any{"tipo": "tela"})
+	s := aPaginaTipo(t, pagina, "tela")
+	if carga := cargaDaSenha(t, s["senha"].(string)); carga["papel"] != "colega" || carga["tela"] != true {
+		t.Fatalf("carga da tela = %v", carga)
+	}
+}
+
+func TestCanalDeColega_PedirNaoVale(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	pagina := c.canalDeColega(t, r.Codigo)
+
+	daPagina(t, pagina, map[string]any{"tipo": "pedir", "nome": "Carlos Lima"})
+	aPaginaErro(t, pagina, "invalido")
+	daPagina(t, pagina, map[string]any{"tipo": "desistir"})
+	aPaginaErro(t, pagina, "invalido")
+	// O canal continua: o entrar ainda vale.
+	daPagina(t, pagina, map[string]any{"tipo": "entrar"})
+	aPaginaTipo(t, pagina, "aceito")
+	// Depois do aceito também.
+	daPagina(t, pagina, map[string]any{"tipo": "pedir", "nome": "Carlos Lima"})
+	aPaginaErro(t, pagina, "invalido")
+	daPagina(t, pagina, map[string]any{"tipo": "desistir"})
+	aPaginaErro(t, pagina, "invalido")
+	daPagina(t, pagina, map[string]any{"tipo": "senha"})
+	aPaginaTipo(t, pagina, "senha")
+}
+
+func TestCanalComum_EntrarNaoVale(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	pagina := c.canal(t, r.Codigo)
+
+	daPagina(t, pagina, map[string]any{"tipo": "entrar"})
+	aPaginaErro(t, pagina, "invalido")
+	// O canal continua, e o pedir vale.
+	daPagina(t, pagina, map[string]any{"tipo": "pedir", "nome": "Maria Lima"})
+	aPaginaTipo(t, pagina, "naoComecou")
+	daPagina(t, pagina, map[string]any{"tipo": "entrar"})
+	aPaginaErro(t, pagina, "invalido")
+}
+
+func TestCanalDeColega_EntrarUmaVez(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	pagina := c.canalDeColega(t, r.Codigo)
+
+	daPagina(t, pagina, map[string]any{"tipo": "entrar"})
+	part := entrouOCarlos(t, aPaginaTipo(t, pagina, "aceito"))
+	daPagina(t, pagina, map[string]any{"tipo": "entrar"})
+	aPaginaErro(t, pagina, "invalido")
+	// O segundo entrar não pôs ninguém a mais: a reunião só tem a vaga do Carlos.
+	c.entrou(t, r.Codigo, part)
+	if _, pessoas := c.a.Gerente.Contagem(c.sala(t, r.Codigo)); pessoas != 1 {
+		t.Fatalf("a reunião tem %d pessoas", pessoas)
+	}
+}
+
+func TestCanalDeColega_DoisMinutos(t *testing.T) {
+	api.AjustarPedirEspera(t, 400*time.Millisecond)
+
+	t.Run("sem o entrar, o canal fecha com 1000", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		fechouCom1000(t, c.canalDeColega(t, r.Codigo))
+	})
+
+	t.Run("o pedir que não vale não segura o canal", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		pagina := c.canalDeColega(t, r.Codigo)
+		daPagina(t, pagina, map[string]any{"tipo": "pedir", "nome": "Carlos Lima"})
+		aPaginaErro(t, pagina, "invalido")
+		fechouCom1000(t, pagina)
+	})
+
+	t.Run("o canal que mandou o entrar não fecha", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		c.a.Video.DefinirNoAr(false) // o entrar que não dá certo também conta, como o pedir
+		pagina := c.canalDeColega(t, r.Codigo)
+		daPagina(t, pagina, map[string]any{"tipo": "entrar"})
+		soOTipo(t, pagina, "semServidor")
+		lidas := make(chan map[string]any, 1)
+		go func() {
+			_, dados, err := pagina.Read(t.Context())
+			var m map[string]any
+			if err != nil {
+				m = map[string]any{"erro de leitura": err.Error()}
+			} else {
+				json.Unmarshal(dados, &m)
+			}
+			lidas <- m
+		}()
+		time.Sleep(1200 * time.Millisecond) // três vezes o limite
+		daPagina(t, pagina, map[string]any{"tipo": "tela"})
+		if m := <-lidas; m["erro"] != "foraDaReuniao" {
+			t.Fatalf("a página recebeu %v; queria o foraDaReuniao, de um canal aberto", m)
+		}
+	})
+}
+
+func TestCanalDeColega_Cheia(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	var partes []string
+	for range 10 {
+		partes = append(partes, c.entrouNaReuniao(t, c.kBia, r.Codigo))
+	}
+	pagina := c.canalDeColega(t, r.Codigo)
+	daPagina(t, pagina, map[string]any{"tipo": "entrar"})
+	soOTipo(t, pagina, "cheia")
+
+	// Uma pessoa sai, e o mesmo canal entra.
+	c.a.Gerente.EventoDoVideo(video.Evento{Tipo: "saiu", Sala: c.sala(t, r.Codigo), Participante: partes[0]})
+	daPagina(t, pagina, map[string]any{"tipo": "entrar"})
+	entrouOCarlos(t, aPaginaTipo(t, pagina, "aceito"))
+}
+
+func TestCanalDeColega_OutrasRespostas(t *testing.T) {
+	t.Run("o semServidor deixa o canal aberto", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		pagina := c.canalDeColega(t, r.Codigo)
+		c.a.Video.DefinirNoAr(false)
+		daPagina(t, pagina, map[string]any{"tipo": "entrar"})
+		soOTipo(t, pagina, "semServidor")
+		c.a.Video.DefinirNoAr(true)
+		daPagina(t, pagina, map[string]any{"tipo": "entrar"})
+		aPaginaTipo(t, pagina, "aceito")
+	})
+
+	t.Run("o servidorCheio deixa o canal aberto", func(t *testing.T) {
+		c := novaCenaR(t)
+		// O limite padrão é de 2 reuniões ao mesmo tempo.
+		r1, r2, r3 := c.marcada(t, c.kAna), c.marcada(t, c.kAna), c.marcada(t, c.kAna)
+		c.entrouNaReuniao(t, c.kAna, r1.Codigo)
+		c.entrouNaReuniao(t, c.kBia, r2.Codigo)
+		pagina := c.canalDeColega(t, r3.Codigo)
+		daPagina(t, pagina, map[string]any{"tipo": "entrar"})
+		soOTipo(t, pagina, "servidorCheio")
+		if err := c.a.Banco.GuardarLimiteReunioes(t.Context(), 3); err != nil {
+			t.Fatal(err)
+		}
+		daPagina(t, pagina, map[string]any{"tipo": "entrar"})
+		aPaginaTipo(t, pagina, "aceito")
+	})
+
+	t.Run("o linkInvalido fecha o canal", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		pagina := c.canalDeColega(t, r.Codigo)
+		c.a.Relogio.Avancar(72 * time.Hour) // passou do valeAte
+		daPagina(t, pagina, map[string]any{"tipo": "entrar"})
+		soOTipo(t, pagina, "linkInvalido")
+		fechouCom1000(t, pagina)
+	})
+}
+
+func TestCanalDeColega_PessoaSumiu(t *testing.T) {
+	t.Run("tirada da empresa", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		pagina := c.canalDeColega(t, r.Codigo)
+		if _, _, err := c.a.Banco.TirarPessoa(t.Context(), c.acme.ID, c.carlos.ID); err != nil {
+			t.Fatal(err)
+		}
+		daPagina(t, pagina, map[string]any{"tipo": "entrar"})
+		aPaginaErro(t, pagina, "invalido")
+		fechouCom1000(t, pagina)
+		if _, pessoas := c.a.Gerente.Contagem(c.sala(t, r.Codigo)); pessoas != 0 {
+			t.Fatalf("a reunião tem %d pessoas", pessoas)
+		}
+	})
+	t.Run("que saiu, com o computador ainda ativo", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		pagina := c.canalDeColega(t, r.Codigo)
+		c.a.Exec(`UPDATE pessoas SET saiu_em = 1 WHERE id = ?`, c.carlos.ID)
+		daPagina(t, pagina, map[string]any{"tipo": "entrar"})
+		aPaginaErro(t, pagina, "invalido")
+		fechouCom1000(t, pagina)
+	})
+}
+
+func TestCanalDeColega_BilheteComum(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	doColega := c.abrirBom(t, r.Codigo, map[string]string{"passe": c.passe(t, c.kCarlos, r.Codigo).Passe})
+	comum := c.abrirBom(t, r.Codigo, nil)
+	if comum.Colega != nil {
+		t.Fatalf("o abrir sem corpo reconheceu %+v", comum.Colega)
+	}
+
+	// O bilhete do abrir sem corpo, logo depois do abrir com o passe, abre um canal de quem é de fora.
+	pagina := c.canalComBilhete(t, comum.Bilhete)
+	daPagina(t, pagina, map[string]any{"tipo": "entrar"})
+	aPaginaErro(t, pagina, "invalido")
+	daPagina(t, pagina, map[string]any{"tipo": "pedir", "nome": "Maria Lima"})
+	aPaginaTipo(t, pagina, "naoComecou")
+
+	// E o do abrir com o passe continua sendo o do colega.
+	colega := c.canalComBilhete(t, doColega.Bilhete)
+	daPagina(t, colega, map[string]any{"tipo": "entrar"})
+	entrouOCarlos(t, aPaginaTipo(t, colega, "aceito"))
 }
