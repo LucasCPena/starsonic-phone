@@ -5,11 +5,13 @@
 // cérebro um de cada vez, depois dos efeitos do evento de agora. Nada do estado nem dos efeitos vai ao console: eles
 // levam o bilhete, as senhas, as credenciais do TURN, a chave de volta e as mensagens do chat. As medidas do
 // sinalizador também não vão a lugar nenhum fora da página. Na página do colega, ela desenha também a entrada dele, o
-// botão Participantes e o cartão do pedido; os nomes entram sempre como texto.
+// botão Participantes, o cartão do pedido e o painel Participantes (participantes.js); os nomes entram sempre como
+// texto.
 import { iniciais, rotuloDoBotao, tituloDoCartao } from './colega.js';
 import { cabecalho, inicial, nomeValido, podeEscrever, quando, transicao } from './estado.js';
 import { contagem as numeroDoBotao, dito, escreveu, falha, nomeDoBotao, numaLinha } from './mensagens.js';
 import { criarPainel } from './painel.js';
+import { criarParticipantes } from './participantes.js';
 import { criarQuadros } from './quadros.js';
 import { AVISO_DA_CONEXAO_RUIM, criarMedidor, numerosDoCartao, textosDoSinal } from './qualidade.js';
 
@@ -58,6 +60,7 @@ export function iniciar(raiz, servicos) {
   const botaoParticipantes = um('[data-botao="participantes"]');
   const numeroDeParticipantes = botaoParticipantes.querySelector('.contagem');
   const cartaoDoPedido = um('.pedido');
+  const raizDaGente = um('.gente');
   // A frase do aviso curto do servidor de vídeo que não respondeu é o título do aviso semServidor.
   const servidorNaoRespondeu = um('[data-aviso="semServidor"] h1').textContent;
   const sinal = um('.sinal');
@@ -99,12 +102,13 @@ export function iniciar(raiz, servicos) {
   // O botão com o foco que o desenho escondeu, desligou ou pôs dentro de um inert (o Tentar de novo do aviso de acesso
   // que deu certo, ou um quadro embaixo do cartão da conexão caída, por exemplo) leva o foco ao título da tela: sem
   // isso, ele cairia no começo da página. O que estava no painel do chat (o campo que o canal caído desligou), com o
-  // painel ainda aberto, deixa o foco no painel.
+  // painel ainda aberto, deixa o foco no painel; o do painel Participantes, também.
   function manterOFoco(foco) {
     const agora = document.activeElement;
     if (!foco || foco === document.body || (agora !== foco && agora !== document.body)) return;
     if (!(foco.closest('[hidden]') || foco.disabled || foco.closest('[inert]'))) return;
     if (raizDoPainel.contains(foco) && !raizDoPainel.hidden) painel.focar();
+    else if (raizDaGente.contains(foco) && !raizDaGente.hidden) gente.focar();
     else tituloVisivel()?.focus();
   }
 
@@ -120,6 +124,14 @@ export function iniciar(raiz, servicos) {
     aoEscrever: (texto) => despachar({ tipo: 'escrever', texto }),
     aoReenviar: (n) => despachar({ tipo: 'reenviar', n }),
     aoFechar: () => despachar({ tipo: 'clique', botao: 'fecharChat' }),
+  });
+  // O painel Participantes, no lugar do chat, com o mesmo fundo. Os botões dele chegam ao cérebro pelo ouvinte dos
+  // cliques; o aoClique leva o Esc e o Voltar do aparelho.
+  const gente = criarParticipantes({
+    raiz: raizDaGente,
+    fundo: todos('.reuniao-topo, .palco, .controles'),
+    relogio,
+    aoClique: (botao) => despachar({ tipo: 'clique', botao }),
   });
   // O sinalizador de qualidade mede a ligação principal (os números dela, do navegador), só com a aba à vista, e cada
   // medida vai ao cérebro. O desenho o liga e desliga.
@@ -178,7 +190,10 @@ export function iniciar(raiz, servicos) {
         midia.pararCaptura();
         break;
       case 'focar':
-        tituloVisivel()?.focus();
+        // Sem alvo, o título da tela; com ele, o que o colega usa: o botão Participantes, ou o que está no painel.
+        if (efeito.alvo === undefined) tituloVisivel()?.focus();
+        else if (efeito.alvo === 'participantes') botaoParticipantes.focus();
+        else gente.focar(efeito.alvo, efeito.id);
         break;
       case 'focarOCampo':
         painel.focar();
@@ -347,9 +362,11 @@ export function iniciar(raiz, servicos) {
     desenharOAvisoCurto(e);
   }
 
-  // O que é só do colega na reunião: o botão Participantes (apertado com o painel aberto, e o número de quem espera) e
-  // o cartão do pedido. O cartão sai com o painel aberto, que mostra os pedidos, e embaixo do cartão da conexão caída.
+  // O que é só do colega na reunião: o botão Participantes (apertado com o painel aberto, e o número de quem espera), o
+  // painel e o cartão do pedido. O cartão sai com o painel aberto, que mostra os pedidos, e embaixo do cartão da
+  // conexão caída.
   function desenharOColega(e) {
+    gente.desenhar(e);
     const doColega = e.colega !== null && e.tela === 'reuniao';
     const pedidos = doColega ? e.lista.pedidos : [];
     const n = pedidos.length;
@@ -508,7 +525,8 @@ export function iniciar(raiz, servicos) {
 
   // ---- Os cliques e o nome viram eventos. ----
 
-  // O botão com o data-id (o Aceitar e o Recusar do cartão do pedido) leva o id ao cérebro.
+  // O botão com o data-id (o Aceitar e o Recusar do cartão do pedido e do painel Participantes, e o Tirar de cada linha
+  // dele) leva o id ao cérebro.
   raiz.addEventListener('click', (ev) => {
     const b = ev.target.closest('button[data-botao]');
     if (!b) return;
@@ -552,8 +570,9 @@ export function iniciar(raiz, servicos) {
     if (ev.key === 'Enter' && !pedir.disabled) pedir.click();
   });
 
-  // O primeiro play() do som nasce no clique do Pedir para entrar (ou do Entrar do colega), antes de tudo: o Safari do iPhone só toca depois de
-  // um gesto, e o som da reunião chega sem outro toque. Sem o som ainda, ele pode recusar, e a recusa não importa.
+  // O primeiro play() do som nasce no clique do Pedir para entrar (ou do Entrar do colega), antes de tudo: o Safari do
+  // iPhone só toca depois de um gesto, e o som da reunião chega sem outro toque. Sem o som ainda, ele pode recusar, e
+  // a recusa não importa.
   function tocarOSom() {
     som.play()?.catch(() => {});
   }

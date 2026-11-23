@@ -1623,7 +1623,8 @@ button.quadro:focus-visible .pilula {
 /* ---- O chat da reunião: o painel (painel.js). Ao lado dos quadros no PC (data-modo="lado"), e cobrindo a tela onde o
    ponteiro é o dedo ou a janela tem menos de 900 px (data-modo="cobre"). ---- */
 
-.painel {
+.painel,
+.gente {
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -1631,8 +1632,10 @@ button.quadro:focus-visible .pilula {
   color: var(--branco);
 }
 
-/* Ao lado: 360 px, a 12 px da área dos quadros e a 24 px da direita da janela. */
-.painel[data-modo="lado"] {
+/* Ao lado: 360 px, a 12 px da área dos quadros e a 24 px da direita da janela. O painel Participantes tem a mesma
+   moldura, e a área dos quadros abre o mesmo espaço para ele (a classe com-gente). */
+.painel[data-modo="lado"],
+.gente[data-modo="lado"] {
   flex: 0 0 360px;
   margin: 12px 24px 12px 0;
   overflow: hidden;
@@ -1641,13 +1644,15 @@ button.quadro:focus-visible .pilula {
   background: var(--reuniao-cartao);
 }
 
-.meio.com-painel > .palco {
+.meio.com-painel > .palco,
+.meio.com-gente > .palco {
   margin-right: 12px;
 }
 
 /* Cobrindo: a janela inteira, por cima de tudo. Com o teclado da tela, o painel.js dá a ele a parte visível da janela
    (o top e o height, pelo elemento.style). */
-.painel[data-modo="cobre"] {
+.painel[data-modo="cobre"],
+.gente[data-modo="cobre"] {
   position: fixed;
   z-index: 10;
   inset: 0;
@@ -1709,7 +1714,8 @@ button.quadro:focus-visible .pilula {
   display: none;
 }
 
-.painel[data-modo="cobre"] .painel-alto {
+.painel[data-modo="cobre"] .painel-alto,
+.gente[data-modo="cobre"] .painel-alto {
   justify-content: flex-start;
   gap: 4px;
   padding: 6px 8px;
@@ -1962,6 +1968,312 @@ button.quadro:focus-visible .pilula {
 .painel[data-modo="cobre"] .painel-enviar .icone {
   width: 20px;
   height: 20px;
+}
+
+/* ---- O painel Participantes (participantes.js), só do colega: a moldura do chat, com quem espera para entrar, quem
+   está na reunião e, no pé, o Encerrar para todos. ---- */
+
+/* Cobrindo a tela, o Fechar fica à direita, no alto do celular. */
+.gente[data-modo="cobre"] .painel-alto {
+  justify-content: space-between;
+  padding-left: 16px;
+}
+
+.gente-lista {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.gente-lista > * {
+  flex-shrink: 0;
+}
+
+.gente-parte {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gente-rotulo {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 16px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--reuniao-apagado);
+}
+
+.gente-pedidos,
+.gente-pessoas {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.gente-pedidos {
+  gap: 8px;
+}
+
+/* Quem espera: um cartão com a borda ciano, o nome e os dois botões lado a lado. Ele recebe o foco do Ver os pedidos. */
+.gente-pedido {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--ciano);
+  border-radius: 12px;
+  background: var(--reuniao);
+}
+
+/* Os nomes vêm do que a pessoa digitou: uma palavra comprida quebra em qualquer lugar. */
+.gente-pedido-nome,
+.gente-nome,
+.gente-pergunta {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.gente-pedido-nome {
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 700;
+}
+
+.gente-pedido-botoes,
+.gente-pergunta-botoes {
+  display: flex;
+  gap: 8px;
+}
+
+.gente-botao {
+  flex: 1 1 0;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.gente-botao:hover,
+.gente-tirar:hover,
+.encerrar-botao:hover {
+  filter: brightness(1.1);
+}
+
+.gente-recusar,
+.gente-nao-tirar {
+  border-color: var(--reuniao-borda);
+  background: var(--reuniao-botao);
+  color: var(--branco);
+}
+
+.gente-aceitar {
+  background: var(--ciano);
+  color: var(--sobre-ciano);
+}
+
+.gente-tirar-mesmo {
+  border-color: var(--sair);
+  background: var(--sair);
+  color: var(--branco);
+}
+
+/* A reunião cheia, embaixo de quem espera, com a cor do cartão do pedido. */
+.gente-cheia {
+  font-size: 13px;
+  line-height: 1.45;
+  font-weight: 700;
+  color: var(--reuniao-atencao);
+}
+
+/* Quem está na reunião: uma linha de 46 px no mínimo, com o nome, as marcas e o Tirar. */
+.gente-pessoa {
+  min-height: 46px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--reuniao-botao);
+}
+
+.gente-pessoa:last-child {
+  border-bottom: 0;
+}
+
+.gente-quem {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.gente-nome {
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.gente-marca {
+  padding: 2px 8px;
+  border: 1px solid var(--reuniao-borda);
+  border-radius: 999px;
+  color: var(--topo-rotulo);
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.gente-tirar {
+  flex: none;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--reuniao-borda);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--branco);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* A pergunta "Tirar <Nome>?" toma o lugar da linha: a frase, e o Voltar e o Tirar embaixo dela. */
+.gente-pergunta {
+  flex: 1 1 100%;
+  font-size: 14.5px;
+  font-weight: 700;
+}
+
+.gente-pergunta-botoes {
+  flex: 1 1 100%;
+}
+
+.gente-pergunta-botoes .gente-botao {
+  min-height: 34px;
+  font-size: 13px;
+}
+
+.gente-pe {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--reuniao-borda);
+}
+
+.gente[data-modo="cobre"] .gente-pe {
+  padding: 10px 12px 22px;
+  border-top-color: var(--reuniao-linha);
+  background: var(--reuniao-barra);
+}
+
+.gente-encerrar {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1.5px solid #e06a6a;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--branco);
+  font-family: inherit;
+  font-size: 14.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .gente-encerrar:hover,
+  .gente-tirar:hover {
+    background: var(--reuniao-botao);
+  }
+}
+
+.gente-pe-frase {
+  text-align: center;
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--reuniao-apagado);
+}
+
+/* ---- O Encerrar para todos: um diálogo de 480 px no meio da janela, sobre o véu, com os botões à direita. ---- */
+
+.encerrar {
+  width: 480px;
+  max-width: calc(100% - 32px);
+  margin: auto;
+  padding: 24px;
+  border: 1px solid var(--reuniao-borda);
+  border-radius: 16px;
+  background: var(--reuniao-cartao);
+  box-shadow: 0 40px 100px -30px rgba(0, 0, 0, 0.8);
+  color: var(--branco);
+}
+
+.encerrar[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.encerrar::backdrop {
+  background: rgba(4, 6, 14, 0.74);
+}
+
+.encerrar h2 {
+  font-size: 20px;
+  line-height: 1.25;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.encerrar-frases {
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--topo-rotulo);
+}
+
+.encerrar-botoes {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.encerrar-botao {
+  min-height: 46px;
+  padding: 0 24px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.encerrar-voltar {
+  border-color: var(--reuniao-borda);
+  background: var(--reuniao-botao);
+  color: var(--branco);
+}
+
+.encerrar-sim {
+  border-color: var(--sair);
+  background: var(--sair);
+  color: var(--branco);
 }
 
 /* ---- O celular: abaixo de 600 px, uma coluna só. ---- */

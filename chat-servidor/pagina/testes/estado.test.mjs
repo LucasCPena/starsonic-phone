@@ -2243,6 +2243,7 @@ const passeRecusado = (abertura) => ({ ...abrirFalhou(abertura, 401), passe: tru
 const ENTRAR = mandar({ tipo: 'entrar' });
 const dizer = (texto) => ({ tipo: 'dizer', texto });
 const focar = (alvo) => ({ tipo: 'focar', alvo });
+const focarEm = (alvo, id) => ({ tipo: 'focar', alvo, id });
 const cliqueEm = (botao, id) => ({ tipo: 'clique', botao, id });
 
 // A lista da reunião: a própria pessoa, um de fora e dois pedidos.
@@ -2441,10 +2442,11 @@ test('a lista chega e o número aparece', () => {
 test('o painel e o chat não ficam abertos juntos', () => {
   let r = passo(colegaComLista(), clique('chat'));
   assert.equal(r.estado.chat.aberto, true);
+  // O botão Participantes abre o painel com o foco no título dele.
   r = passo(r.estado, clique('participantes'));
   assert.equal(r.estado.gente, true);
   assert.equal(r.estado.chat.aberto, false);
-  assert.deepEqual(r.efeitos, []);
+  assert.deepEqual(r.efeitos, [focar('gente')]);
   r = passo(r.estado, clique('chat'));
   assert.equal(r.estado.chat.aberto, true);
   assert.equal(r.estado.gente, false);
@@ -2481,15 +2483,17 @@ test('aceitar e recusar', () => {
 
 test('o Tirar pede o segundo clique', () => {
   const e = colegaComLista();
+  // A pergunta leva o foco ao Voltar dela, a escolha que não tira ninguém.
   const r = passo(e, cliqueEm('tirar', PEDRO.id));
   assert.equal(r.estado.tirando, PEDRO.id);
-  assert.deepEqual(r.efeitos, []);
+  assert.deepEqual(r.efeitos, [focarEm('naoTirar', PEDRO.id)]);
   let s = passo(r.estado, cliqueEm('tirarMesmo', PEDRO.id));
   assert.deepEqual(s.efeitos, [mandar({ tipo: 'tirar', participante: PEDRO.id })]);
   assert.equal(s.estado.tirando, null);
+  // O Voltar desfaz a pergunta, e o foco volta ao Tirar daquela pessoa.
   s = passo(r.estado, clique('naoTirar'));
   assert.equal(s.estado.tirando, null);
-  assert.deepEqual(s.efeitos, []);
+  assert.deepEqual(s.efeitos, [focarEm('tirar', PEDRO.id)]);
   // A lista nova sem aquela pessoa desfaz a pergunta; com ela, a pergunta fica.
   assert.equal(passo(r.estado, lista([EU], [MARIA])).estado.tirando, null);
   assert.equal(passo(r.estado, lista([EU, PEDRO], [])).estado.tirando, PEDRO.id);
@@ -2502,9 +2506,10 @@ test('o Tirar pede o segundo clique', () => {
 
 test('o Encerrar pergunta', () => {
   const e = colegaComLista();
+  // A pergunta começa no Voltar, a escolha que não encerra.
   const r = passo(e, clique('encerrar'));
   assert.equal(r.estado.encerrando, true);
-  assert.deepEqual(r.efeitos, []);
+  assert.deepEqual(r.efeitos, [focar('naoEncerrar')]);
   let s = passo(r.estado, clique('encerrarMesmo'));
   assert.deepEqual(s.efeitos, [mandar({ tipo: 'encerrar' })]);
   assert.equal(s.estado.encerrando, false);
@@ -2520,9 +2525,13 @@ test('o Encerrar pergunta', () => {
 
 test('a recusa cheia aparece, e a jaRespondido não', () => {
   const e = colegaComLista();
+  // A frase aparece no cartão e no painel, e o leitor de tela a ouve.
   const r = rodar(e, cliqueEm('aceitar', MARIA.id), recusa('aceitar', 'cheia'));
   assert.equal(r.estado.cheiaAoAceitar, true);
-  assert.deepEqual(r.efeitos, []);
+  assert.deepEqual(r.efeitos, [dizer('A reunião está cheia: ninguém mais entra agora.')]);
+  // A cada vez que ela aparece de novo.
+  const outra = rodar(r.estado, cliqueEm('aceitar', MARIA.id), recusa('aceitar', 'cheia'));
+  assert.deepEqual(outra.efeitos, [dizer('A reunião está cheia: ninguém mais entra agora.')]);
   // Ela sai com a lista nova, ou quando a pessoa responde de novo.
   assert.equal(passo(r.estado, lista([EU, PEDRO], [MARIA, BIA])).estado.cheiaAoAceitar, false);
   assert.equal(passo(r.estado, cliqueEm('recusar', BIA.id)).estado.cheiaAoAceitar, false);

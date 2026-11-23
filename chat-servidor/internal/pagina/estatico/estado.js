@@ -126,7 +126,10 @@ const pedido = (e) => mandar({ tipo: 'pedir', nome: e.nome.trim() });
 // O colega não pede: ele entra.
 const ENTRAR = mandar({ tipo: 'entrar' });
 const pedidoOuEntrar = (e) => (e.colega !== null ? ENTRAR : pedido(e));
-const focar = (alvo) => ({ tipo: 'focar', alvo }); // os alvos do colega: participantes, cartao e encerrar
+// Os alvos do foco do colega: o botão participantes, o título do painel (gente), o primeiro de quem espera (cartao), o
+// Encerrar para todos (encerrar) e o Voltar da pergunta dele (naoEncerrar); com o id da linha, o Tirar dela (tirar) e o
+// Voltar da pergunta "Tirar <Nome>?" (naoTirar).
+const focar = (alvo, id) => (id === undefined ? { tipo: 'focar', alvo } : { tipo: 'focar', alvo, id });
 const dizer = (texto) => ({ tipo: 'dizer', texto }); // o que o leitor de tela ouve
 
 // O chat da reunião sem nada: a lista, as não lidas, o painel fechado e o número da última mensagem.
@@ -637,15 +640,18 @@ function lista(e, m) {
   return com(e, { lista: nova, respondendo, tirando, cheiaAoAceitar: false }, ...efeitos);
 }
 
-// Uma resposta da página não deu certo (o recusa, com o de e o motivo): ela não espera mais a lista, e nada é dito
-// dela. O servidor responde na ordem em que recebe: a recusa é da mais antiga daquele tipo. A reunião cheia aparece no
-// cartão e no painel; o servidor de vídeo fora do ar, no aviso curto. Os outros motivos (a resposta de outro colega
-// chegou antes, a pessoa já saiu, ou a página não está mais na reunião para o chat) não mostram nada: a lista nova diz.
+// Uma resposta da página não deu certo (o recusa, com o de e o motivo): ela não espera mais a lista, e o resultado
+// dela não é dito. O servidor responde na ordem em que recebe: a recusa é da mais antiga daquele tipo. A reunião cheia
+// aparece no cartão e no painel, e o leitor de tela a ouve; o servidor de vídeo fora do ar, no aviso curto. Os outros
+// motivos (a resposta de outro colega chegou antes, a pessoa já saiu, ou a página não está mais na reunião para o chat)
+// não mostram nada: a lista nova diz.
 function recusa(e, { de, motivo }) {
   if (!colegaNaReuniao(e)) return nada(e);
   const i = e.respondendo.findIndex((r) => r.de === de);
   const mudancas = i < 0 ? {} : { respondendo: e.respondendo.filter((_, j) => j !== i) };
-  if (motivo === 'cheia' && de === 'aceitar') return com(e, { ...mudancas, cheiaAoAceitar: true });
+  if (motivo === 'cheia' && de === 'aceitar') {
+    return com(e, { ...mudancas, cheiaAoAceitar: true }, dizer('A reunião está cheia: ninguém mais entra agora.'));
+  }
   if (motivo === 'servidorVideo' && e.tela === 'reuniao') {
     const aviso = e.avisos + 1;
     return com(
@@ -665,14 +671,15 @@ function responder(e, de, id, nome, m, mudancas = {}) {
 }
 
 // Os cliques do colega na reunião. O painel Participantes fica no lugar do chat: abrir um fecha o outro. O Tirar e o
-// Encerrar para todos pedem o segundo clique. Quem é de fora não tem nada disso.
+// Encerrar para todos pedem o segundo clique, e a pergunta de cada um leva o foco ao Voltar dela, a escolha que não
+// muda nada. Quem é de fora não tem nada disso.
 function cliqueDoColega(e, botao, id) {
   if (e.colega === null || e.tela !== 'reuniao') return nada(e);
   const comPainel = { gente: true, chat: { ...e.chat, aberto: false } };
   switch (botao) {
     case 'participantes':
-      // O botão abre e fecha. Ao fechar por ele, o foco já está nele.
-      return com(e, e.gente ? { gente: false } : comPainel);
+      // O botão abre e fecha: aberto, o foco vai ao título do painel; ao fechar por ele, o foco já está nele.
+      return e.gente ? com(e, { gente: false }) : com(e, comPainel, focar('gente'));
     case 'fecharParticipantes':
       // O fechar do painel (o botão dele e o Esc) devolve o foco ao botão Participantes.
       return e.gente ? com(e, { gente: false }, focar('participantes')) : nada(e);
@@ -687,7 +694,7 @@ function cliqueDoColega(e, botao, id) {
     }
     case 'tirar': {
       const p = e.lista.participantes.find((x) => x.id === id);
-      return p && !p.voce ? com(e, { tirando: p.id }) : nada(e);
+      return p && !p.voce ? com(e, { tirando: p.id }, focar('naoTirar', p.id)) : nada(e);
     }
     case 'tirarMesmo': {
       const p = e.lista.participantes.find((x) => x.id === id);
@@ -695,9 +702,10 @@ function cliqueDoColega(e, botao, id) {
       return responder(e, 'tirar', p.id, p.nome, { tipo: 'tirar', participante: p.id }, { tirando: null });
     }
     case 'naoTirar':
-      return e.tirando !== null ? com(e, { tirando: null }) : nada(e);
+      // O Voltar da pergunta devolve o foco ao Tirar daquela linha.
+      return e.tirando !== null ? com(e, { tirando: null }, focar('tirar', e.tirando)) : nada(e);
     case 'encerrar':
-      return e.encerrando ? nada(e) : com(e, { encerrando: true });
+      return e.encerrando ? nada(e) : com(e, { encerrando: true }, focar('naoEncerrar'));
     case 'encerrarMesmo':
       // O encerrar não espera resposta na lista: o encerrada é o fim, e a recusa mostra o aviso.
       if (!e.encerrando || !podeResponder(e)) return nada(e);

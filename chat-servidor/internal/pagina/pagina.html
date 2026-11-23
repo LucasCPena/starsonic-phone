@@ -443,6 +443,35 @@ ficam num <div>, e não num <form>: a CSP da página tem form-action 'none'. -->
 </div>
 </div>
 </aside>
+<!-- O painel Participantes, só do colega, no lugar do chat e com a mesma regra (o data-modo, que o participantes.js
+põe): quem espera para entrar, quem está na reunião e o Encerrar para todos. As linhas de cada parte nascem no
+participantes.js, com os nomes como texto; sem ninguém esperando, a primeira parte fica escondida. -->
+<aside class="gente" aria-label="Participantes" hidden>
+<div class="painel-alto">
+<div class="painel-titulos">
+<h2 tabindex="-1">Participantes</h2>
+</div>
+<button type="button" class="painel-botao" data-botao="fecharParticipantes">
+<svg class="icone icone-18 icone-forte" aria-hidden="true"><use href="#i-fechar"></use></svg>
+<span class="so-leitor">Fechar os participantes</span>
+</button>
+</div>
+<div class="gente-lista">
+<section class="gente-parte gente-esperando" aria-labelledby="gente-esperando" hidden>
+<h3 id="gente-esperando" class="gente-rotulo"></h3>
+<ul class="gente-pedidos"></ul>
+<p class="gente-cheia" hidden>A reunião está cheia: ninguém mais entra agora.</p>
+</section>
+<section class="gente-parte" aria-labelledby="gente-dentro">
+<h3 id="gente-dentro" class="gente-rotulo"></h3>
+<ul class="gente-pessoas"></ul>
+</section>
+</div>
+<div class="gente-pe">
+<button type="button" class="gente-encerrar" data-botao="encerrar" aria-haspopup="dialog" aria-controls="encerrar">Encerrar para todos</button>
+<p class="gente-pe-frase">Todos saem da reunião na hora.</p>
+</div>
+</aside>
 </div>
 <nav class="controles" aria-label="Controles da reunião">
 <button type="button" class="botao controle alternar" data-botao="microfone" aria-pressed="true">
@@ -479,6 +508,15 @@ ficam num <div>, e não num <form>: a CSP da página tem form-action 'none'. -->
 <span>Sair</span>
 </button>
 </nav>
+<!-- A pergunta do Encerrar para todos, um diálogo modal sobre o véu. As duas frases entram pelo participantes.js. -->
+<dialog id="encerrar" class="encerrar" role="alertdialog" aria-labelledby="encerrar-titulo" aria-describedby="encerrar-frases">
+<h2 id="encerrar-titulo">Encerrar a reunião para todos?</h2>
+<p id="encerrar-frases" class="encerrar-frases"></p>
+<div class="encerrar-botoes">
+<button type="button" class="encerrar-botao encerrar-voltar" data-botao="naoEncerrar">Voltar</button>
+<button type="button" class="encerrar-botao encerrar-sim" data-botao="encerrarMesmo">Encerrar para todos</button>
+</div>
+</dialog>
 <audio id="som" autoplay></audio>
 </section>
 
