@@ -4,7 +4,7 @@
 // quadros no PC, e cobrindo a tela onde o ponteiro é o dedo ou a janela é estreita. Os cliques nos botões (o data-botao,
 // com o id da linha no data-id) chegam ao cérebro pelo ouvinte do pagina.js; o aoClique leva o que não é um clique (o
 // Esc e o Voltar do aparelho). O nome de uma pessoa entra sempre como texto, e nada daqui vai ao console.
-import { fraseDoEncerrar } from './colega.js';
+import { fraseDoEncerrar, nomeNaLista } from './colega.js';
 
 /** O painel ao lado é do PC: a janela de 900 px ou mais, com ponteiro de mouse (a regra do painel do chat). */
 const AO_LADO = '(min-width: 900px) and (pointer: fine)';
@@ -122,7 +122,7 @@ export function criarParticipantes({ raiz, fundo, relogio, aoClique }) {
   // Quem espera: o nome e os dois botões, que dizem de quem são ao leitor de tela (o aria-describedby). O cartão recebe
   // o foco do Ver os pedidos.
   function linhaDoPedido(li, p) {
-    const nome = elemento('bdi', 'gente-pedido-nome', p.nome);
+    const nome = elemento('bdi', 'gente-pedido-nome', nomeNaLista(p.nome));
     nome.id = `gente-nome-${++ids}`;
     const botoes = elemento('div', 'gente-pedido-botoes');
     const recusar = botao('gente-botao gente-recusar', 'recusar', p.id, 'Recusar');
@@ -139,7 +139,7 @@ export function criarParticipantes({ raiz, fundo, relogio, aoClique }) {
   function linhaDaPessoa(li, p, perguntando) {
     li.className = 'gente-pessoa';
     if (perguntando) {
-      const pergunta = elemento('p', 'gente-pergunta', `Tirar ${p.nome}?`);
+      const pergunta = elemento('p', 'gente-pergunta', `Tirar ${nomeNaLista(p.nome)}?`);
       pergunta.id = `gente-pergunta-${++ids}`;
       const botoes = elemento('div', 'gente-pergunta-botoes');
       const voltar = botao('gente-botao gente-nao-tirar', 'naoTirar', p.id, 'Voltar');
@@ -149,12 +149,12 @@ export function criarParticipantes({ raiz, fundo, relogio, aoClique }) {
       return;
     }
     const quem = elemento('span', 'gente-quem');
-    quem.append(elemento('bdi', 'gente-nome', p.nome));
+    quem.append(elemento('bdi', 'gente-nome', nomeNaLista(p.nome)));
     for (const [campo, marca] of MARCAS) if (p[campo]) quem.append(elemento('span', 'gente-marca', marca));
     li.replaceChildren(quem);
     if (p.voce) return;
     const tirar = botao('gente-tirar', 'tirar', p.id, 'Tirar');
-    tirar.setAttribute('aria-label', `Tirar ${p.nome} da reunião`);
+    tirar.setAttribute('aria-label', `Tirar ${nomeNaLista(p.nome)} da reunião`);
     li.append(tirar);
   }
 

@@ -59,6 +59,12 @@ export function iniciais(nome) {
   return partes.length === 1 ? letra(partes[0]) : letra(partes[0]) + letra(partes[partes.length - 1]);
 }
 
+/**
+ * O nome de quem está na lista, como a página o mostra e o leitor de tela o ouve: sem ele (o colega que volta depois
+ * de o chat reiniciar recebe os outros com o nome vazio), "Participante", como nos quadros e no chat da reunião.
+ */
+export const nomeNaLista = (nome) => (nome === '' ? 'Participante' : nome);
+
 /** O nome do botão Participantes para o leitor de tela: com pedidos, quantas pessoas querem entrar. */
 export function rotuloDoBotao(pedidos) {
   const n = pedidos.length;
@@ -70,7 +76,8 @@ export function rotuloDoBotao(pedidos) {
 export function tituloDoCartao(pedidos) {
   const n = pedidos.length;
   if (n === 0) return '';
-  return n === 1 ? `${pedidos[0].nome} quer entrar` : `${pedidos[0].nome} e mais ${n - 1} querem entrar`;
+  const nome = nomeNaLista(pedidos[0].nome);
+  return n === 1 ? `${nome} quer entrar` : `${nome} e mais ${n - 1} querem entrar`;
 }
 
 const dois = (n) => String(n).padStart(2, '0');
@@ -102,12 +109,13 @@ export function fraseDoEncerrar(n, tipo, valeAte, agora) {
 
 /** O que o leitor de tela ouve quando uma resposta da página deu certo: de é aceitar, recusar ou tirar. */
 export function ditoDaResposta(de, nome) {
+  const quem = nomeNaLista(nome);
   switch (de) {
     case 'aceitar':
-      return `O pedido de ${nome} foi aceito`;
+      return `O pedido de ${quem} foi aceito`;
     case 'recusar':
-      return `O pedido de ${nome} foi recusado`;
+      return `O pedido de ${quem} foi recusado`;
     default: // tirar
-      return `${nome} saiu da reunião`;
+      return `${quem} saiu da reunião`;
   }
 }

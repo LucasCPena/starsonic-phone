@@ -9,6 +9,7 @@ import {
   fraseDoEncerrar,
   iniciais,
   lerLista,
+  nomeNaLista,
   passeDoEndereco,
   rotuloDoBotao,
   tituloDoCartao,
@@ -94,6 +95,19 @@ test('ditoDaResposta', () => {
   assert.equal(ditoDaResposta('aceitar', 'Maria Lima'), 'O pedido de Maria Lima foi aceito');
   assert.equal(ditoDaResposta('recusar', 'Maria Lima'), 'O pedido de Maria Lima foi recusado');
   assert.equal(ditoDaResposta('tirar', 'Pedro Nunes'), 'Pedro Nunes saiu da reunião');
+});
+
+// O participante sem nome (o que volta ao chat que reiniciou chega com o nome vazio) é "Participante", como nos quadros
+// e no chat da reunião: no painel, no cartão e no que o leitor de tela ouve.
+test('o participante sem nome é Participante', () => {
+  assert.equal(nomeNaLista(''), 'Participante');
+  assert.equal(nomeNaLista('Maria Lima'), 'Maria Lima');
+  const semNome = { id: 'a000000000000009', nome: '' };
+  assert.equal(tituloDoCartao([semNome]), 'Participante quer entrar');
+  assert.equal(tituloDoCartao([semNome, ...pedidos(1)]), 'Participante e mais 1 querem entrar');
+  assert.equal(ditoDaResposta('aceitar', ''), 'O pedido de Participante foi aceito');
+  assert.equal(ditoDaResposta('recusar', ''), 'O pedido de Participante foi recusado');
+  assert.equal(ditoDaResposta('tirar', ''), 'Participante saiu da reunião');
 });
 
 test('lerLista', () => {

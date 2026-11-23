@@ -420,6 +420,27 @@ test('o nome não vira HTML', async ({ page }) => {
   await expect(page.locator('img')).toHaveCount(2);
 });
 
+test('o participante sem nome é Participante', async ({ page }) => {
+  // Depois de o chat reiniciar, quem volta chega na lista com o nome vazio.
+  const SEM_NOME: NaLista = { id: 'b000000000000008', nome: '' };
+  const canal = await comOPainel(page, {
+    participantes: [JULIA, SEM_NOME],
+    pedidos: [{ id: 'a000000000000008', nome: '' }],
+  });
+  await expect(anuncio(page)).toHaveText('Participante quer entrar');
+  await expect(pedidos(page).locator('.gente-pedido-nome')).toHaveText('Participante');
+  await expect(pessoas(page).locator('.gente-nome')).toHaveText(['Júlia Martins', 'Participante']);
+  await botao(page, 'Tirar Participante da reunião').click();
+  await expect(page.getByText('Tirar Participante?', { exact: true })).toBeVisible();
+  await botao(page, 'Tirar').click();
+  await expect.poll(() => respostas(canal)).toEqual([{ tipo: 'tirar', participante: SEM_NOME.id }]);
+  mandarLista(canal, { participantes: [JULIA], pedidos: [{ id: 'a000000000000008', nome: '' }] });
+  await expect(anuncio(page)).toHaveText('Participante saiu da reunião');
+  // O cartão do pedido, com o painel fechado.
+  await page.keyboard.press('Escape');
+  await expect(cartao(page).locator('.pedido-titulo')).toHaveText('Participante quer entrar');
+});
+
 test('o teclado', async ({ page }) => {
   const canal = await colegaNaReuniao(page);
   mandarLista(canal, { participantes: [JULIA, ANA, PEDRO], pedidos: [pedidoDe(MARIA)] });
