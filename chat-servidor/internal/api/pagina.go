@@ -501,7 +501,7 @@ type estadoDaPagina struct {
 	pedido   *reunioes.Pedido // nil até o pedir ou o voltar darem certo; vale uma vez por canal
 	tratou   bool             // o canal já tratou alguma mensagem (qualquer uma): o voltar só vale como a primeira
 	voltou   bool             // o voltar deu certo, e o canal ainda não tratou outra mensagem
-	acabou   bool             // o voltar falhou: o canal fecha e não trata mais nada
+	acabou   bool             // o voltar falhou, ou o colega não vale mais: o canal fecha e não trata mais nada
 	desistiu bool             // o Desistir já foi chamado
 }
 

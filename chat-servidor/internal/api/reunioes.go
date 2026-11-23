@@ -38,9 +38,9 @@ const (
 	prazoCancelar = 10 * time.Second
 )
 
-// rotasDasReunioes liga as rotas da seção 9. Todas pedem a chave e a pessoa da vez; menos o entrar, todas pedem
-// também que a empresa tenha as reuniões liberadas (403 semReunioes). O entrar confere isso depois da janela das
-// tentativas, que ele conta.
+// rotasDasReunioes liga as rotas da seção 9. Todas pedem a chave e a pessoa da vez; menos o entrar e o passe, todas
+// pedem também que a empresa tenha as reuniões liberadas (403 semReunioes). O entrar e o passe conferem isso depois da
+// janela das tentativas, que eles contam.
 func (s *servidor) rotasDasReunioes(mux *http.ServeMux) {
 	liberada := func(f http.HandlerFunc) http.HandlerFunc {
 		return s.autenticar(precisaPessoa(s.comReunioes(f)))

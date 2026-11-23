@@ -26,7 +26,7 @@ Um erro vem com o status HTTP e um corpo `{"erro": "<código>"}`, às vezes com 
 
 | Status | `erro` | Quando |
 |---|---|---|
-| 400 | `invalido` | Um campo faltou ou veio fora da regra. Vem com `"campo": "<nome>"`. Só um JSON que não dá para ler vem sem campo. |
+| 400 | `invalido` | Um campo faltou ou veio fora da regra. Vem com `"campo": "<nome>"`. Só um JSON que não dá para ler vem sem campo, menos no abrir da página (seção 10), que responde com o `"campo": "corpo"`. |
 | 401 | `chave` | Sem chave, chave desconhecida, ou o computador saiu do chat (foi tirado, a pessoa foi tirada, a empresa foi apagada ou ele desligou). O app mostra "Este computador saiu do chat…". |
 | 401 | `passe` | O passe ou a chave do colega, no abrir da página, não vale (seção 10). |
 | 403 | `proibido` | Só quem cuida do grupo pode fazer isso, ou a origem do WebSocket não está na lista. |
@@ -407,7 +407,7 @@ As reuniões com link moram no servidor do chat; o vídeo e o som vão direto pa
 - O `tela` diz se o participante está compartilhando a tela agora.
 - Depois de o servidor do chat reiniciar, um participante que já estava na reunião aparece com o `nome` vazio e o `deFora` falso.
 
-## 10. A página (quem entra pelo navegador)
+## 10. A página da reunião (no navegador e dentro do app)
 A página é servida pelo chat em `https://<endereço do chat>/r/<código>`. Quem entra por ela nunca tem a chave do computador. Sem um passe (seção 9) nem uma chave do colega, ela é "de fora" e passa pela sala de espera, menos na reunião de teste. Com um deles, ela é a página de um colega, que entra direto pelo canal do colega (abaixo).
 
 **Abrir** — `POST /api/v1/pagina/reunioes/{codigo}`, sem chave. O corpo é opcional:
@@ -424,7 +424,7 @@ O corpo é um objeto JSON com **um** desses campos, e nada mais, de até 256 byt
 ```
 - O bilhete vale uma vez, por 30 segundos, e só para o canal desta reunião.
 - **O `colega`** só vem com o passe ou com a chave. O `nome` é o do cadastro do chat, na hora. O `valeAte` é até quando o link vale (o da Reunião, seção 9), ou `null` na naHora, que vale até acabar. A `chave` só vem no abrir com o passe.
-- **A chave do colega** deixa a página abrir de novo sem outro passe (o segundo abrir, o "Entrar de novo", o "Tentar de novo"). São 32 bytes aleatórios em base64url (43 caracteres), só na memória do servidor e só na memória da página, nunca no banco nem no log. Ela vale 12 horas, só para aquela reunião, e cada uso confere de novo que a reunião vale, que a pessoa continua ativa na empresa e que o computador do passe continua ligado ao chat. Um computador tem até 50 chaves: a 51ª apaga a mais velha dele. Depois de o servidor do chat reiniciar, nenhuma chave vale: a página pede outro passe.
+- **A chave do colega** deixa a página abrir de novo sem outro passe (o segundo abrir, o "Entrar de novo", o "Tentar de novo"). São 32 bytes aleatórios em base64url (43 caracteres), só na memória do servidor e só na memória da página, nunca no banco nem no log. Ela vale 12 horas, só para aquela reunião, e cada uso confere de novo que a reunião vale, que a pessoa continua ativa na empresa e que o computador do passe continua ligado ao chat. Um computador tem até 50 chaves: a 51ª apaga a mais velha dele. Depois de o servidor do chat reiniciar, nenhuma chave vale: dentro do app, a página pede outro passe ao app; no navegador, onde não há app para mandar outro, ela abre como quem é de fora, com a faixa (abaixo, "A página no navegador, com o passe").
 - **O bilhete de um abrir com o passe ou com a chave** fica preso ao colega e abre um canal do colega. O de um abrir sem corpo abre o canal de quem é de fora, como sempre.
 - **Os erros:**
   - `404 naoEncontrado`: o código não existe, a reunião não vale, foi cancelada, ou a empresa está sem as reuniões liberadas. O servidor confere isso antes de ler o corpo;
@@ -535,7 +535,7 @@ Do servidor para a página, três:
 {"tipo": "pausa", "pausada": true, "vez": "p7Kq2"}                             // o app pôs a reunião em pausa, ou a tirou dela
 ```
 - **O `entrar`** responde o `aceito` de sempre (o Acesso, sem a `reuniao`, e a chave de volta), ou o `cheia`, o `servidorCheio`, o `semServidor` ou o `linkInvalido`, com as regras que o `pedir` tem para cada um: depois dos três primeiros, o canal continua aberto e a página pode mandar outro `entrar`; depois do `linkInvalido`, o canal fecha (1000). Ele nunca responde `naoComecou`, `aguardando` nem `recusado`: uma reunião parada começa. Um `entrar` depois do `aceito` responde `{"tipo": "erro", "erro": "invalido"}`, e o canal continua.
-- **A pessoa é lida de novo no `entrar`:** o nome que vai à reunião é o do cadastro naquela hora. A pessoa que saiu do chat depois do abrir não entra: o `entrar` responde `{"tipo": "erro", "erro": "invalido"}`, e o servidor fecha o canal (1000).
+- **A pessoa e o computador são lidos de novo no `entrar`:** o nome que vai à reunião é o do cadastro naquela hora. A pessoa que saiu do chat depois do abrir, ou o computador do passe desligado do chat depois dele, não entra: o `entrar` responde `{"tipo": "erro", "erro": "invalido"}`, e o servidor fecha o canal (1000).
 - **O participante do colega** nasce como o do `entrar` do app: `deFora` falso, o nome do cadastro, a pessoa e o computador do passe. Para o resto do protocolo, aquele computador chamou o `entrar`: ele recebe os eventos da seção 11, e as rotas "Com a pessoa na reunião" (seção 9) valem para a pessoa. Na lista, no palco e no chat da reunião, ele é um colega como o do app.
 - **Depois do `aceito`,** o canal é o de uma página aceita: o `senha`, o `tela`, o `camera`, o `mensagem`, o `palco` e o `voltar` valem como acima.
 - **O `voltar` de um colega continua de colega.** Quem diz isso é o participante, e não o bilhete: o canal novo, aberto com o bilhete de um abrir sem corpo, volta pelo `voltar` com a chave de volta do colega, e nele o `aceitar`, o `recusar`, o `tirar`, o `encerrar`, o `participantes` e o `pausa` valem como no canal de antes. O `entrar` e o `pedir` nele são fora de ordem, como depois de qualquer `voltou`.
@@ -546,6 +546,8 @@ Do servidor para a página, três:
   - `cheia`: a reunião já tem 10 pessoas, no `aceitar`; o pedido continua esperando;
   - `foraDaReuniao`: a pessoa não está na reunião;
   - `servidorVideo`: o servidor de vídeo não está no ar para o chat, ou falhou no `tirar` ou no `encerrar`.
+- **A pessoa e o computador são lidos de novo a cada resposta,** como as rotas do app fazem a cada pedido, também no canal que voltou pelo `voltar` (o computador é o do participante). O `aceitar`, o `recusar`, o `tirar` ou o `encerrar` de uma pessoa que saiu do chat depois de entrar, ou de um computador desligado do chat, responde `{"tipo": "erro", "erro": "invalido"}`, nada muda na reunião, e o servidor fecha o canal (1000).
+- **A resposta que a página não consegue mandar** (o canal caiu e ela tenta voltar por trás, ou desistiu de voltar e segue na reunião sem ele) não vai ao servidor: a página do colega mostra o aviso curto "O servidor de reuniões não respondeu", como para o `recusa` com o `servidorVideo`.
 - **Os campos que não valem:** um `aceitar` ou um `recusar` sem o `pedido`, ou um `tirar` sem o `participante`, ou com um que não é um id assim, responde `{"tipo": "erro", "erro": "invalido"}`, e o canal continua.
 - **Num canal que não é de colega** (o de quem é de fora, antes ou depois do aceito, e o que voltou pelo `voltar` dele), as cinco mensagens novas respondem `{"tipo": "erro", "erro": "invalido"}`, e nada muda. **Num canal de colega,** o `pedir` e o `desistir` respondem o mesmo: o colega não espera na sala de espera.
 - **O `pausa`** é a pausa da rota do app (seção 9): ele chega às páginas de colega daquela pessoa e daquele computador naquela reunião, aceitas, com o canal aberto, na reunião ou entrando nela. O `pausada` verdadeiro põe a reunião em pausa, e o falso a tira dela, qualquer que seja o `vez`. O que a página faz com ele está em "A página dentro do app", abaixo.
@@ -581,7 +583,7 @@ https://<endereço do chat>/r/<código>#p=<passe>
 - **O formato** é exato: o fim do endereço é `#p=` seguido do passe, 43 caracteres base64url, e nada mais. Qualquer outra coisa depois do `#` não é um passe: a página abre como quem é de fora.
 - **A parte depois do `#` nunca vai ao servidor,** nem ao log dele. A página a lê ao carregar e a tira do endereço na hora, antes de qualquer pedido, sem uma entrada nova no histórico (o caminho e a busca ficam). Depois, ela leva o passe no corpo do primeiro abrir, como dentro do app.
 - **O passe que não vale** (o `401 passe`) não é pedido de novo: no navegador não há app para mandar outro. A página abre como quem é de fora, com a faixa "Não foi possível reconhecer você como colega. Abra a reunião de novo pelo app, ou entre como convidado." no alto da entrada; num Windows, ela vai antes à tela "o app ou o navegador", com a mesma faixa no alto. A chave do colega que deixa de valer depois (no "Entrar" ou no "Entrar de novo") leva à mesma entrada, com a faixa.
-- **O "Abrir no app"** da tela "o app ou o navegador" é um link `starsonic://reuniao/<código>`, com o código do endereço da página. O app o recebe e mostra a entrada daquela reunião; a página fica na tela, e a pessoa ainda pode escolher o "Entrar pelo navegador".
+- **O "Abrir no app"** da tela "o app ou o navegador" é um link `starsonic://reuniao/<código>`, com o código do endereço da página escrito como o servidor o escreve: em minúsculas e sem espaços. O servidor abre a reunião também com o código do endereço em maiúsculas, e o link leva sempre o código exato. O app o recebe e mostra a entrada daquela reunião; a página fica na tela, e a pessoa ainda pode escolher o "Entrar pelo navegador".
 
 ## 11. Os eventos das reuniões (no WebSocket do app, seção 7)
 ```json
@@ -593,7 +595,7 @@ https://<endereço do chat>/r/<código>#p=<passe>
 ```
 - Os quatro últimos vão só para os computadores que estão na reunião: os que chamaram o `entrar` e cujo participante está nela. O `reuniaoAcabou` vai para os que estavam nela.
 - **O computador do passe conta como o que chamou o `entrar`:** quando o colega entra pela página (o `entrar` do canal do colega, seção 10), no app ou no navegador, os eventos vão ao computador que pediu o passe, como se ele tivesse entrado pela rota do app. É assim que o app fica sabendo dos pedidos de uma reunião aberta no navegador, e que o "Aceitar" do aviso do Windows vale para ela.
-- **Quando a conexão dos eventos volta** (seção 7) e o app está numa reunião, ele pede o `participantes` dela. Um `409 foraDaReuniao` quer dizer que o chat não sabe mais dele (o servidor do chat reiniciou, seção 9): o app sai da ligação e chama o `entrar` de novo, que dá um participante novo.
+- **Quando a conexão dos eventos volta** (seção 7) e o app está numa reunião, ele pede o `participantes` dela. Um `409 foraDaReuniao` quer dizer que o chat não sabe mais dele (o servidor do chat reiniciou, seção 9): o app sai da ligação e chama o `entrar` de novo, que dá um participante novo. **Nota de 23/11:** isso é do app que entraria pela reunião com o motor dele, o caminho que ficou para trás. O app `0.5.0` não entra pela rota `entrar`: quem entra é a página, no `iframe` ou no navegador (seção 10). O que a página e o app fazem quando o chat reinicia com um colega na reunião é o item 3 da seção 12.1 da spec de 23/11 (`docs/superpowers/specs/2026-11-23-starsonic-phone-reunioes-etapa-2a-design.md`), e o plano da segunda entrega o acerta.
 - O `reuniaoParticipantes` sai a cada mudança das duas listas.
 - O `reuniaoAgora` vai para os computadores conectados dos colegas convidados.
 
