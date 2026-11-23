@@ -1,7 +1,7 @@
 # Starsonic Phone — reuniões com link — etapa 2a: as reuniões no app do PC — especificação de design
 
 - **Data:** 23/11/2026
-- **Status:** aprovada pelo responsável em 23/11/2026, às 10:54 ("segue"), depois de lida por um revisor de fora, que voltou com cinco perguntas, respondidas aqui (as escolhas 16 a 20 da seção 15). O caminho e as telas tinham sido aprovados antes, no chat (as decisões abaixo).
+- **Status:** aprovada pelo responsável em 23/11/2026, às 10:54 ("segue"), depois de lida por um revisor de fora, que voltou com cinco perguntas, respondidas aqui (as escolhas 16 a 20 da seção 15). O caminho e as telas tinham sido aprovados antes, no chat (as decisões abaixo). **A entrega 1 (o servidor do chat e a página, seção 13) foi construída em 23/11,** na branch `reunioes-etapa-2`, para a `0.2.0-rc.7` do chat (quem publica é o responsável). O plano é o `docs/superpowers/plans/2026-11-23-reunioes-etapa-2a-servidor-e-pagina.md`. O que a construção decidiu e esta spec não dizia está nas notas datadas das seções 7.2, 7.5, 7.9 e 14, e na seção 17. A entrega 2 (o app `0.5.0`) tem um plano próprio, depois.
 - **Telas:** o quadro "Starsonic Phone — reuniões", telas 1 a 14, aprovado em 23/11, às 10:13. As telas 6 a 10 são da página da reunião; as outras, do app.
 - **Versões alvo:**
   - o app do Windows `0.5.0`;
@@ -176,8 +176,9 @@ O responsável escolheu o 1, e pediu que o navegador também funcione para o col
   - O passe são 32 bytes aleatórios. Vale **uma vez**, por **120 s**, e só para aquela reunião, aquela pessoa e aquele computador. Fica só na memória do servidor, e nunca vai ao log.
   - Até 10 passes por minuto por computador; passando disso, `429 tentativas`, com `esperarSegundos`.
 - **O abrir da página** (`POST /api/v1/pagina/reunioes/{codigo}`, hoje sem corpo) passa a aceitar um corpo JSON com **um** destes campos:
-  - `{"passe": "…"}`: o servidor gasta o passe e responde `{"reuniao": …, "bilhete": "…", "colega": {"nome": "Júlia Martins", "chave": "<43 caracteres>"}}`;
-  - `{"colega": "<chave>"}`: responde `{"reuniao": …, "bilhete": "…", "colega": {"nome": "…"}}`.
+  - `{"passe": "…"}`: o servidor gasta o passe e responde `{"reuniao": …, "bilhete": "…", "colega": {"nome": "Júlia Martins", "chave": "<43 caracteres>", "valeAte": 1794538799999}}`;
+  - `{"colega": "<chave>"}`: responde `{"reuniao": …, "bilhete": "…", "colega": {"nome": "…", "valeAte": 1794538799999}}`.
+  - **Nota de 23/11 (a construção):** o `colega` leva também o `valeAte`, até quando o link vale (o da Reunião, em milissegundos), ou `null` na naHora, que vale até acabar. A tela 10 diz "O link continua valendo até hoje, 23:59: a reunião recomeça se um colega entrar de novo.", e a página não tinha como saber isso. O corpo do abrir tem até 256 bytes.
   - Um passe ou uma chave que não vale responde `401 passe` (um erro novo), sem bilhete, e conta como uma tentativa que falhou. Um corpo com os dois campos, ou com outra coisa, responde `400 invalido`. Sem corpo, tudo fica como hoje.
 - **A chave do colega** deixa a página abrir de novo sem outro passe (o segundo abrir, o "Entrar de novo", uma volta que a chave de volta não resolve):
   - 32 bytes aleatórios, só na memória do servidor e só na memória da página;
@@ -240,6 +241,7 @@ Mensagens `postMessage`, sempre um objeto com `"starsonic": 1` e o `tipo`. A pá
 - **Sem o `pronta` em 15 s,** o app mostra "A reunião não abriu", com "Tentar de novo" e "Fechar".
 - **Sem o `fim` em 2 s depois do `sair`,** o app fecha a vista assim mesmo.
 - **Os aparelhos:** a página procura cada nome entre os aparelhos do navegador. Sem achar, usa o padrão do sistema.
+- **Nota de 23/11 (a construção): o app repete a pausa e o bloqueio quando a pessoa entra.** A página só obedece ao `pausar` e ao `bloqueio` com a pessoa na reunião (a `fase` `naReuniao`) ou, no caso do `pausar`, entrando nela; fora disso, eles não fazem nada, e nada fica guardado. Por isso o app manda de novo o `pausar` (enquanto a pausa da 7.8 dura) e o `bloqueio` com o `ligado` verdadeiro (enquanto a sessão do Windows está bloqueada) a cada `estado` em que a `fase` passa a `naReuniao`. Sem isso, uma ligação ou um bloqueio que começou antes do "Entrar" deixaria a reunião ouvindo e vendo a pessoa. No navegador vale o mesmo (7.9): o app manda o `pausada` verdadeiro assim que um evento da seção 11 do protocolo mostra que o computador entrou numa reunião pelo navegador com uma pausa em curso, sem esperar a repetição dos 10 s. O plano da entrega 2 leva esta regra, com um teste.
 
 ### 7.6 A interface do app
 
@@ -286,6 +288,8 @@ Dentro do app, a pausa vai por mensagem ao `iframe`: é na hora, e não depende 
 - **A página** faz a pausa da 7.8 e mostra, por cima da reunião, "Você está numa ligação no Starsonic Phone. A reunião não ouve nem vê você.", com o "Voltar para a reunião". O botão desfaz a pausa ali mesmo (a ligação no app continua: a pessoa decide), e a página ignora as repetições daquela mesma `vez`. O `pausada` falso desfaz a pausa.
 - **Se o app fecha no meio da ligação,** a página fica em pausa até a pessoa clicar em "Voltar para a reunião".
 - **Sem o chat no ar** naquele momento, a pausa do navegador não chega. O app então diz, na tela da ligação, que a reunião do navegador continua ouvindo a pessoa.
+- **Nota de 23/11 (a construção): quem conta para a rota, e o `409`.** A rota responde `204` só enquanto um participante daquela pessoa e daquele computador, que entrou por uma página, está na reunião ou entrando nela (com uma senha da câmera ainda não usada), como as outras rotas da família. Responde `409 foraDaReuniao` no resto: a página que ainda não passou do "Entrar", a que foi fechada, e também a de quem clicou em "Sair" e a deixou aberta no "Você saiu da reunião"; depois do "Entrar de novo", ela volta a contar. O participante que não conta não recebe nada. **Para o app, um `409` não é para sempre:** a página na tela de entrada, a que carregou de novo, a que está voltando de uma queda e a de quem clicou em "Sair" respondem `409` e podem entrar (de novo) durante a mesma ligação. O "o app então esquece a reunião" desta seção fica para o plano da entrega 2 acertar, com essa regra na mão; um evento da seção 11 daquela reunião a traz de volta (7.5).
+- **Nota de 23/11 (a construção): quem sai durante uma pausa** (o "Sair", o tirado, a reunião encerrada, uma queda) fica sem a pausa, com o som de volta, e o microfone e a câmera continuam desligados: no "Entrar de novo", a pessoa volta com os dois desligados, e não como estavam antes da pausa. É o lado seguro: a pessoa liga de novo o que quiser.
 
 ## 8. Os valores
 
@@ -426,6 +430,9 @@ A construção se corta em duas entregas, cada uma com o seu plano e a sua revis
 6. **O app novo com o servidor antigo.** Mitigação: a mensagem do erro 1 e a ordem de instalar.
 7. **A página agora também é uma tela do app:** uma mudança nela pode quebrar a vista do app. Mitigação: o teste de ponta a ponta do `iframe` roda nos testes da página, a cada mudança.
 8. **O teclado dentro do `iframe`:** com o foco na página, os atalhos do app (Ctrl+1 a 6) não valem. Fica assim nesta etapa.
+9. **Nota de 23/11 (a construção): o endereço privado do chat.** Nos testes de tela, o Chromium (a proteção "Local Network Access") não deixou uma janela servida de um endereço público mostrar dentro de si uma página de um endereço local, e esse teste roda com a proteção desligada. No teste de ponta a ponta, com as duas origens na mesma máquina, o bloqueio não apareceu. No app, a interface (`https://app.starsonic.local`) mostra o chat pelo nome público dele: se, na rede do cliente, esse nome levar a um endereço privado, o WebView2 pode barrar do mesmo jeito. A prova no WebView2 de verdade (seção 13) tem de incluir um chat alcançado por um endereço privado.
+10. **Nota de 23/11 (a construção): o `iframe` nasce com o endereço.** O `iframe` da reunião nasce com o endereço e o `allow` juntos: o app nunca o põe na tela vazio para dar o endereço depois. Com o `allow` só para a origem do chat e sem o endereço, o documento vazio do começo é da origem do app, nada do `allow` vale para ele, e o Chromium `141` escreve no console um erro "Potential permissions policy violation" para cada recurso.
+11. **Nota de 23/11 (a construção): o `speaker-selection` não foi provado.** O Chromium dos testes não conhece esse nome no `allow` e o recusa, e o `iframe` dos testes vai sem ele. A prova no WebView2 de verdade tem de conferir que a página, dentro do `iframe`, consegue mandar o som para o alto-falante escolhido nas Configurações do app.
 
 ## 15. As escolhas deste desenho
 
@@ -462,3 +469,14 @@ O responsável aprovou as telas e a ordem. Estas escolhas são do desenho, e ele
 - O que a página deixa de desenhar enquanto está escondida, para gastar menos.
 - O jeito de apontar o build de teste para um servidor do chat da fumaça.
 - A ordem das partes dentro de cada entrega.
+
+## 17. O que a construção da entrega 1 decidiu (23/11)
+
+O que muda o que a pessoa vê ou ouve e esta spec não dizia. São escolhas de quem construiu, para o responsável confirmar ao ler:
+
+1. **O servidor de vídeo que falha numa resposta.** O `recusa` com o `servidorVideo` (um "Aceitar", um "Tirar" ou um "Encerrar para todos" que o servidor de vídeo não deixou acontecer) mostra o aviso curto "O servidor de reuniões não respondeu" (o texto que a página já tinha), por 5 s, e o diz ao leitor de tela. Sem isso, o clique não faria nada à vista. Os outros motivos não mostram nada, porque a lista seguinte diz a verdade (outro colega respondeu antes, ou a pessoa já saiu), menos o `cheia`, que mostra a frase dele.
+2. **O cartão com dois pedidos ou mais** mostra "<Nome> e mais N querem entrar" e o "Ver os pedidos", sem a frase "É de fora da empresa, e espera até um colega responder.". A frase fala de uma pessoa só.
+3. **"A reunião está cheia: ninguém mais entra agora."** também é dita ao leitor de tela, quando aparece. Uma falha à vista depois do "Aceitar" não pode ser muda.
+4. **A rota da pausa conta só quem está na reunião ou entrando** por uma página daquele computador, e um `409` dela não é para sempre (a nota da 7.9). É a regra da família "Com a pessoa na reunião", que diz a verdade ao app sobre a reunião do navegador.
+5. **O app repete a pausa e o bloqueio quando a pessoa entra** (a nota da 7.5). A página não guarda um bloqueio que chega antes de ela entrar, e só guarda a pausa que chega com ela entrando: quem sabe que a ligação ou o bloqueio continuam é o app.
+6. **Quem sai da reunião durante uma pausa** volta, no "Entrar de novo", com o microfone e a câmera desligados (a nota da 7.9). É o lado seguro: a pausa não liga nada sozinha depois de acabar.

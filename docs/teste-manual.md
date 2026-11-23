@@ -691,6 +691,18 @@ Atualize só o chat (`docs/chat-servidor.md`, passo 7), num horário sem reuniõ
 
 **Conhecido:** no celular, o chat aberto cobre a tela inteira. Com ele aberto, o aviso `Sua conexão está ruim` e o cartão `A conexão caiu. Entrando de novo…` ficam atrás dele (o leitor de tela diz os dois). De volta à reunião, o sinalizador mostra o estado. Isso é o esperado, e não uma falha.
 
+## 30. O chat `0.2.0-rc.7`: nada muda antes do app novo
+
+A `0.2.0-rc.7` do chat prepara as reuniões para o app do Windows `0.5.0`: o colega reconhecido na página, a página dentro da janela do app e a pausa numa ligação (`docs/superpowers/specs/2026-11-23-starsonic-phone-reunioes-etapa-2a-design.md`; o guia é o passo 9 do `docs/chat-servidor.md`). Sem o app `0.5.0`, nada disso aparece para ninguém: esta seção, curta, confere só que a reunião continua como antes. O roteiro do colega (marcar, entrar pelo app, aceitar, tirar, encerrar, a ligação no meio da reunião) vem com o app, na entrega dele.
+
+Atualize só o chat (`docs/chat-servidor.md`, passo 7), num horário sem reuniões: o servidor de vídeo e os apps ficam como estão. Use a reunião de teste da seção 25. Cada linha tem as colunas **PC** (o Chrome e o Edge, num Windows) e **Celular** (o Chrome no Android e o Safari no iPhone): escreva na coluna qual navegador viu o resultado ("—" onde a linha não entra). Se algo não sair como o esperado, anote o aparelho, o navegador, o passo e o que apareceu (de preferência com um print).
+
+| # | Passo | Resultado esperado | PC | Celular |
+|---|-------|--------------------|----|---------|
+| 30.1 | Depois de atualizar o chat para a `0.2.0-rc.7`, crie a reunião de teste na administração e abra o link no Chrome de um PC com Windows. Repita no Edge. | A página vai direto para a entrada, com `Reunião de teste` em cima e o campo `Seu nome`. **Não** aparece a tela que pergunta `Tem o Starsonic Phone neste computador?`, com o `Abrir no app` e o `Entrar pelo navegador`. | ☐ Chrome ☐ Edge | — |
+| 30.2 | Escreva um nome, clique em `Pedir para entrar` e entre. Depois, entre no mesmo link pelo celular, com outro nome. | As duas entram na hora, sem a sala de espera, e se veem e se ouvem. Os controles são os de antes: `Microfone`, `Câmera`, `Compartilhar a tela` (só no PC), `Chat` e `Sair`. Não aparece o botão `Participantes`. | ☐ | ☐ Android ☐ iPhone |
+| 30.3 | Mande uma mensagem pelo `Chat` de cada um. Depois, no celular, clique em `Sair` e em `Entrar de novo`. | As mensagens chegam ao outro, como na seção 29. O `Entrar de novo` volta à reunião sem pedir o nome de novo. Nenhum cartão novo aparece por cima da reunião. | ☐ | ☐ |
+
 ## Onde cada critério de sucesso é verificado
 
 | Critério (spec da W1, §3) | Automático (a cada build) | Neste roteiro |

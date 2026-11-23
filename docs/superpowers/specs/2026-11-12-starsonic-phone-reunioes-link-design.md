@@ -32,6 +32,13 @@
 > 11. Qualquer colega da empresa que esteja na reunião pode aceitar quem pede para entrar, tirar alguém e encerrar a reunião para todos.
 > 12. A ordem: primeiro as telas da sala de vídeo (a 0.4.0); depois, as reuniões.
 
+> **Nota de 23/11/2026: a etapa 2 foi redesenhada.** A spec `docs/superpowers/specs/2026-11-23-starsonic-phone-reunioes-etapa-2a-design.md` toma o lugar desta para a etapa 2, e muda três coisas:
+> 1. **O caminho.** O motor de ligações do app não entra mais na reunião (o SIP sobre TLS da seção 6.5). A reunião no app é a própria página da reunião, mostrada dentro da janela do app, e o colega é reconhecido por um passe de uso único que o app pede ao chat, no app e no navegador do PC. A rota `entrar` do app continua no servidor, sem uso nessa etapa.
+> 2. **O corte em 2a e 2b.** A etapa 2 vira duas: a 2a (marcar, entrar, aceitar, tirar, encerrar e a convivência com as ligações da central, com as telas aprovadas em 23/11) e a 2b (o "Gerar link" no meio de uma chamada, com quadro e spec próprios).
+> 3. **A ponte fora.** As centrais dos clientes aceitam o tronco SIP: a ponte do telefone pelo PC (a decisão 10, a ponte da seção 6.5 e o risco 5) não será feita, e o telefone da central entra na reunião pelo tronco, na etapa 3.
+>
+> O que esta spec diz da etapa 1 continua valendo.
+
 ## 1. Contexto
 
 - A sala de vídeo da 0.4.0 é montada no PC de quem a criou: o PC liga para cada pessoa pela central, junta as imagens e mistura o som. Ela vai até 6 pessoas, porque o PC monta a imagem de cada convidado, e depende do PC e da internet de quem montou.
@@ -265,7 +272,7 @@ No fim de cada etapa, um roteiro para o responsável testar nas VMs de verdade: 
    - o guia de instalação, como o `docs/chat-servidor.md`.
 
    Com ela, o responsável já instala os dois servidores e entra pelo navegador na reunião de teste.
-2. **Etapa 2, o app do PC** (0.5.0): as reuniões marcadas, o "Gerar link", entrar pelo link, aceitar, tirar, encerrar, a tela e a ponte dos telefones, depois do quadro das telas aprovado.
+2. **Etapa 2, o app do PC** (0.5.0): as reuniões marcadas, o "Gerar link", entrar pelo link, aceitar, tirar, encerrar, a tela e a ponte dos telefones, depois do quadro das telas aprovado. (Redesenhada em 23/11: veja a nota no começo desta spec.)
 3. **Etapa 3, a central com tronco:** só depois de o responsável confirmar que as centrais dos clientes aceitam o tronco.
 
 Cada etapa tem o seu plano, a sua branch e a sua revisão final. Quem publica as versões é o responsável, pelo GitHub.

@@ -410,6 +410,17 @@ A partir da versão 0.2.0, o chat também cuida das reuniões com link. O vídeo
 
 Só o chat muda nesta versão: o servidor de vídeo e os apps ficam como estão. A atualização é a de sempre (passo 7), num horário sem reuniões. Quem estiver numa reunião na hora continua com a imagem e o som, na página que já estava aberta, que é a de antes: ela não tem o chat da reunião nem o sinalizador. Para tê-los, a pessoa **recarrega a página** (ou abre o link de novo) e entra outra vez. Só clicar em `Sair` e em `Entrar de novo` não basta: a página aberta continua sendo a antiga.
 
+**O colega na página da reunião (a partir da `0.2.0-rc.7`).** Esta versão prepara o chat para o app do Windows `0.5.0`, que vai marcar reuniões e entrar nelas (`docs/superpowers/specs/2026-11-23-starsonic-phone-reunioes-etapa-2a-design.md`). O que ela traz:
+
+- **O colega reconhecido.** O app pede ao chat um passe, de uso único e que vale 2 minutos, e a página o troca por uma chave que vale 12 horas. Com ela, o colega entra direto, com o nome do cadastro do chat, sem escrever o nome e sem a sala de espera. Na reunião, ele tem o botão `Participantes`: vê quem pediu para entrar, aceita, recusa, tira alguém e encerra para todos, também pelo navegador.
+- **A página dentro do app.** A janela do app vai mostrar a própria página da reunião. Só o app pode fazer isso: nenhum outro site consegue mostrar a reunião dentro de si.
+- **A pausa.** Quando a pessoa atende uma ligação da central no app, a reunião para de ouvir e de ver essa pessoa até a ligação acabar, também na reunião que ela abriu no navegador pelo app. O chat só repassa o aviso do app à página.
+- **A tela "o app ou o navegador".** Num PC com Windows, o link de uma reunião pergunta primeiro se a pessoa quer abrir no app ou entrar pelo navegador. A reunião de teste não pergunta, e o colega que a página já reconheceu também não vê a pergunta.
+
+**Nada muda para quem usa enquanto o app `0.5.0` não chega.** Sem ele, ninguém tem passe: a página trata todos como de fora, tela por tela, como hoje. E a tela "o app ou o navegador" não aparece, porque, sem o app novo, a única reunião que existe é a de teste. A ordem de instalar é esta: o chat primeiro, e o app `0.5.0` depois. Só o chat muda nesta versão: o servidor de vídeo fica como está, e não há configuração nova, nem porta nova. A atualização é a de sempre (passo 7), num horário sem reuniões. O que conferir depois está na seção 30 do roteiro de teste (`docs/teste-manual.md`).
+
+**O passe e a chave ficam só na memória do chat:** não vão para o banco, para a cópia de segurança nem para os registros. Um reinício do chat apaga todos eles. Com o app `0.5.0`, o colega que estava numa reunião aberta no navegador pelo app abre a reunião de novo pelo app para continuar reconhecido.
+
 O endereço do chat precisa ser alcançável pelo navegador de quem entra, e o do servidor de vídeo também (a porta 443 dele, ou a 7443). Nada da reunião é gravado: a página diz `Nada é gravado` na entrada e, durante a reunião, no alto da tela (no celular em pé, só na entrada).
 
 1. **Ligue o chat ao servidor de vídeo** pelo cartão `REUNIÕES` da lista das empresas, na administração do chat. Siga o passo 3 do guia do servidor de vídeo.
