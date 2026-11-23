@@ -4,17 +4,25 @@
 package pagina
 
 import (
+	"bytes"
 	"embed"
 	"io/fs"
 	"net/http"
 	"net/url"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 )
 
 //go:embed pagina.html
-var esqueleto []byte
+var esqueletoBase []byte
+
+// marcadorDoApp é o lugar, no pagina.html, das origens que podem mostrar a página dentro de si.
+const marcadorDoApp = "{{ORIGENS_DO_APP}}"
+
+// OrigemDoApp é a origem da interface do app do Windows.
+const OrigemDoApp = "https://app.starsonic.local"
 
 //go:embed estatico/*
 var estaticos embed.FS
@@ -25,14 +33,27 @@ type Deps struct {
 	Video func() string
 	// OrigemCanal é o ws:// ou wss:// do próprio chat.
 	OrigemCanal string
+	// OrigensDoApp: quem mais pode mostrar a página dentro de si (as origens de teste), além da OrigemDoApp, que vale
+	// sempre. Vazio vale só a OrigemDoApp.
+	OrigensDoApp []string
 }
 
 // Novo devolve o manipulador de /r/.
 func Novo(d Deps) http.Handler {
-	return &pagina{d: d}
+	origens := origensDoApp(d.OrigensDoApp)
+	return &pagina{
+		d:       d,
+		origens: strings.Join(origens, " "),
+		corpo:   bytes.Replace(esqueletoBase, []byte(marcadorDoApp), []byte(strings.Join(origens, " ")), 1),
+	}
 }
 
-type pagina struct{ d Deps }
+// pagina guarda os bytes do esqueleto já com as origens do app: cada instância serve os seus.
+type pagina struct {
+	d       Deps
+	origens string
+	corpo   []byte
+}
 
 var tipos = map[string]string{
 	".js":  "text/javascript; charset=utf-8",
@@ -68,7 +89,7 @@ func (p *pagina) esqueleto(w http.ResponseWriter, r *http.Request) {
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Cache-Control", "no-store")
 	if r.Method != http.MethodHead {
-		w.Write(esqueleto)
+		w.Write(p.corpo)
 	}
 }
 
@@ -107,7 +128,7 @@ func (p *pagina) csp() string {
 		connect += " " + o
 	}
 	return "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; font-src 'self'; " +
-		"connect-src " + connect + "; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+		"connect-src " + connect + "; frame-ancestors " + p.origens + "; base-uri 'none'; form-action 'none'"
 }
 
 // hostDoWSS é o que a origem do vídeo pode ter no CSP: letras minúsculas, números, pontos e hífens, e a porta se tiver.
@@ -124,4 +145,21 @@ func origemDoWSS(video func() string) string {
 		return ""
 	}
 	return u.Scheme + "://" + u.Host
+}
+
+// origemDeApp é o que uma origem de quem mostra a página pode ter: http ou https, o host de letras minúsculas, números,
+// pontos e hífens e a porta, se tiver, e mais nada (nem caminho, nem usuário, nem espaço, nem ponto e vírgula, nem
+// curinga), porque ela entra no cabeçalho e no HTML.
+var origemDeApp = regexp.MustCompile(`^https?://[a-z0-9.-]+(:[0-9]{1,5})?$`)
+
+// origensDoApp devolve a OrigemDoApp e, depois dela, as de teste que valem, na ordem dada e sem repetir. Sempre
+// devolve ao menos a OrigemDoApp.
+func origensDoApp(teste []string) []string {
+	origens := []string{OrigemDoApp}
+	for _, o := range teste {
+		if origemDeApp.MatchString(o) && !slices.Contains(origens, o) {
+			origens = append(origens, o)
+		}
+	}
+	return origens
 }

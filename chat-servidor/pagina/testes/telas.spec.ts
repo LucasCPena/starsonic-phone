@@ -1736,7 +1736,7 @@ test('os cabeçalhos da página', async ({ page }) => {
   const canalDoChat = CHAT.replace(/^http/, 'ws');
   expect(resposta?.headers()['content-security-policy']).toBe(
     "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; font-src 'self'; " +
-      `connect-src 'self' ${canalDoChat}; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`,
+      `connect-src 'self' ${canalDoChat}; frame-ancestors https://app.starsonic.local http://127.0.0.1:4194; base-uri 'none'; form-action 'none'`,
   );
 
   // Do começo ao fim da entrada: a mídia, o nome, o Pedir e a espera.

@@ -1066,3 +1066,25 @@ func TestServidor_MontaAPagina(t *testing.T) {
 		t.Errorf("o log leva o código: %s", log.String())
 	}
 }
+
+func TestServidor_AsOrigensDeTesteNaPagina(t *testing.T) {
+	frame := func(origens []string) string {
+		d := depsDeTeste(t)
+		d.Base = "https://chat.exemplo.com.br"
+		d.Origens = origens
+		rec := httptest.NewRecorder()
+		Montar(d).ServeHTTP(rec, httptest.NewRequest("GET", "/r/k7q49xwpht", nil))
+		for _, dir := range strings.Split(rec.Header().Get("Content-Security-Policy"), "; ") {
+			if v, ok := strings.CutPrefix(dir, "frame-ancestors "); ok {
+				return v
+			}
+		}
+		return ""
+	}
+	if got, want := frame([]string{"http://127.0.0.1:4194"}), "https://app.starsonic.local http://127.0.0.1:4194"; got != want {
+		t.Errorf("com origem de teste: got %q, want %q", got, want)
+	}
+	if got, want := frame(nil), "https://app.starsonic.local"; got != want {
+		t.Errorf("sem origem de teste: got %q, want %q", got, want)
+	}
+}

@@ -14,6 +14,8 @@ import { fileURLToPath } from 'node:url';
 const PORTA = 4193;
 /** O endereço do chat: o baseURL dos testes. */
 export const CHAT = `http://127.0.0.1:${PORTA}`;
+/** A origem da janela de cima de mentira dos testes da página dentro do app: o chat a põe no frame-ancestors. */
+const ORIGEM_DE_CIMA = 'http://127.0.0.1:4194';
 
 const SERVIDOR = fileURLToPath(new URL('../', import.meta.url));
 /** A saída do chat, para ler numa falha. */
@@ -90,7 +92,7 @@ export default async function chat(): Promise<() => Promise<void>> {
     mkdirSync(join(REGISTRO, '..'), { recursive: true });
     const log = openSync(REGISTRO, 'w');
     try {
-      parar.filho = spawn(bin, ['servir', '--teste', '--escutar', `127.0.0.1:${PORTA}`, '--dados', dados], {
+      parar.filho = spawn(bin, ['servir', '--teste', '--escutar', `127.0.0.1:${PORTA}`, '--origem', ORIGEM_DE_CIMA, '--dados', dados], {
         stdio: ['ignore', log, log],
       });
     } finally {
