@@ -2202,7 +2202,8 @@ button.quadro:focus-visible .pilula {
 
 .gente-botao:hover,
 .gente-tirar:hover,
-.encerrar-botao:hover {
+.encerrar-botao:hover,
+.pausa-voltar:hover {
   filter: brightness(1.1);
 }
 
@@ -2343,9 +2344,11 @@ button.quadro:focus-visible .pilula {
   color: var(--reuniao-apagado);
 }
 
-/* ---- O Encerrar para todos: um diálogo de 480 px no meio da janela, sobre o véu, com os botões à direita. ---- */
+/* ---- O Encerrar para todos: um diálogo de 480 px no meio da janela, sobre o véu, com os botões à direita. A pausa
+   pedida pelo app, no navegador, é um cartão igual, com a frase e o botão ciano. ---- */
 
-.encerrar {
+.encerrar,
+.pausa {
   width: 480px;
   max-width: calc(100% - 32px);
   margin: auto;
@@ -2357,13 +2360,15 @@ button.quadro:focus-visible .pilula {
   color: var(--branco);
 }
 
-.encerrar[open] {
+.encerrar[open],
+.pausa[open] {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-.encerrar::backdrop {
+.encerrar::backdrop,
+.pausa::backdrop {
   background: rgba(4, 6, 14, 0.74);
 }
 
@@ -2380,7 +2385,8 @@ button.quadro:focus-visible .pilula {
   color: var(--topo-rotulo);
 }
 
-.encerrar-botoes {
+.encerrar-botoes,
+.pausa-botoes {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -2388,7 +2394,8 @@ button.quadro:focus-visible .pilula {
   margin-top: 8px;
 }
 
-.encerrar-botao {
+.encerrar-botao,
+.pausa-voltar {
   min-height: 46px;
   padding: 0 24px;
   border: 1px solid transparent;
@@ -2409,6 +2416,18 @@ button.quadro:focus-visible .pilula {
   border-color: var(--sair);
   background: var(--sair);
   color: var(--branco);
+}
+
+.pausa-frase {
+  font-size: 18px;
+  line-height: 1.4;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.pausa-voltar {
+  background: var(--ciano);
+  color: var(--sobre-ciano);
 }
 
 /* ---- O celular: abaixo de 600 px, uma coluna só. ---- */

@@ -574,6 +574,14 @@ participantes.js, com os nomes como texto; sem ninguém esperando, a primeira pa
 <button type="button" class="encerrar-botao encerrar-sim" data-botao="encerrarMesmo">Encerrar para todos</button>
 </div>
 </dialog>
+<!-- O cartão da pausa que chega pelo canal (a ligação no app, com a reunião no navegador): um diálogo modal sobre o
+     véu, como o do Encerrar para todos. Só o Voltar para a reunião o fecha. -->
+<dialog id="pausa" class="pausa" role="alertdialog" aria-labelledby="pausa-frase">
+<p id="pausa-frase" class="pausa-frase">Você está numa ligação no Starsonic Phone. A reunião não ouve nem vê você.</p>
+<div class="pausa-botoes">
+<button type="button" class="pausa-voltar" data-botao="voltarDaPausa">Voltar para a reunião</button>
+</div>
+</dialog>
 <audio id="som" autoplay></audio>
 </section>
 

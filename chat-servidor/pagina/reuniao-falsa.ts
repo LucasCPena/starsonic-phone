@@ -306,10 +306,10 @@ export async function naReuniao(page: Page): Promise<NaReuniao> {
 /** O passe que a página do colega recebe (43 caracteres base64url, como o de verdade). */
 export const PASSE = 'passeDoColegaNosTestesDaPagina'.padEnd(43, '0');
 
-/** A ligação falsa e o relógio parado às 10:00, antes de a página abrir. */
-export async function prepararAPagina(page: Page): Promise<void> {
+/** A ligação falsa (ou a dada) e o relógio parado às 10:00, antes de a página abrir. */
+export async function prepararAPagina(page: Page, ligacao = LIGACAO_FALSA): Promise<void> {
   await page.route('**/r/estatico/ligacao.js', (r) =>
-    r.fulfill({ contentType: 'text/javascript; charset=utf-8', body: LIGACAO_FALSA }),
+    r.fulfill({ contentType: 'text/javascript; charset=utf-8', body: ligacao }),
   );
   await page.clock.install({ time: AGORA - 1000 });
   await page.clock.pauseAt(AGORA);
@@ -319,8 +319,8 @@ export async function prepararAPagina(page: Page): Promise<void> {
  * A página aberta no endereço (o caminho do link e, se houver, o que vem depois do #), com a ligação falsa e o relógio
  * parado, até a entrada: a câmera e o microfone já chegaram.
  */
-export async function abrirNaEntrada(page: Page, endereco: string): Promise<void> {
-  await prepararAPagina(page);
+export async function abrirNaEntrada(page: Page, endereco: string, ligacao = LIGACAO_FALSA): Promise<void> {
+  await prepararAPagina(page, ligacao);
   await page.goto(endereco);
   await expect
     .poll(() => page.locator('video.previa').first().evaluate((v: HTMLVideoElement) => v.srcObject !== null))
@@ -331,13 +331,16 @@ export async function abrirNaEntrada(page: Page, endereco: string): Promise<void
  * A página do colega na entrada dele: o PASSE no fim do endereço, depois do #, como o app a abre no navegador; a rede
  * falsa (já instalada) o reconhece pelo colega dela.
  */
-export async function abrirComoColega(page: Page): Promise<void> {
-  await abrirNaEntrada(page, `/r/${CODIGO}#p=${PASSE}`);
+export async function abrirComoColega(page: Page, ligacao = LIGACAO_FALSA): Promise<void> {
+  await abrirNaEntrada(page, `/r/${CODIGO}#p=${PASSE}`, ligacao);
 }
 
-/** O colega na reunião, pelo Entrar, sem a espera: a rede (já instalada) aceita o entrar. Devolve o canal 1. */
-export async function entrarComoColega(page: Page, rede: RedeFalsa): Promise<Canal> {
-  await abrirComoColega(page);
+/**
+ * O colega na reunião, pelo Entrar, sem a espera: a rede (já instalada) aceita o entrar. A ligação é a falsa, ou a
+ * dada. Devolve o canal 1.
+ */
+export async function entrarComoColega(page: Page, rede: RedeFalsa, ligacao = LIGACAO_FALSA): Promise<Canal> {
+  await abrirComoColega(page, ligacao);
   rede.aoEntrar = (c) => c.mandar(ACEITO);
   await botao(page, 'Entrar').click();
   // A ligação falsa confirma num setTimeout, que só roda com o relógio andando.

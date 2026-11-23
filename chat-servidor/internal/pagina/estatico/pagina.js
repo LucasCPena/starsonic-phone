@@ -9,7 +9,8 @@
 // texto. No Windows, ela desenha a tela "o app ou o navegador" (a escolha), com o link do app para o código do endereço.
 // Dentro do iframe do app (o app.js), ela leva as mensagens dele ao cérebro, manda o que o cérebro avisa e o estado
 // (o paraOApp) quando ele muda, dá ao midia.js os nomes dos aparelhos do app, e o link do chat da reunião vai ao app,
-// que o abre no navegador padrão, em vez de abrir uma janela. O passe, os nomes e as origens não vão ao console.
+// que o abre no navegador padrão, em vez de abrir uma janela. O passe, os nomes e as origens não vão ao console. Na
+// pausa, ela cala o som da reunião (o calar) e, na pausa que chega pelo canal, mostra o cartão dela, um diálogo modal.
 import { iniciais, rotuloDoBotao, tituloDoCartao } from './colega.js';
 import { cabecalho, inicial, nomeValido, paraOApp, podeEscrever, quando, transicao } from './estado.js';
 import { contagem as numeroDoBotao, dito, escreveu, falha, nomeDoBotao, numaLinha } from './mensagens.js';
@@ -72,6 +73,8 @@ export function iniciar(raiz, servicos) {
   const sinal = um('.sinal');
   const botaoDoSinal = um('.sinal-botao');
   const cartaoDoSinal = um('.sinal-cartao');
+  const cartaoDaPausa = um('#pausa');
+  const voltarDaPausa = cartaoDaPausa.querySelector('[data-botao="voltarDaPausa"]');
   // O Compartilhar a tela só existe onde o navegador tem a captura da tela.
   const temCaptura = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
   // O Abrir no app da escolha é um link para o app, com o código do endereço (/r/<código>).
@@ -228,6 +231,9 @@ export function iniciar(raiz, servicos) {
         break;
       case 'dizer':
         dizer(efeito.texto);
+        break;
+      case 'calar':
+        som.muted = efeito.calado;
         break;
       case 'avisarApp': {
         const { tipo, ...campos } = efeito.m;
@@ -391,12 +397,28 @@ export function iniciar(raiz, servicos) {
     // O Compartilhar a tela só vale com o canal aberto e a ligação no ar: o canal abrindo e o voltando contam como
     // fechados, e a conexão caída também.
     compartilhar.hidden = !temCaptura || compartilhando;
-    compartilhar.disabled = !(e.canal === 'aberto' && e.reconectando === 0);
+    compartilhar.disabled = !(e.canal === 'aberto' && e.reconectando === 0) || e.pausa !== null;
     um('[data-botao="pararDeCompartilhar"]').hidden = !compartilhando;
     desenharOChat(e);
     desenharOColega(e);
     desenharOSinal(e);
     desenharOAvisoCurto(e);
+    desenharAPausa(e);
+  }
+
+  // O cartão da pausa que chegou pelo canal: um diálogo modal, com o foco no Voltar para a reunião. O resto da página
+  // sai do teclado e dos leitores de tela enquanto ele está aberto; o que o leitor de tela ouve é o cérebro que diz.
+  function desenharAPausa(e) {
+    const aberto = e.tela === 'reuniao' && e.pausa?.origem === 'canal';
+    if (aberto && !cartaoDaPausa.open) {
+      cartaoDaPausa.showModal();
+      voltarDaPausa.focus();
+    } else if (!aberto && cartaoDaPausa.open) {
+      const tinhaOFoco = cartaoDaPausa.contains(document.activeElement);
+      cartaoDaPausa.close();
+      // O foco volta ao que o tinha antes do cartão; sem ele, ao título da tela.
+      if (tinhaOFoco && document.activeElement === document.body) tituloVisivel()?.focus();
+    }
   }
 
   // O que é só do colega na reunião: o botão Participantes (apertado com o painel aberto, e o número de quem espera), o
@@ -612,6 +634,16 @@ export function iniciar(raiz, servicos) {
     raizDoPainel.addEventListener('click', levarOLink);
     raizDoPainel.addEventListener('auxclick', levarOLink);
   }
+  // O cartão da pausa só fecha pelo Voltar para a reunião: o Esc não faz nada, e o Tab e o Shift+Tab ficam no botão.
+  // O que o navegador fechar sozinho abre de novo, enquanto a pausa valer.
+  cartaoDaPausa.addEventListener('keydown', (ev) => {
+    if (ev.isComposing || ev.keyCode === 229) return;
+    if (ev.key !== 'Escape' && ev.key !== 'Tab') return;
+    ev.preventDefault();
+    voltarDaPausa.focus();
+  });
+  cartaoDaPausa.addEventListener('cancel', (ev) => ev.preventDefault());
+  cartaoDaPausa.addEventListener('close', () => desenharAPausa(estado));
   nome.addEventListener('input', () => despachar({ tipo: 'nome', valor: nome.value }));
   // O Enter no nome é o Pedir para entrar; o que confirma uma composição (o IME) não conta.
   nome.addEventListener('keydown', (ev) => {
