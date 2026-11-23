@@ -671,6 +671,21 @@ func TestCanalDeColega_EntrarDoComputadorDesligado(t *testing.T) {
 	}
 }
 
+// carlosComABiaEAMaria faz o Carlos entrar pela página, a Bia entrar pelo app e a Maria pedir, e lê as listas que a
+// página do Carlos recebe. Devolve a página, a Bia e o pedido da Maria.
+func (c *cenaR) carlosComABiaEAMaria(t *testing.T, codigo string) (pagina *websocket.Conn, bia, pedido string) {
+	t.Helper()
+	pagina, _, _ = c.carlosNaReuniao(t, codigo)
+	bia = c.entrouNaReuniao(t, c.kBia, codigo)
+	for {
+		if ps, _ := aPaginaTipo(t, pagina, "participantes")["participantes"].([]any); len(ps) == 2 {
+			break
+		}
+	}
+	_, pedido = pedeAMaria(t, c, codigo, pagina)
+	return pagina, bia, pedido
+}
+
 // respostasDeQuemNaoValeMais: o Carlos está na reunião pela página, com a Bia (pelo app) e com o pedido da Maria
 // esperando; depois do mudar, que tira dele o que o reconhecia, cada uma das quatro respostas recebe o erro invalido,
 // o canal fecha, e nada acontece na reunião: a Bia continua, o pedido espera, e o agente não recebe nada.
@@ -679,14 +694,7 @@ func respostasDeQuemNaoValeMais(t *testing.T, mudar func(t *testing.T, c *cenaR)
 		t.Run(tipo, func(t *testing.T) {
 			c := novaCenaR(t)
 			r := c.marcada(t, c.kAna)
-			pagina, _, _ := c.carlosNaReuniao(t, r.Codigo)
-			bia := c.entrouNaReuniao(t, c.kBia, r.Codigo)
-			for {
-				if ps, _ := aPaginaTipo(t, pagina, "participantes")["participantes"].([]any); len(ps) == 2 {
-					break
-				}
-			}
-			_, pedido := pedeAMaria(t, c, r.Codigo, pagina)
+			pagina, bia, pedido := c.carlosComABiaEAMaria(t, r.Codigo)
 			mudar(t, c)
 
 			m := map[string]any{"tipo": tipo}
@@ -962,6 +970,51 @@ func TestCanalDeColega_Recusas(t *testing.T) {
 		recusaDoCanal(t, pagina, "tirar", "foraDaReuniao")
 		daPagina(t, pagina, map[string]any{"tipo": "encerrar"})
 		recusaDoCanal(t, pagina, "encerrar", "foraDaReuniao")
+	})
+}
+
+func TestCanalDeColega_RecusaDoServidorDeVideo(t *testing.T) {
+	// O Carlos na reunião pela página, com a Bia (pelo app) e o pedido da Maria esperando.
+	naReuniao := func(t *testing.T) (c *cenaR, codigo string, pagina *websocket.Conn, bia, pedido string) {
+		c = novaCenaR(t)
+		codigo = c.marcada(t, c.kAna).Codigo
+		pagina, bia, pedido = c.carlosComABiaEAMaria(t, codigo)
+		return c, codigo, pagina, bia, pedido
+	}
+	// Nada mudou: a Bia continua na reunião, e o pedido da Maria espera.
+	nadaMudou := func(t *testing.T, c *cenaR, codigo, pedido string) {
+		if l := c.lista(t, c.kBia, codigo); len(l.Participantes) != 2 || len(l.Pedidos) != 1 || l.Pedidos[0].ID != pedido {
+			t.Fatalf("a lista é %+v", l)
+		}
+	}
+
+	t.Run("fora do ar", func(t *testing.T) {
+		c, codigo, pagina, bia, pedido := naReuniao(t)
+		c.a.Video.DefinirNoAr(false)
+		daPagina(t, pagina, map[string]any{"tipo": "aceitar", "pedido": pedido})
+		recusaDoCanal(t, pagina, "aceitar", "servidorVideo")
+		daPagina(t, pagina, map[string]any{"tipo": "tirar", "participante": bia})
+		recusaDoCanal(t, pagina, "tirar", "servidorVideo")
+		daPagina(t, pagina, map[string]any{"tipo": "encerrar"})
+		recusaDoCanal(t, pagina, "encerrar", "servidorVideo")
+		c.a.Video.DefinirNoAr(true)
+		semRecusa(t, pagina)
+		nadaMudou(t, c, codigo, pedido)
+	})
+
+	t.Run("o agente falha", func(t *testing.T) {
+		c, codigo, pagina, bia, pedido := naReuniao(t)
+		c.a.Video.DefinirErro(video.ErrSemResposta)
+		daPagina(t, pagina, map[string]any{"tipo": "tirar", "participante": bia})
+		recusaDoCanal(t, pagina, "tirar", "servidorVideo")
+		daPagina(t, pagina, map[string]any{"tipo": "encerrar"})
+		recusaDoCanal(t, pagina, "encerrar", "servidorVideo")
+		c.a.Video.DefinirErro(nil)
+		semRecusa(t, pagina)
+		nadaMudou(t, c, codigo, pedido)
+		if cs := c.a.Video.Comandos(); len(cs) != 0 {
+			t.Fatalf("o agente recebeu %q", cs)
+		}
 	})
 }
 
