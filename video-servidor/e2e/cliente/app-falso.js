@@ -9,7 +9,19 @@
 // A origem do chat do teste (o CHAT do servidores.ts), a única a que o app fala e de que ouve.
 const CHAT = 'http://127.0.0.1:4191';
 
-const quadro = document.getElementById('reuniao');
+// O quadro da reunião, com o allow da spec (seção 7.4) só para a origem do chat. O endereço e o allow vão juntos, antes
+// de o quadro entrar no documento: um iframe com o allow e sem o endereço guarda o documento vazio do começo, da origem
+// do app, para o qual nada do allow vale, e o Chromium avisa no console cada recurso dele ("Potential permissions
+// policy violation"). O speaker-selection da spec fica de fora: o Chromium do teste não conhece o nome e o recusa no
+// allow, também com um aviso no console.
+const quadro = document.createElement('iframe');
+quadro.id = 'reuniao';
+quadro.title = 'Reunião';
+quadro.width = '1200';
+quadro.height = '760';
+quadro.allow = ['camera', 'microphone', 'display-capture', 'autoplay'].map((p) => `${p} ${CHAT}`).join('; ');
+quadro.src = `${CHAT}/r/${location.hash.slice(1)}`;
+
 const recebidas = [];
 let pausarAoEntrar = window.pausarAoEntrarDoTeste === true;
 let naReuniaoEm = null;
@@ -32,4 +44,4 @@ addEventListener('message', (e) => {
 
 window.appFalso = { mandar, recebidas: () => recebidas.slice(), naReuniaoEm: () => naReuniaoEm };
 
-quadro.src = `${CHAT}/r/${location.hash.slice(1)}`;
+document.body.append(quadro);
