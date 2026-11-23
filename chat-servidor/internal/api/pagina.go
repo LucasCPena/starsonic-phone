@@ -779,6 +779,8 @@ func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo web
 		default:
 			c.Mandar(mensagemSenha{Tipo: "senha", Senha: senha})
 		}
+	case "aceitar", "recusar", "tirar", "encerrar":
+		s.respostaDoColega(c, st, m.Tipo, dados)
 	case "tela":
 		senha, err := s.gerente.TelaDeFora(st.pedido)
 		switch {
@@ -792,6 +794,88 @@ func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo web
 	default:
 		c.Mandar(erroDoCanal("invalido"))
 	}
+}
+
+// O id de um pedido ou de um participante, como o gerente os emite: 16 hexadecimais minúsculos.
+var reIDDoGerente = regexp.MustCompile(`^[0-9a-f]{16}$`)
+
+// mensagemRecusa é a recusa de uma resposta do colega (o aceitar, o recusar, o tirar ou o encerrar): de é o tipo da
+// mensagem que falhou.
+type mensagemRecusa struct {
+	Tipo   string `json:"tipo"`
+	De     string `json:"de"`
+	Motivo string `json:"motivo"` // jaRespondido, naoEncontrado, cheia, foraDaReuniao ou servidorVideo
+}
+
+// idDaMensagem é o campo da mensagem, quando ele é um texto com a forma de um id do gerente.
+func idDaMensagem(dados []byte, campo string) (string, bool) {
+	var campos map[string]json.RawMessage
+	var id string
+	if json.Unmarshal(dados, &campos) != nil || json.Unmarshal(campos[campo], &id) != nil || !reIDDoGerente.MatchString(id) {
+		return "", false
+	}
+	return id, true
+}
+
+// respostaDoColega trata o aceitar, o recusar (com o pedido), o tirar (com o participante) e o encerrar: as rotas do
+// app com o mesmo nome, pelo canal. Valem só no canal cujo pedido é o de um colega (o ColegaDoPedido), também o que
+// voltou pelo voltar com um bilhete comum; em outro canal, ou com o campo que falta ou não é um id, a resposta é o
+// erro invalido, e o canal fica. As regras são as do gerente, pela pessoa: o colega tem de estar na reunião. O que dá
+// certo não tem resposta (a página vê o participantes novo, ou o encerrada); o que falha recebe o recusa. Nada disso
+// vai ao log, a não ser o código de uma falha do servidor de vídeo.
+func (s *servidor) respostaDoColega(c *canalPagina, st *estadoDaPagina, tipo string, dados []byte) {
+	pessoa, ok := s.gerente.ColegaDoPedido(st.pedido)
+	if !ok {
+		c.Mandar(erroDoCanal("invalido"))
+		return
+	}
+	campo := "pedido"
+	switch tipo {
+	case "tirar":
+		campo = "participante"
+	case "encerrar":
+		campo = ""
+	}
+	var id string
+	if campo != "" {
+		if id, ok = idDaMensagem(dados, campo); !ok {
+			c.Mandar(erroDoCanal("invalido"))
+			return
+		}
+	}
+	var err error
+	switch tipo {
+	case "aceitar":
+		err = s.gerente.Aceitar(c.ctx, st.reuniao, pessoa, id)
+	case "recusar":
+		err = s.gerente.Recusar(c.ctx, st.reuniao, pessoa, id)
+	case "tirar":
+		err = s.gerente.Tirar(c.ctx, st.reuniao, pessoa, id)
+	default:
+		err = s.gerente.Encerrar(c.ctx, st.reuniao, pessoa)
+	}
+	if err != nil {
+		c.Mandar(mensagemRecusa{Tipo: "recusa", De: tipo, Motivo: motivoDaRecusa(err)})
+	}
+}
+
+// motivoDaRecusa é o motivo do recusa para o erro do gerente. Os que não são dele (o servidor de vídeo fora do ar, ou
+// uma falha do agente no tirar ou no encerrar) são o servidorVideo; a falha do agente vai ao log só com o código.
+func motivoDaRecusa(err error) string {
+	switch {
+	case errors.Is(err, reunioes.ErrJaRespondido):
+		return "jaRespondido"
+	case errors.Is(err, reunioes.ErrPedidoNaoEncontrado), errors.Is(err, reunioes.ErrParticipanteNaoEncontrado):
+		return "naoEncontrado"
+	case errors.Is(err, reunioes.ErrCheia):
+		return "cheia"
+	case errors.Is(err, reunioes.ErrForaDaReuniao):
+		return "foraDaReuniao"
+	case errors.Is(err, reunioes.ErrSemServidor), errors.Is(err, context.Canceled):
+	default:
+		slog.Warn("pagina: o servidor de vídeo falhou", "erro", codigoDoVideo(err))
+	}
+	return "servidorVideo"
 }
 
 // erroDoGerente diz à página o erro de uma entrada (o pedir, o entrar ou o senha). O nome que não vale é o erro

@@ -205,6 +205,7 @@ func (g *Gerente) Voltar(r banco.Reuniao, participante, volta string, c Canal) (
 	p.anterior, p.anteriorAte = volta, agora.Add(gracaDaChave)
 	nova := p.volta
 	g.mandar(c, mensagemVoltou{Tipo: "voltou", Volta: nova}) // na mesma trava: nenhum tirado passa na frente
+	g.mandarListaA(s, part)                                  // o colega na reunião recebe a lista logo depois do voltou
 	g.mandarPalcoA(s, part)
 	g.mu.Unlock()
 	g.despachar()

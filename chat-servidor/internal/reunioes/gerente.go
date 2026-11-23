@@ -298,7 +298,8 @@ func (g *Gerente) fechar(c Canal) {
 	}
 }
 
-// depois avisa os colegas na reunião se a lista que eles veem mudou desde antes. Com g.mu.
+// depois avisa os colegas na reunião se a lista que eles veem mudou desde antes: os computadores, pelo
+// reuniaoParticipantes, e as páginas dos colegas que entraram por ela, pelo participantes (colega.go). Com g.mu.
 func (g *Gerente) depois(s *sala, antes Lista) {
 	if !s.conhecida {
 		return
@@ -308,6 +309,7 @@ func (g *Gerente) depois(s *sala, antes Lista) {
 		return
 	}
 	g.avisar(s.colegas(), eventoParticipantes{Tipo: "reuniaoParticipantes", Reuniao: s.reuniao.Codigo, Lista: agora})
+	g.mandarLista(s, agora)
 }
 
 // despachar manda o que está na saída, sem o mutex, na ordem em que entrou. Uma goroutine manda por vez: quem

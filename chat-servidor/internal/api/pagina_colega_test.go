@@ -465,6 +465,10 @@ func TestCanalDeColega_Entrar(t *testing.T) {
 	aPaginaTipo(t, maria, "aguardando")
 	c.aceitar(t, c.kCarlos, r.Codigo, pedidoDe(t, app, "Maria Lima"))
 	aPaginaTipo(t, maria, "aceito")
+	// A página do Carlos, na reunião, recebe a lista a cada mudança: a entrada dele, o pedido e o aceito.
+	for range 3 {
+		aPaginaTipo(t, pagina, "participantes")
+	}
 
 	// Depois do aceito, o canal é o de uma página aceita: o senha vale.
 	daPagina(t, pagina, map[string]any{"tipo": "tela"})
@@ -672,4 +676,332 @@ func TestCanalDeColega_BilheteComum(t *testing.T) {
 	colega := c.canalComBilhete(t, doColega.Bilhete)
 	daPagina(t, colega, map[string]any{"tipo": "entrar"})
 	entrouOCarlos(t, aPaginaTipo(t, colega, "aceito"))
+}
+
+// ---------- O canal de colega: a lista e as respostas ----------
+
+// carlosNaReuniao faz a página do Carlos entrar (o entrar) e a câmera dele entrar, e lê a lista da entrada. Devolve o
+// canal, o participante e a chave de volta do aceito.
+func (c *cenaR) carlosNaReuniao(t *testing.T, codigo string) (pagina *websocket.Conn, part, volta string) {
+	t.Helper()
+	pagina = c.canalDeColega(t, codigo)
+	daPagina(t, pagina, map[string]any{"tipo": "entrar"})
+	aceito := aPaginaTipo(t, pagina, "aceito")
+	part = entrouOCarlos(t, aceito)
+	volta, _ = aceito["volta"].(string)
+	c.entrou(t, codigo, part)
+	l := aPaginaTipo(t, pagina, "participantes")
+	if ps, _ := l["participantes"].([]any); len(ps) != 1 {
+		t.Fatalf("a lista da entrada é %v", l)
+	}
+	return pagina, part, volta
+}
+
+// pedeAMaria faz a Maria pedir, numa página de fora, e lê o pedido na lista nova da página do colega. Devolve a página
+// da Maria e o id do pedido.
+func pedeAMaria(t *testing.T, c *cenaR, codigo string, colega *websocket.Conn) (*websocket.Conn, string) {
+	t.Helper()
+	maria := c.canal(t, codigo)
+	daPagina(t, maria, map[string]any{"tipo": "pedir", "nome": "Maria Lima"})
+	aPaginaTipo(t, maria, "aguardando")
+	l := aPaginaTipo(t, colega, "participantes")
+	ps, _ := l["pedidos"].([]any)
+	if len(ps) != 1 {
+		t.Fatalf("a lista é %v; queria o pedido da Maria", l)
+	}
+	p, _ := ps[0].(map[string]any)
+	id, _ := p["id"].(string)
+	if p["nome"] != "Maria Lima" || !hex16.MatchString(id) {
+		t.Fatalf("o pedido é %v", p)
+	}
+	return maria, id
+}
+
+// recusaDoCanal confere que a próxima mensagem é o recusa, só com o de e o motivo.
+func recusaDoCanal(t *testing.T, conn *websocket.Conn, de, motivo string) {
+	t.Helper()
+	if m := aPagina(t, conn); len(m) != 3 || m["tipo"] != "recusa" || m["de"] != de || m["motivo"] != motivo {
+		t.Fatalf("a página recebeu %v; queria {tipo: recusa, de: %s, motivo: %s}", m, de, motivo)
+	}
+}
+
+// soOCarlos confere a lista com só o Carlos, com o voce, e sem pedidos.
+func soOCarlos(t *testing.T, l map[string]any, carlos string) {
+	t.Helper()
+	ps, _ := l["participantes"].([]any)
+	pedidos, _ := l["pedidos"].([]any)
+	if len(ps) != 1 || pedidos == nil || len(pedidos) != 0 {
+		t.Fatalf("a lista é %v; queria só o Carlos, sem pedidos", l)
+	}
+	if p, _ := ps[0].(map[string]any); p["id"] != carlos || p["voce"] != true || p["nome"] != "Carlos Lima" {
+		t.Fatalf("o participante é %v", p)
+	}
+}
+
+// semRecusa confere que nada ficou na fila da página antes da resposta do tela.
+func semRecusa(t *testing.T, pagina *websocket.Conn) {
+	t.Helper()
+	daPagina(t, pagina, map[string]any{"tipo": "tela"})
+	aPaginaTipo(t, pagina, "tela")
+}
+
+func TestCanalDeColega_Aceitar(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	pagina, carlos, _ := c.carlosNaReuniao(t, r.Codigo)
+	maria, pedido := pedeAMaria(t, c, r.Codigo, pagina)
+
+	daPagina(t, pagina, map[string]any{"tipo": "aceitar", "pedido": pedido})
+	aPaginaTipo(t, maria, "aceito")
+	soOCarlos(t, aPaginaTipo(t, pagina, "participantes"), carlos)
+	semRecusa(t, pagina)
+}
+
+func TestCanalDeColega_Recusar(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	pagina, carlos, _ := c.carlosNaReuniao(t, r.Codigo)
+	maria, pedido := pedeAMaria(t, c, r.Codigo, pagina)
+
+	daPagina(t, pagina, map[string]any{"tipo": "recusar", "pedido": pedido})
+	soOTipo(t, maria, "recusado")
+	fechouCom1000(t, maria)
+	soOCarlos(t, aPaginaTipo(t, pagina, "participantes"), carlos)
+	semRecusa(t, pagina)
+}
+
+func TestCanalDeColega_Tirar(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	pagina, carlos, _ := c.carlosNaReuniao(t, r.Codigo)
+	maria, pedido := pedeAMaria(t, c, r.Codigo, pagina)
+	daPagina(t, pagina, map[string]any{"tipo": "aceitar", "pedido": pedido})
+	parteMaria, _ := aPaginaTipo(t, maria, "aceito")["participante"].(string)
+	aPaginaTipo(t, pagina, "participantes")
+	c.entrou(t, r.Codigo, parteMaria)
+	if ps, _ := aPaginaTipo(t, pagina, "participantes")["participantes"].([]any); len(ps) != 2 {
+		t.Fatalf("a lista tem %v; queria o Carlos e a Maria", ps)
+	}
+
+	daPagina(t, pagina, map[string]any{"tipo": "tirar", "participante": parteMaria})
+	soOTipo(t, maria, "tirado")
+	fechouCom1000(t, maria)
+	soOCarlos(t, aPaginaTipo(t, pagina, "participantes"), carlos)
+	semRecusa(t, pagina)
+	if cs := c.a.Video.Comandos(); len(cs) != 1 || cs[0] != "tirar "+c.sala(t, r.Codigo)+" "+parteMaria {
+		t.Fatalf("o agente recebeu %q", cs)
+	}
+}
+
+func TestCanalDeColega_Encerrar(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	pagina, _, _ := c.carlosNaReuniao(t, r.Codigo)
+	maria, pedido := pedeAMaria(t, c, r.Codigo, pagina)
+	daPagina(t, pagina, map[string]any{"tipo": "aceitar", "pedido": pedido})
+	parteMaria, _ := aPaginaTipo(t, maria, "aceito")["participante"].(string)
+	aPaginaTipo(t, pagina, "participantes")
+	c.entrou(t, r.Codigo, parteMaria)
+	aPaginaTipo(t, pagina, "participantes")
+
+	daPagina(t, pagina, map[string]any{"tipo": "encerrar"})
+	for quem, conn := range map[string]*websocket.Conn{"o Carlos": pagina, "a Maria": maria} {
+		if m := aPagina(t, conn); len(m) != 1 || m["tipo"] != "encerrada" {
+			t.Fatalf("%s recebeu %v; queria o encerrada", quem, m)
+		}
+		fechouCom1000(t, conn)
+	}
+}
+
+func TestCanalDeColega_PrimeiraResposta(t *testing.T) {
+	t.Run("a página aceita primeiro", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		pagina, _, _ := c.carlosNaReuniao(t, r.Codigo)
+		maria, pedido := pedeAMaria(t, c, r.Codigo, pagina)
+		daPagina(t, pagina, map[string]any{"tipo": "aceitar", "pedido": pedido})
+		aPaginaTipo(t, maria, "aceito")
+		aPaginaTipo(t, pagina, "participantes")
+
+		resp := c.a.Pedir(c.kCarlos, "POST", "/api/v1/reunioes/"+r.Codigo+"/recusar", map[string]string{"pedido": pedido})
+		esperarErro(t, resp, http.StatusConflict, "jaRespondido")
+		semRecusa(t, pagina)
+	})
+	t.Run("a rota recusa primeiro", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		pagina, _, _ := c.carlosNaReuniao(t, r.Codigo)
+		maria, pedido := pedeAMaria(t, c, r.Codigo, pagina)
+		resp := c.a.Pedir(c.kCarlos, "POST", "/api/v1/reunioes/"+r.Codigo+"/recusar", map[string]string{"pedido": pedido})
+		if resp.StatusCode != http.StatusNoContent {
+			t.Fatalf("recusar respondeu %d", resp.StatusCode)
+		}
+		soOTipo(t, maria, "recusado")
+		aPaginaTipo(t, pagina, "participantes")
+
+		daPagina(t, pagina, map[string]any{"tipo": "aceitar", "pedido": pedido})
+		recusaDoCanal(t, pagina, "aceitar", "jaRespondido")
+	})
+}
+
+func TestCanalDeColega_Recusas(t *testing.T) {
+	const inventado = "0123456789abcdef"
+	t.Run("naoEncontrado", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		pagina, _, _ := c.carlosNaReuniao(t, r.Codigo)
+		daPagina(t, pagina, map[string]any{"tipo": "aceitar", "pedido": inventado})
+		recusaDoCanal(t, pagina, "aceitar", "naoEncontrado")
+		daPagina(t, pagina, map[string]any{"tipo": "recusar", "pedido": inventado})
+		recusaDoCanal(t, pagina, "recusar", "naoEncontrado")
+		daPagina(t, pagina, map[string]any{"tipo": "tirar", "participante": inventado})
+		recusaDoCanal(t, pagina, "tirar", "naoEncontrado")
+	})
+	t.Run("cheia", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		pagina, _, _ := c.carlosNaReuniao(t, r.Codigo)
+		_, pedido := pedeAMaria(t, c, r.Codigo, pagina)
+		for range 9 {
+			c.entrouNaReuniao(t, c.kBia, r.Codigo)
+			aPaginaTipo(t, pagina, "participantes")
+		}
+		daPagina(t, pagina, map[string]any{"tipo": "aceitar", "pedido": pedido})
+		recusaDoCanal(t, pagina, "aceitar", "cheia")
+		// O pedido continua esperando.
+		if l := c.lista(t, c.kCarlos, r.Codigo); len(l.Pedidos) != 1 || l.Pedidos[0].ID != pedido {
+			t.Fatalf("os pedidos são %+v; queria o da Maria", l.Pedidos)
+		}
+	})
+	t.Run("foraDaReuniao", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		pagina := c.canalDeColega(t, r.Codigo)
+		daPagina(t, pagina, map[string]any{"tipo": "entrar"})
+		aPaginaTipo(t, pagina, "aceito") // a câmera não entra
+		daPagina(t, pagina, map[string]any{"tipo": "aceitar", "pedido": inventado})
+		recusaDoCanal(t, pagina, "aceitar", "foraDaReuniao")
+		daPagina(t, pagina, map[string]any{"tipo": "recusar", "pedido": inventado})
+		recusaDoCanal(t, pagina, "recusar", "foraDaReuniao")
+		daPagina(t, pagina, map[string]any{"tipo": "tirar", "participante": inventado})
+		recusaDoCanal(t, pagina, "tirar", "foraDaReuniao")
+		daPagina(t, pagina, map[string]any{"tipo": "encerrar"})
+		recusaDoCanal(t, pagina, "encerrar", "foraDaReuniao")
+	})
+}
+
+func TestCanalDeColega_CamposRuins(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	pagina, _, _ := c.carlosNaReuniao(t, r.Codigo)
+	longo := strings.Repeat("a", 100)
+	for _, m := range []map[string]any{
+		{"tipo": "aceitar"},
+		{"tipo": "aceitar", "pedido": 12345},
+		{"tipo": "aceitar", "pedido": longo},
+		{"tipo": "recusar"},
+		{"tipo": "recusar", "pedido": 12345},
+		{"tipo": "recusar", "pedido": longo},
+		{"tipo": "tirar"},
+		{"tipo": "tirar", "participante": 12345},
+		{"tipo": "tirar", "participante": longo},
+	} {
+		daPagina(t, pagina, m)
+		aPaginaErro(t, pagina, "invalido")
+	}
+	semRecusa(t, pagina) // o canal continua
+}
+
+// asQuatro manda o aceitar, o recusar, o tirar e o encerrar, com ids bem formados, e confere o erro invalido de cada um.
+func asQuatro(t *testing.T, pagina *websocket.Conn, pedido, participante string) {
+	t.Helper()
+	for _, m := range []map[string]any{
+		{"tipo": "aceitar", "pedido": pedido},
+		{"tipo": "recusar", "pedido": pedido},
+		{"tipo": "tirar", "participante": participante},
+		{"tipo": "encerrar"},
+	} {
+		daPagina(t, pagina, m)
+		aPaginaErro(t, pagina, "invalido")
+	}
+}
+
+func TestCanalComum_RespostasNaoValem(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	app := c.colegaNaReuniao(t, r.Codigo)
+	carlos := c.lista(t, c.kCarlos, r.Codigo).Participantes[0].ID
+
+	// Antes do pedir, o canal não tem pedido: as quatro não valem, e o canal continua.
+	bia := c.canal(t, r.Codigo)
+	asQuatro(t, bia, "0123456789abcdef", carlos)
+	daPagina(t, bia, map[string]any{"tipo": "pedir", "nome": "Bia Ramos"})
+	aPaginaTipo(t, bia, "aguardando")
+	pedidoBia := pedidoDe(t, app, "Bia Ramos")
+
+	// A Maria, aceita: as quatro também não valem, nem com o pedido da Bia nem com o Carlos.
+	maria := c.canal(t, r.Codigo)
+	c.aceita(t, r.Codigo, app, maria, "Maria Lima")
+	asQuatro(t, maria, pedidoBia, carlos)
+	daPagina(t, maria, map[string]any{"tipo": "senha"})
+	aPaginaTipo(t, maria, "senha")
+	// Nada mudou: o Carlos continua na reunião, e o pedido da Bia espera.
+	if l := c.lista(t, c.kCarlos, r.Codigo); len(l.Participantes) != 1 || len(l.Pedidos) != 1 || l.Pedidos[0].ID != pedidoBia {
+		t.Fatalf("a lista é %+v", l)
+	}
+}
+
+func TestCanalComum_DepoisDoVoltar(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	app := c.colegaNaReuniao(t, r.Codigo)
+	carlos := c.lista(t, c.kCarlos, r.Codigo).Participantes[0].ID
+	maria := c.canal(t, r.Codigo)
+	m := c.aceita(t, r.Codigo, app, maria, "Maria Lima")
+	part, _ := m["participante"].(string)
+	volta, _ := m["volta"].(string)
+	c.entrou(t, r.Codigo, part)
+	maria.Close(websocket.StatusNormalClosure, "")
+
+	nova := c.voltaDoCanal(t, r.Codigo, part, volta)
+	aPaginaTipo(t, nova, "voltou")
+	asQuatro(t, nova, "0123456789abcdef", carlos)
+	if l := c.lista(t, c.kCarlos, r.Codigo); len(l.Participantes) != 2 {
+		t.Fatalf("a lista é %+v", l)
+	}
+}
+
+func TestCanalDeColega_ContaNoLimite(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	pagina, _, _ := c.carlosNaReuniao(t, r.Codigo) // o entrar é a primeira do minuto
+	for range 19 {
+		daPagina(t, pagina, map[string]any{"tipo": "recusar", "pedido": "0123456789abcdef"})
+		recusaDoCanal(t, pagina, "recusar", "naoEncontrado")
+	}
+	daPagina(t, pagina, map[string]any{"tipo": "encerrar"})
+	aPaginaErro(t, pagina, "limite")
+	// O encerrar além do limite não chegou ao gerente: a reunião continua.
+	if l := c.lista(t, c.kCarlos, r.Codigo); len(l.Participantes) != 1 {
+		t.Fatalf("a lista é %+v", l)
+	}
+	if cs := c.a.Video.Comandos(); len(cs) != 0 {
+		t.Fatalf("o agente recebeu %q", cs)
+	}
+}
+
+func TestCanalDeColega_DepoisDoVoltar(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	pagina, carlos, volta := c.carlosNaReuniao(t, r.Codigo)
+	pagina.Close(websocket.StatusNormalClosure, "")
+
+	// O canal novo é aberto com um bilhete comum (o abrir sem corpo): quem diz que ele é de colega é o participante.
+	nova := c.voltaDoCanal(t, r.Codigo, carlos, volta)
+	aPaginaTipo(t, nova, "voltou")
+	soOCarlos(t, aPaginaTipo(t, nova, "participantes"), carlos)
+	maria, pedido := pedeAMaria(t, c, r.Codigo, nova)
+	daPagina(t, nova, map[string]any{"tipo": "aceitar", "pedido": pedido})
+	aPaginaTipo(t, maria, "aceito")
+	soOCarlos(t, aPaginaTipo(t, nova, "participantes"), carlos)
 }

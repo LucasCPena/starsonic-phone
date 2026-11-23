@@ -52,3 +52,69 @@ func (g *Gerente) EntrarPelaPagina(ctx context.Context, r banco.Reuniao, p banco
 	g.despachar()
 	return ped, nil
 }
+
+// ColegaDoPedido diz se o pedido é o de um colega que entrou pela página, e quem ele é: o pedido aceito, ainda na
+// memória, cujo participante tem a pessoa. Vale também depois do Voltar (quem diz que o canal é de colega é o
+// participante, e não o bilhete). O pedido de quem é de fora, o da reunião de teste (o participante sem pessoa), o
+// que acabou e o nil não são.
+func (g *Gerente) ColegaDoPedido(p *Pedido) (pessoaID int64, ok bool) {
+	if p == nil {
+		return 0, false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	_, part := g.aceitoDe(p)
+	if part == nil || part.pessoa == 0 {
+		return 0, false
+	}
+	return part.pessoa, true
+}
+
+// ---------- A lista na página do colega ----------
+
+// participanteDaPagina é o participante da lista como a página do colega o vê: o da seção 9, com o voce no dela.
+type participanteDaPagina struct {
+	ParticipanteVisto
+	Voce bool `json:"voce"`
+}
+
+// mensagemParticipantes é a lista inteira para a página do colega: a mesma do reuniaoParticipantes, com o voce. As
+// listas nunca são nulas.
+type mensagemParticipantes struct {
+	Tipo          string                 `json:"tipo"`
+	Participantes []participanteDaPagina `json:"participantes"`
+	Pedidos       []PedidoVisto          `json:"pedidos"`
+}
+
+// recebeLista diz se a página do participante recebe o participantes: a de um colega (a pessoa), aceita, com o canal
+// aberto, e com a câmera na reunião. Com g.mu.
+func (p *participante) recebeLista() bool {
+	ped := p.pedido
+	return p.pessoa != 0 && p.naReuniao && ped != nil && ped.fase == aceito && ped.canal != nil
+}
+
+// mensagemLista é a lista l como a página do participante a recebe.
+func mensagemLista(l Lista, para *participante) mensagemParticipantes {
+	m := mensagemParticipantes{Tipo: "participantes", Participantes: make([]participanteDaPagina, 0, len(l.Participantes)),
+		Pedidos: l.Pedidos}
+	for _, v := range l.Participantes {
+		m.Participantes = append(m.Participantes, participanteDaPagina{ParticipanteVisto: v, Voce: v.ID == para.id})
+	}
+	return m
+}
+
+// mandarLista manda a lista l a cada página de colega que a recebe (recebeLista), pela fila do gerente. Com g.mu.
+func (g *Gerente) mandarLista(s *sala, l Lista) {
+	for _, p := range s.emOrdem() {
+		if p.recebeLista() {
+			g.mandar(p.pedido.canal, mensagemLista(l, p))
+		}
+	}
+}
+
+// mandarListaA manda a lista de agora à página do participante, logo depois do voltou, se ela a recebe. Com g.mu.
+func (g *Gerente) mandarListaA(s *sala, p *participante) {
+	if p.recebeLista() {
+		g.mandar(p.pedido.canal, mensagemLista(s.retrato(), p))
+	}
+}
