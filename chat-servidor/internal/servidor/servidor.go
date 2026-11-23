@@ -83,8 +83,14 @@ func montar(d Deps) (http.Handler, *sync.WaitGroup, *api.Canais) {
 	mux.Handle("/admin/", registrarAdmin(admin.Novo(admin.Deps{Banco: d.Banco, Hub: d.Hub, Armazem: d.Armazem, Teste: d.Teste,
 		Gerente: d.Gerente, Base: d.Base})))
 	// A página das reuniões não passa pelo registrarAdmin: o código do link vai no caminho e não vai para o log.
+	// As origens a mais para mostrar a página dentro de si só valem no modo de teste: fora dele, o d.Origens é o do CORS
+	// do config, e só o app (pagina.OrigemDoApp) pode emoldurar a página.
+	var origensDaMoldura []string
+	if d.Teste {
+		origensDaMoldura = d.Origens
+	}
 	mux.Handle("/r/", pagina.Novo(pagina.Deps{Video: func() string { return videoDe(d.Gerente) }, OrigemCanal: origemCanal(d.Base),
-		OrigensDoApp: d.Origens}))
+		OrigensDoApp: origensDaMoldura}))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/", http.StatusFound)
 	})

@@ -1072,6 +1072,7 @@ func TestServidor_AsOrigensDeTesteNaPagina(t *testing.T) {
 		d := depsDeTeste(t)
 		d.Base = "https://chat.exemplo.com.br"
 		d.Origens = origens
+		d.Teste = true
 		rec := httptest.NewRecorder()
 		Montar(d).ServeHTTP(rec, httptest.NewRequest("GET", "/r/k7q49xwpht", nil))
 		for _, dir := range strings.Split(rec.Header().Get("Content-Security-Policy"), "; ") {
@@ -1086,5 +1087,22 @@ func TestServidor_AsOrigensDeTesteNaPagina(t *testing.T) {
 	}
 	if got, want := frame(nil), "https://app.starsonic.local"; got != want {
 		t.Errorf("sem origem de teste: got %q, want %q", got, want)
+	}
+}
+
+// Fora do modo de teste, as origens do config (as do CORS) não chegam à página: só o app a mostra dentro de si.
+func TestServidor_ProducaoSoDaAOrigemDoApp(t *testing.T) {
+	d := depsDeTeste(t)
+	d.Base = "https://chat.exemplo.com.br"
+	d.Teste = false
+	d.Origens = []string{"https://app.starsonic.local", "https://outro.exemplo.com.br"}
+	rec := httptest.NewRecorder()
+	Montar(d).ServeHTTP(rec, httptest.NewRequest("GET", "/r/k7q49xwpht", nil))
+	csp := rec.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "frame-ancestors https://app.starsonic.local;") || strings.Contains(csp, "outro.exemplo") {
+		t.Errorf("CSP: %q", csp)
+	}
+	if !strings.Contains(rec.Body.String(), `<meta name="starsonic-app" content="https://app.starsonic.local">`) {
+		t.Errorf("o meta leva mais que a origem do app")
 	}
 }

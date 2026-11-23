@@ -33,7 +33,7 @@ type Deps struct {
 	Video func() string
 	// OrigemCanal é o ws:// ou wss:// do próprio chat.
 	OrigemCanal string
-	// OrigensDoApp: quem mais pode mostrar a página dentro de si (as origens de teste), além da OrigemDoApp, que vale
+	// OrigensDoApp: quem mais pode mostrar a página dentro de si (as origens de teste, só no modo de teste), além da OrigemDoApp, que vale
 	// sempre. Vazio vale só a OrigemDoApp.
 	OrigensDoApp []string
 }
