@@ -1,7 +1,7 @@
 # Starsonic Phone — reuniões com link — etapa 2a: as reuniões no app do PC — especificação de design
 
 - **Data:** 23/11/2026
-- **Status:** escrita em 23/11/2026, à espera da aprovação do responsável. O caminho e as telas já foram aprovados por ele no chat (as decisões abaixo).
+- **Status:** aprovada pelo responsável em 23/11/2026, às 10:54 ("segue"), depois de lida por um revisor de fora, que voltou com cinco perguntas, respondidas aqui (as escolhas 16 a 20 da seção 15). O caminho e as telas tinham sido aprovados antes, no chat (as decisões abaixo).
 - **Telas:** o quadro "Starsonic Phone — reuniões", telas 1 a 14, aprovado em 23/11, às 10:13. As telas 6 a 10 são da página da reunião; as outras, do app.
 - **Versões alvo:**
   - o app do Windows `0.5.0`;
