@@ -60,6 +60,10 @@ type servidor struct {
 	// aberturasBoas são as aberturas da página que deram certo, por endereço: 60 por minuto, uma janela à parte da das
 	// falhas. Sem ela, um endereço com um link bom empurraria os bilhetes das outras páginas para fora da fila da reunião.
 	aberturasBoas *limites.Janela
+	// passes guarda os passes e as chaves do colega da página (passes.go); passesDoMinuto limita os passes que cada
+	// computador pede: 10 por minuto, pelo id dele.
+	passes         *passes
+	passesDoMinuto *limites.Janela
 
 	mensagensLimite *limites.Janela // as mensagens novas, por computador
 	arquivosLimite  *limites.Janela // os bytes de arquivos enviados, por computador
@@ -103,6 +107,9 @@ func Novo(d Deps) http.Handler {
 
 		aberturas:     limites.Nova(maxAberturas, periodoAberturas, d.Banco.Relogio()),
 		aberturasBoas: limites.Nova(maxAbrirBom, periodoAberturas, d.Banco.Relogio()),
+
+		passes:         novosPasses(d.Banco.Relogio()),
+		passesDoMinuto: limites.Nova(maxPassesPorMinuto, time.Minute, d.Banco.Relogio()),
 
 		mensagensLimite: limites.Nova(maxMensagens, periodoMensagens, d.Banco.Relogio()),
 		arquivosLimite:  limites.Nova(maxArquivosHora, periodoArquivos, d.Banco.Relogio()),

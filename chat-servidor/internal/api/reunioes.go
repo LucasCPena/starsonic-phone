@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
@@ -25,6 +26,9 @@ const (
 	periodoAberturas = time.Minute // o período da janela aberturas
 	maxAbrirBom      = 60          // aberturas da página que deram certo por endereço, por minuto (seção 12)
 	maxRamaisAgora   = 9           // os ramais do "Gerar link"
+	// maxPassesPorMinuto é quantos passes do colega um computador pede por minuto. A guarda dos passes não tem
+	// teto próprio: é esta janela que a limita.
+	maxPassesPorMinuto = 10
 	// validadeMaxima é o quanto o valeAte pode passar do inicio.
 	validadeMaxima = 31 * 24 * time.Hour
 	// maxInicio é o último inicio aceito (o fim do ano 9999, em ms): só para a conta do dia não estourar.
@@ -46,6 +50,7 @@ func (s *servidor) rotasDasReunioes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/reunioes/agora", liberada(s.reuniaoAgora))
 	mux.HandleFunc("DELETE /api/v1/reunioes/{codigo}", liberada(s.cancelarReuniao))
 	mux.HandleFunc("POST /api/v1/reunioes/{codigo}/entrar", s.autenticar(precisaPessoa(s.entrarNaReuniao)))
+	mux.HandleFunc("POST /api/v1/reunioes/{codigo}/passe", s.autenticar(precisaPessoa(s.passeDaReuniao)))
 	mux.HandleFunc("GET /api/v1/reunioes/{codigo}/participantes", liberada(s.participantesDaReuniao))
 	mux.HandleFunc("POST /api/v1/reunioes/{codigo}/aceitar", liberada(s.aceitarPedido))
 	mux.HandleFunc("POST /api/v1/reunioes/{codigo}/recusar", liberada(s.recusarPedido))
@@ -399,6 +404,64 @@ func (s *servidor) entrarNaReuniao(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	escreverJSON(w, http.StatusOK, acessoJSON{Acesso: acesso, Reuniao: novaReuniaoJSON(reuniao, s.base, c.PessoaID, s.gerente)})
+}
+
+// POST /api/v1/reunioes/{codigo}/passe: o app pede o passe de uso único com que a página da reunião reconhece o
+// colega. É o entrar sem o gerente: as mesmas conferências, na mesma ordem e com a mesma conta nas tentativas
+// (404, outraEmpresa e semReunioes contam; o resto não), e nada começa, nem o vídeo nem a reunião. A reunião
+// cheia não barra: quem diz cheia é o canal. Por último vem a janela dos passes (10 por minuto, pelo computador);
+// só o pedido que ganharia o passe conta nela. O código e o passe não vão aos registros.
+func (s *servidor) passeDaReuniao(w http.ResponseWriter, r *http.Request) {
+	c, e := computadorDe(r)
+	endereco := limites.Endereco(r)
+	if ok, esperar := s.aberturas.Cabe(endereco, 1); !ok {
+		erroEspera(w, "tentativas", esperar)
+		return
+	}
+	errada := func(status int, codigo string) {
+		s.aberturas.Contar(endereco, 1)
+		escreverErro(w, status, codigo, nil)
+	}
+	if !e.Reunioes {
+		errada(http.StatusForbidden, "semReunioes")
+		return
+	}
+	codigo, ok := segredo.NormalizarCodigoReuniao(r.PathValue("codigo"))
+	if !ok {
+		errada(http.StatusNotFound, "naoEncontrado")
+		return
+	}
+	reuniao, err := s.banco.ReuniaoPorCodigo(r.Context(), codigo)
+	if errors.Is(err, banco.ErrNaoEncontrado) {
+		errada(http.StatusNotFound, "naoEncontrado")
+		return
+	}
+	if err != nil {
+		erroServidor(w, err)
+		return
+	}
+	if !reuniao.Vale(s.agoraMs()) {
+		errada(http.StatusNotFound, "naoEncontrado")
+		return
+	}
+	if reuniao.EmpresaID != c.EmpresaID {
+		errada(http.StatusForbidden, "outraEmpresa")
+		return
+	}
+	if _, err := s.banco.PessoaPorID(r.Context(), c.EmpresaID, c.PessoaID); err != nil {
+		erroDaPessoaDaVez(w, err)
+		return
+	}
+	if ok, esperar := s.passesDoMinuto.Usar(strconv.FormatInt(c.ID, 10), 1); !ok {
+		erroEspera(w, "tentativas", esperar)
+		return
+	}
+	passe := s.passes.novoPasse(colegaDaPagina{reuniaoID: reuniao.ID, empresaID: c.EmpresaID, pessoaID: c.PessoaID, computadorID: c.ID})
+	w.Header().Set("Cache-Control", "no-store")
+	escreverJSON(w, http.StatusOK, map[string]any{
+		"passe":   passe,
+		"reuniao": novaReuniaoJSON(reuniao, s.base, c.PessoaID, s.gerente),
+	})
 }
 
 // ---------- Com a pessoa na reunião ----------
