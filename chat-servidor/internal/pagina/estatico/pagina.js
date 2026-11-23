@@ -77,8 +77,16 @@ export function iniciar(raiz, servicos) {
   const voltarDaPausa = cartaoDaPausa.querySelector('[data-botao="voltarDaPausa"]');
   // O Compartilhar a tela só existe onde o navegador tem a captura da tela.
   const temCaptura = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
-  // O Abrir no app da escolha é um link para o app, com o código do endereço (/r/<código>).
-  const codigo = location.pathname.split('/')[2] ?? '';
+  // O Abrir no app da escolha é um link para o app, com o código do endereço (/r/<código>) escrito como o servidor o
+  // escreve: em minúsculas e sem os espaços. O servidor abre a reunião também com o código em maiúsculas, e o app só
+  // aceita o código exato.
+  let codigo = location.pathname.split('/')[2] ?? '';
+  try {
+    codigo = decodeURIComponent(codigo);
+  } catch {
+    // o código malformado fica como veio, e o app não o aceita
+  }
+  codigo = codigo.toLowerCase().replace(/[ \t\n\r]/g, '');
   um('[data-link="app"]').setAttribute('href', `starsonic://reuniao/${encodeURIComponent(codigo)}`);
 
   let estado = inicial();

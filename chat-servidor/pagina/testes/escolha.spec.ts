@@ -214,6 +214,15 @@ test.describe('no Windows', () => {
     expect(await pedidosDeMidia(page)).toBe(0);
   });
 
+  test('o Abrir no app leva o código como o servidor o escreve', async ({ page }) => {
+    // O servidor abre a reunião com o código em maiúsculas; o app só aceita o código exato, em minúsculas.
+    await RedeFalsa.instalar(page, MARCADA);
+    await prepararAPagina(page);
+    await page.goto(`/r/${CODIGO.toUpperCase()}`);
+    await expect(escolha(page)).toBeVisible();
+    await expect(abrirNoApp(page)).toHaveAttribute('href', `starsonic://reuniao/${CODIGO}`);
+  });
+
   test('Entrar pelo navegador', async ({ page }) => {
     const rede = await naEscolha(page);
     await peloNavegador(page).click();
