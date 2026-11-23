@@ -392,14 +392,16 @@ export function telaVerde(): void {
   };
 }
 
-/** No navegador: a frequência mais forte (de 100 Hz para cima) do som que o #som da página toca, e o nível dela em dB,
- * ou null sem som. O analisador do teste fica na janela e segue a faixa de agora do #som (cada ligação traz a sua). */
-function frequenciaDoSom(): { hz: number; db: number } | null {
+/** No navegador: a frequência mais forte (de 100 Hz para cima) do som que o #som da página toca, o nível dela em dB e
+ * há quantos ms o analisador ouve a faixa de agora, ou null sem som. O analisador do teste fica na janela e segue a
+ * faixa de agora do #som (cada ligação traz a sua); logo depois de ligado a ela, ele ainda não ouviu nada. */
+function frequenciaDoSom(): { hz: number; db: number; ouvindoHa: number } | null {
   interface Analise {
     contexto: AudioContext;
     analisador: AnalyserNode;
     fonte?: MediaStreamAudioSourceNode;
     faixa?: MediaStreamTrack;
+    desde?: number;
   }
   const w = window as unknown as { analiseDoTeste?: Analise };
   const som = document.getElementById('som') as HTMLAudioElement | null;
@@ -418,6 +420,7 @@ function frequenciaDoSom(): { hz: number; db: number } | null {
     a.fonte = a.contexto.createMediaStreamSource(new MediaStream([faixa]));
     a.fonte.connect(a.analisador);
     a.faixa = faixa;
+    a.desde = performance.now();
   }
   const dados = new Float32Array(a.analisador.frequencyBinCount);
   a.analisador.getFloatFrequencyData(dados);
@@ -427,8 +430,18 @@ function frequenciaDoSom(): { hz: number; db: number } | null {
   for (let i = inicio; i < dados.length; i++) {
     if (dados[i] > dados[melhor]) melhor = i;
   }
-  return { hz: (melhor * taxa) / a.analisador.fftSize, db: Number.isFinite(dados[melhor]) ? dados[melhor] : -1000 };
+  return {
+    hz: (melhor * taxa) / a.analisador.fftSize,
+    db: Number.isFinite(dados[melhor]) ? dados[melhor] : -1000,
+    ouvindoHa: performance.now() - (a.desde ?? 0),
+  };
 }
+
+/** O analisador só vale para dizer que o som não tem um tom depois de ouvir a faixa por este tempo (a janela dele, de
+ * 8192 amostras, tem uns 170 ms). */
+const ANALISADOR_PRONTO_MS = 300;
+/** Quantas leituras seguidas sem o tom dizem que ele não chega: uma só pode ser um soluço da rede. */
+const LEITURAS_SEM_O_TOM = 3;
 
 /** Antes da página: guarda cada RTCPeerConnection que ela cria (para os contadores do RTP e o diagnóstico), cada faixa
  * de câmera que o navegador lhe dá e cada violação da CSP. A página não muda: o JsSIP cria as conexões como sempre. */
@@ -645,6 +658,7 @@ export interface OpcoesDoColega {
 interface AppFalso {
   mandar(tipo: string, campos?: object): void;
   recebidas(): Mensagem[];
+  naReuniaoEm(): number | null;
 }
 
 /** A página da reunião de verdade (o /r/<código> do chat) num Chromium com a câmera e o microfone de uma pessoa. Ela
@@ -795,6 +809,11 @@ export class Pagina {
     const lista = await this.page.evaluate(() => (window as unknown as { appFalso: AppFalso }).appFalso.recebidas());
     anotarSegredos(lista);
     return lista;
+  }
+
+  /** O Date.now em que o app de mentira recebeu o primeiro estado com a fase naReuniao, ou null antes dele. */
+  naReuniaoNoApp(): Promise<number | null> {
+    return this.page.evaluate(() => (window as unknown as { appFalso: AppFalso }).appFalso.naReuniaoEm());
   }
 
   /** A primeira mensagem do tipo que o app de mentira recebeu, esperando até prazo ms. */
@@ -1016,16 +1035,24 @@ export class Pagina {
     );
   }
 
-  /** Espera o som que chega ao #som deixar de ter hz como a frequência mais forte (a até 25 Hz, acima de -80 dB). */
+  /** Espera o som que chega ao #som deixar de ter hz como a frequência mais forte (a até 25 Hz, acima de -80 dB), em
+   * LEITURAS_SEM_O_TOM leituras seguidas, de 100 em 100 ms, com o analisador já ouvindo a faixa (sem faixa, nada toca). */
   async esperarSemFrequencia(hz: number, prazo = 20_000): Promise<void> {
+    let seguidas = 0;
     await repetirAte(
       prazo,
       100,
-      () => this.alvo.evaluate(frequenciaDoSom),
-      (f) => f === null || f.db <= -80 || Math.abs(f.hz - hz) > 25,
-      async (f) =>
-        `o som que chega ao #som de ${this.pessoa.letra} ainda tinha ${hz} Hz depois de ${prazo / 1000} s; ` +
-        `o último: ${texto(f)}; a página: ${await this.diagnostico()}`,
+      async () => {
+        const f = await this.alvo.evaluate(frequenciaDoSom);
+        const semOTom = f === null || f.db <= -80 || Math.abs(f.hz - hz) > 25;
+        if (!semOTom) seguidas = 0;
+        else if (f === null || f.ouvindoHa >= ANALISADOR_PRONTO_MS) seguidas++;
+        return { f, seguidas };
+      },
+      (l) => l.seguidas >= LEITURAS_SEM_O_TOM,
+      async (l) =>
+        `o som que chega ao #som de ${this.pessoa.letra} ainda tinha ${hz} Hz depois de ${prazo / 1000} s ` +
+        `(${l.seguidas} leituras seguidas sem ele); o último: ${texto(l.f)}; a página: ${await this.diagnostico()}`,
     );
   }
 

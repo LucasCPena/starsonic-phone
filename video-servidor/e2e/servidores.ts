@@ -51,7 +51,17 @@ export function ipDaMaquina(): string {
 // privada: um teste que falha troca o processo do Playwright, e o último teste ainda os vê.
 const USADOS = join(PRIVADO, 'usados.jsonl');
 
-type Tipo = 'codigos' | 'salas' | 'participantes' | 'senhas' | 'bilhetes' | 'voltas' | 'passes' | 'chaves' | 'textos';
+type Tipo =
+  | 'codigos'
+  | 'salas'
+  | 'participantes'
+  | 'senhas'
+  | 'bilhetes'
+  | 'voltas'
+  | 'passes'
+  | 'chaves'
+  | 'chavesDoColega'
+  | 'textos';
 
 /** O texto de uma mensagem do chat da reunião é anotado com 12 letras ou mais: um texto curto ("Oi") apareceria nas
  * saídas por acaso. Os testes mandam textos únicos e compridos. */
@@ -77,8 +87,9 @@ function cargaDe(senha: string): { sala?: unknown; participante?: unknown } | nu
 
 /** Anota o que houver no valor (um Acesso, uma mensagem da página, um evento, uma lista, uma resposta): os códigos das
  * reuniões, as senhas, a sala e o participante de dentro de cada senha, os bilhetes (o da página e o dos eventos do
- * app), as chaves de volta da página, os passes do colega (o campo passe), as chaves de 43 caracteres (a do colega, na
- * resposta do abrir, e a de um computador) e os textos das mensagens do chat da reunião (o campo texto). */
+ * app), as chaves de volta da página, os passes do colega (o campo passe), as chaves de 43 caracteres (a de um
+ * computador; a do colega, o colega.chave da resposta do abrir, também como chavesDoColega) e os textos das mensagens
+ * do chat da reunião (o campo texto). */
 export function anotarSegredos(valor: unknown): void {
   if (Array.isArray(valor)) {
     valor.forEach(anotarSegredos);
@@ -101,6 +112,8 @@ export function anotarSegredos(valor: unknown): void {
         if (typeof carga?.participante === 'string') anotar('participantes', carga.participante);
       }
     } else {
+      const chave = (v as { chave?: unknown } | null)?.chave;
+      if (campo === 'colega' && typeof chave === 'string' && CHAVE.test(chave)) anotar('chavesDoColega', chave);
       anotarSegredos(v);
     }
   }
@@ -117,6 +130,7 @@ export function segredosUsados(): Record<Tipo, string[]> {
     voltas: new Set(),
     passes: new Set(),
     chaves: new Set(),
+    chavesDoColega: new Set(),
     textos: new Set(),
   };
   if (existsSync(USADOS)) {
@@ -135,6 +149,7 @@ export function segredosUsados(): Record<Tipo, string[]> {
     voltas: [...usados.voltas],
     passes: [...usados.passes],
     chaves: [...usados.chaves],
+    chavesDoColega: [...usados.chavesDoColega],
     textos: [...usados.textos],
   };
 }
@@ -179,6 +194,7 @@ export function segredosNosRegistros(): string[] {
     ['uma chave de volta', usados.voltas],
     ['um passe', usados.passes],
     ['uma chave', usados.chaves],
+    ['uma chave do colega', usados.chavesDoColega],
     ['o texto de uma mensagem', usados.textos],
     ...segredosDoAmbiente().map(([rotulo, valor]): [string, string[]] => [rotulo, [valor]]),
   ];

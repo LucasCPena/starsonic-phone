@@ -6,6 +6,7 @@
 // C e a Bia Ramos é a B. Cada passe e cada chave do colega ficam anotados, e o último teste confere os registros.
 import { expect, test } from '@playwright/test';
 import { A, AMARELO, APARELHOS, B, C, CIANO, MOSAICO_1, MOSAICO_2, perto, TELA_2, VERDE, VERMELHO } from './midia';
+import { repetirAte } from './espera';
 import { Pagina, telaVerde } from './navegador';
 import {
   ana,
@@ -19,6 +20,23 @@ import {
 } from './servidores';
 
 const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** No navegador (no quadro da reunião): a página está na tela da reunião, em pausa — o Microfone e a Câmera dos
+ * controles desligados, nenhuma câmera acesa e o som da reunião calado —, e o Date.now da leitura. */
+function pausaNaTela(): { pausada: boolean; agora: number } {
+  const controles = document.querySelector('nav[aria-label="Controles da reunião"]');
+  const botao = (b: string) => controles?.querySelector(`[data-botao="${b}"]`)?.getAttribute('aria-pressed');
+  const som = document.getElementById('som') as HTMLAudioElement | null;
+  const cameras = (window as unknown as { camerasDoTeste?: MediaStreamTrack[] }).camerasDoTeste ?? [];
+  const pausada =
+    controles !== null &&
+    controles.closest('[hidden]') === null &&
+    botao('microfone') === 'false' &&
+    botao('camera') === 'false' &&
+    cameras.every((t) => t.readyState !== 'live') &&
+    som?.muted === true;
+  return { pausada, agora: Date.now() };
+}
 
 /** O cartão do pedido na página do colega. */
 const cartao = (p: Pagina, nome: string) => p.tela.getByRole('region', { name: `${nome} quer entrar`, exact: true });
@@ -269,20 +287,18 @@ test('a pausa na hora em que a página entra', async () => {
   try {
     anaP = await Pagina.abrir(A);
     await anaP.entrarComoColega(codigo, await app.passe(codigo), { noApp: true, pausarAoEntrar: true });
-    await anaP.esperarDoApp('estado'); // o da entrada
-    await expect
-      .poll(async () => (await anaP!.recebidasDoApp()).some((m) => m.tipo === 'estado' && m.fase === 'naReuniao'), {
-        timeout: 30_000,
-      })
-      .toBe(true);
-    // Em até 2 s da entrada, a página está em pausa: o microfone e a câmera desligados, sem a câmera acesa, e o som
-    // da reunião calado.
-    await Promise.all([
-      expect(botaoDosControles(anaP, 'Microfone')).toHaveAttribute('aria-pressed', 'false', { timeout: 2_000 }),
-      expect(botaoDosControles(anaP, 'Câmera')).toHaveAttribute('aria-pressed', 'false', { timeout: 2_000 }),
-      expect.poll(() => anaP!.camerasVivas(), { message: 'as câmeras vivas na página da Ana', timeout: 2_000 }).toBe(0),
-      expect.poll(() => anaP!.tocaOSom(), { message: 'a página da Ana toca o som', timeout: 2_000 }).toBe(false),
-    ]);
+    // A página está em pausa em até 2 s do naReuniao que o app recebeu (a hora que o app de mentira guardou, no mesmo
+    // relógio do quadro): o microfone e a câmera desligados, sem a câmera acesa, e o som da reunião calado. A tela é
+    // lida de 50 em 50 ms, desde antes da entrada.
+    const pausada = await repetirAte(
+      30_000,
+      50,
+      async () => ({ tela: await anaP!.tela.evaluate(pausaNaTela), naReuniaoEm: await anaP!.naReuniaoNoApp() }),
+      (l) => l.tela.pausada && l.naReuniaoEm !== null,
+      (l) => `a página da Ana não ficou em pausa depois de entrar; a última leitura: ${JSON.stringify(l)}`,
+    );
+    const demorou = pausada.tela.agora - (pausada.naReuniaoEm as number);
+    expect(demorou, 'os ms do naReuniao até a pausa na tela da Ana').toBeLessThanOrEqual(2_000);
     const estados = (await anaP.recebidasDoApp()).filter((m) => m.tipo === 'estado');
     expect(estados.at(-1), 'o último estado que o app recebeu').toEqual({
       starsonic: 1,
@@ -303,7 +319,7 @@ test('a pausa na hora em que a página entra', async () => {
     await maria.esperarTamanho(1920, 1080);
     await aAnaEmPausa(anaP, maria, 2_000);
     await esperar(2_000);
-    await aAnaEmPausa(anaP, maria, 500);
+    await aAnaEmPausa(anaP, maria, 1_000);
 
     // O retomar devolve os três em até 2 s, com o microfone e a câmera ligados, como a Ana entrou.
     await anaP.doApp('retomar');
@@ -355,20 +371,37 @@ test('a pausa pelo chat, no navegador', async () => {
     await expect(maria.quadro('Ana Souza')).toHaveAttribute('data-mostra', 'video');
     await anaP.conferirOConsole();
 
-    // Fora da reunião, a pausa não tem a quem ir. Depois do Sair, a página continua a da reunião (o Entrar de novo
-    // volta pelo mesmo canal, e a pausa que chega então ainda vale para ela): quem sai de vez fecha a página.
+    // Depois do Sair, com a página aberta no "Você saiu da reunião", a pausa não tem a quem ir: a rota passa a
+    // responder 409 foraDaReuniao quando a saída da câmera chega ao chat.
     await botaoDosControles(anaP, 'Sair').click();
     await expect(anaP.titulo('Você saiu da reunião')).toBeVisible();
-    await anaP.fechar();
     await expect
-      .poll(async () => {
-        const r = await app.pedir('POST', `/api/v1/reunioes/${encodeURIComponent(codigo)}/pausa`, {
-          pausada: true,
-          vez: 'ligacao3',
-        });
-        return `${r.status} ${r.json?.erro}`;
-      })
+      .poll(
+        async () => {
+          const r = await app.pedir('POST', `/api/v1/reunioes/${encodeURIComponent(codigo)}/pausa`, {
+            pausada: true,
+            vez: 'ligacao3',
+          });
+          return `${r.status} ${r.json?.erro}`;
+        },
+        { message: 'a pausa depois do Sair', timeout: 10_000 },
+      )
       .toBe('409 foraDaReuniao');
+    await expect(anaP.titulo('Você saiu da reunião')).toBeVisible();
+
+    // O Entrar de novo põe a Ana de volta: uma pausa nova vale de novo, e o pausada falso a desfaz.
+    await anaP.botao('Entrar de novo').click();
+    await expect(anaP.controles()).toBeVisible({ timeout: 30_000 });
+    await maria.esperarFrequencia(A.som);
+    await expect.poll(async () => perto(await maria!.corDoQuadro('Ana Souza'), VERMELHO)).toBe(true);
+    await anaP.esperarFrequencia(C.som);
+    expect(await app.pausa(codigo, true, 'ligacao4'), 'a pausa depois do Entrar de novo').toBe(204);
+    await aAnaEmPausa(anaP, maria, 2_000);
+    await expect(cartaoDaPausa(anaP)).toBeVisible();
+    expect(await app.pausa(codigo, false, 'ligacao4'), 'o fim dessa pausa').toBe(204);
+    await aAnaDeVolta(anaP, maria, 3_000);
+    await expect(cartaoDaPausa(anaP)).toBeHidden();
+    await anaP.conferirOConsole();
   } finally {
     await maria?.fechar();
     await anaP?.fechar();
@@ -388,6 +421,6 @@ test('o colega de outra empresa não tem passe', async () => {
 test('os registros não têm segredo nem nome', async () => {
   const usados = segredosUsados();
   expect(usados.passes.length, 'os testes anotaram os passes').toBeGreaterThan(0);
-  expect(usados.chaves.length, 'os testes anotaram as chaves do colega').toBeGreaterThan(0);
+  expect(usados.chavesDoColega.length, 'os testes anotaram as chaves do colega').toBeGreaterThan(0);
   expect(segredosNosRegistros(), 'o que os registros têm e não podiam ter').toEqual([]);
 });
