@@ -169,6 +169,16 @@ test('o carregar abre', () => {
     qualidade: { estado: 'medindo', perda: null, atraso: null },
     cartao: false,
     conexaoAvisada: false,
+    colega: null,
+    chaveDoColega: null,
+    passe: null,
+    semColega: false,
+    lista: { participantes: [], pedidos: [] },
+    gente: false,
+    tirando: null,
+    encerrando: false,
+    cheiaAoAceitar: false,
+    respondendo: [],
   });
   const r = passo(inicial(), COMECAR);
   assert.equal(r.estado.tela, 'carregando');
@@ -2214,4 +2224,430 @@ test('o um-a-cada-2-minutos vale também para quem sai e entra de novo', () => {
   assert.deepEqual(r.efeitos, []);
   r = rodar(r.estado, ...deNovo, medida('ruim'));
   assert.deepEqual(r.estado.avisoCurto, avisoDaConexao(2));
+});
+
+// ---- O colega ----
+
+// O colega de mentira: o passe do endereço, a chave que o abrir com ele dá e até quando o link vale.
+const PASSE = 'p'.repeat(43);
+const CHAVE_DO_COLEGA = 'c'.repeat(43);
+const VALE_ATE = new Date(2026, 10, 23, 23, 59).getTime();
+const COLEGA = { nome: 'Júlia Martins', chave: CHAVE_DO_COLEGA, valeAte: VALE_ATE };
+// O abrir com a chave responde o colega sem a chave: ela só vem na troca do passe.
+const COLEGA_SEM_CHAVE = { nome: 'Júlia Martins', valeAte: VALE_ATE };
+const COMECAR_COM_PASSE = { tipo: 'comecar', passe: PASSE };
+const abrirCom = (abertura, corpo) => ({ tipo: 'abrir', abertura, corpo });
+const abrirDoColega = (abertura) => abrirCom(abertura, { colega: CHAVE_DO_COLEGA });
+const abriuColega = (abertura, colega = COLEGA_SEM_CHAVE) => ({ ...abriu(abertura), colega });
+const passeRecusado = (abertura) => ({ ...abrirFalhou(abertura, 401), passe: true });
+const ENTRAR = mandar({ tipo: 'entrar' });
+const dizer = (texto) => ({ tipo: 'dizer', texto });
+const focar = (alvo) => ({ tipo: 'focar', alvo });
+const cliqueEm = (botao, id) => ({ tipo: 'clique', botao, id });
+
+// A lista da reunião: a própria pessoa, um de fora e dois pedidos.
+const EU = { id: 'b000000000000001', nome: 'Júlia Martins', deFora: false, tela: false, voce: true };
+const PEDRO = { id: 'b000000000000002', nome: 'Pedro Nunes', deFora: true, tela: false, voce: false };
+const MARIA_NA_REUNIAO = { id: 'b000000000000003', nome: 'Maria Lima', deFora: true, tela: false, voce: false };
+const MARIA = { id: 'a000000000000001', nome: 'Maria Lima' };
+const BIA = { id: 'a000000000000002', nome: 'Bia Ramos' };
+const lista = (participantes, pedidos) => mensagem({ tipo: 'participantes', participantes, pedidos });
+const recusa = (de, motivo) => mensagem({ tipo: 'recusa', de, motivo });
+
+// Os estados de partida do colega. O abrir 1 é o do carregar, com o passe, e o 2, o do Entrar, com a chave.
+const colegaNaEntrada = () =>
+  rodar(inicial(), COMECAR_COM_PASSE, abriuColega(1, COLEGA), midia('ligado', 'ligado')).estado;
+const colegaEntrando = () => rodar(colegaNaEntrada(), clique('entrar'), abriuColega(2), CANAL_ABRIU).estado;
+const colegaNaReuniao = () =>
+  rodar(colegaEntrando(), mensagem(ACEITO_COM_CHAVE), ligacao('principal', 'confirmada')).estado;
+const colegaComLista = () => passo(colegaNaReuniao(), lista([EU, PEDRO], [MARIA, BIA])).estado;
+
+// Todos os efeitos dos passos, em ordem.
+function efeitosDe(estado, ...eventos) {
+  const todos = [];
+  for (const evento of eventos) {
+    const r = passo(estado, evento);
+    todos.push(...r.efeitos);
+    estado = r.estado;
+  }
+  return { estado, efeitos: todos };
+}
+
+test('o passe vai no primeiro abrir', () => {
+  const r = passo(inicial(), COMECAR_COM_PASSE);
+  assert.equal(r.estado.tela, 'carregando');
+  assert.equal(r.estado.passe, PASSE);
+  assert.deepEqual(r.efeitos, [abrirCom(1, { passe: PASSE })]);
+  // Sem o passe (ausente, ou null), o abrir é o de hoje, sem corpo.
+  for (const comecar of [COMECAR, { tipo: 'comecar', passe: null }]) {
+    const s = passo(inicial(), comecar);
+    assert.equal(s.estado.passe, null);
+    assert.deepEqual(s.efeitos, [abrir(1)]);
+  }
+});
+
+test('o colega reconhecido vê a entrada dele', () => {
+  const r = rodar(inicial(), COMECAR_COM_PASSE, abriuColega(1, COLEGA));
+  assert.equal(r.estado.tela, 'entrada');
+  assert.deepEqual(r.estado.colega, { nome: 'Júlia Martins', valeAte: VALE_ATE });
+  assert.equal(r.estado.chaveDoColega, CHAVE_DO_COLEGA);
+  assert.equal(r.estado.passe, null);
+  assert.equal(r.estado.semColega, false);
+  assert.deepEqual(r.efeitos, [PEDIR_MIDIA, FOCAR]);
+  // Na reunião na hora, o link não tem fim marcado.
+  const s = rodar(inicial(), COMECAR_COM_PASSE, abriuColega(1, { ...COLEGA, valeAte: null }));
+  assert.deepEqual(s.estado.colega, { nome: 'Júlia Martins', valeAte: null });
+});
+
+test('o Entrar do colega abre de novo com a chave', () => {
+  let r = passo(colegaNaEntrada(), clique('entrar'));
+  assert.equal(r.estado.tela, 'entrando');
+  assert.deepEqual(r.efeitos, [abrirDoColega(2), FOCAR]);
+  r = passo(r.estado, abriuColega(2));
+  assert.equal(r.estado.canal, 'abrindo');
+  assert.equal(r.estado.chaveDoColega, CHAVE_DO_COLEGA);
+  assert.deepEqual(r.efeitos, [abrirCanal(2)]);
+  r = passo(r.estado, CANAL_ABRIU);
+  assert.equal(r.estado.canal, 'aberto');
+  assert.equal(r.estado.tela, 'entrando');
+  assert.equal(r.estado.aceito, false);
+  assert.deepEqual(r.efeitos, [ENTRAR]);
+});
+
+test('o colega nunca manda o pedir', () => {
+  const entrou = [colegaNaEntrada(), clique('entrar'), abriuColega(2), CANAL_ABRIU];
+  const caminhos = [
+    // O Pedir para entrar não vale na entrada do colega.
+    [colegaNaEntrada(), clique('pedir')],
+    [...entrou, mensagem({ tipo: 'cheia' }), clique('tentarDeNovo')],
+    [...entrou, mensagem({ tipo: 'erro', erro: 'invalido' }), clique('tentarDeNovo')],
+    [...entrou, canalFechou(1011), tempo('reabrir'), abriu(3), CANAL_ABRIU],
+    [colegaNaEntrada(), clique('entrar'), abrirFalhou(2, 0), clique('tentarDeNovo'), abriu(3), CANAL_ABRIU],
+    [colegaNaReuniao(), canalFechou(1006), clique('sair'), clique('entrarDeNovo'), abriu(3), CANAL_ABRIU],
+    [colegaEntrando(), clique('sair'), clique('entrarDeNovo'), abriu(3), CANAL_ABRIU],
+  ];
+  for (const [estado, ...eventos] of caminhos) {
+    const { efeitos } = efeitosDe(estado, ...eventos);
+    assert.ok(!efeitos.some((x) => x.tipo === 'mandar' && x.m.tipo === 'pedir'), JSON.stringify(eventos));
+  }
+  // O 1011 abre de novo com a chave, e o canal novo manda o entrar.
+  const { efeitos } = efeitosDe(colegaEntrando(), canalFechou(1011), tempo('reabrir'), abriu(3), CANAL_ABRIU);
+  assert.deepEqual(efeitos, [esperar(REABRIR_MS, 'reabrir'), abrirDoColega(3), abrirCanal(3), ENTRAR]);
+});
+
+test('o aceito do colega segue o de hoje', () => {
+  const r = passo(colegaEntrando(), mensagem(ACEITO_COM_CHAVE));
+  assert.equal(r.estado.tela, 'entrando');
+  assert.equal(r.estado.aceito, true);
+  assert.deepEqual(r.estado.acesso, ACESSO);
+  assert.deepEqual(r.estado.chave, { participante: 'participante-1', volta: VOLTA_1 });
+  // Os efeitos do aceito de quem é de fora; a tela já era a entrando, e o foco fica.
+  const deFora = passo(aguardando(), mensagem(ACEITO_COM_CHAVE));
+  assert.deepEqual(r.efeitos, [ligar('principal', 'senha-1'), camera(true)]);
+  assert.deepEqual(
+    r.efeitos,
+    deFora.efeitos.filter((x) => x.tipo !== 'focar'),
+  );
+  const s = passo(r.estado, ligacao('principal', 'confirmada'));
+  assert.equal(s.estado.tela, 'reuniao');
+  assert.deepEqual(s.efeitos, [FOCAR]);
+});
+
+test('cheia e servidor cheio no entrar', () => {
+  for (const tipo of ['cheia', 'servidorCheio']) {
+    let r = passo(colegaEntrando(), mensagem({ tipo }));
+    assert.equal(r.estado.tela, 'aviso');
+    assert.equal(r.estado.aviso, tipo);
+    assert.deepEqual(r.efeitos, [FOCAR]);
+    r = passo(r.estado, clique('tentarDeNovo'));
+    assert.equal(r.estado.tela, 'entrando');
+    assert.equal(r.estado.aviso, null);
+    assert.deepEqual(r.efeitos, [ENTRAR, FOCAR]);
+  }
+  // Com o canal fechado, o abrir de novo leva a chave.
+  let r = rodar(colegaNaEntrada(), clique('entrar'), abrirFalhou(2, 0));
+  assert.equal(r.estado.aviso, 'semServidor');
+  r = passo(r.estado, clique('tentarDeNovo'));
+  assert.equal(r.estado.tela, 'entrando');
+  assert.deepEqual(r.efeitos, [abrirDoColega(3), FOCAR]);
+  r = rodar(r.estado, abriu(3), CANAL_ABRIU);
+  assert.deepEqual(r.efeitos, [ENTRAR]);
+});
+
+test('o passe que não vale, no navegador', () => {
+  let r = rodar(inicial(), COMECAR_COM_PASSE, passeRecusado(1));
+  assert.equal(r.estado.tela, 'carregando');
+  assert.equal(r.estado.semColega, true);
+  assert.equal(r.estado.passe, null);
+  assert.equal(r.estado.colega, null);
+  assert.deepEqual(r.efeitos, [abrir(2)]);
+  r = passo(r.estado, abriu(2));
+  assert.equal(r.estado.tela, 'entrada');
+  assert.equal(r.estado.colega, null);
+  assert.deepEqual(r.efeitos, [PEDIR_MIDIA, FOCAR]);
+  // A entrada é a de quem é de fora: o nome e o Pedir para entrar.
+  r = rodar(r.estado, midia('ligado', 'ligado'), { tipo: 'nome', valor: 'Maria Lima' }, clique('pedir'));
+  assert.deepEqual(r.efeitos, [abrir(3), FOCAR]);
+  r = rodar(r.estado, abriu(3), CANAL_ABRIU);
+  assert.deepEqual(r.efeitos, [PEDIR]);
+  // O 401 sem o passe, ou no abrir sem corpo, é o de hoje.
+  r = rodar(inicial(), COMECAR, passeRecusado(1));
+  assert.equal(r.estado.aviso, 'semServidor');
+  assert.equal(r.estado.semColega, false);
+});
+
+test('a chave que deixou de valer, no navegador', () => {
+  let r = rodar(colegaNaEntrada(), clique('entrar'), passeRecusado(2));
+  assert.equal(r.estado.tela, 'entrada');
+  assert.equal(r.estado.semColega, true);
+  assert.equal(r.estado.colega, null);
+  assert.equal(r.estado.chaveDoColega, null);
+  assert.equal(r.estado.canal, 'fechado');
+  assert.deepEqual(r.efeitos, [FOCAR]);
+  r = rodar(r.estado, { tipo: 'nome', valor: 'Maria Lima' }, clique('pedir'));
+  assert.deepEqual(r.efeitos, [abrir(3), FOCAR]);
+  // A chave recusada no Entrar de novo também.
+  r = rodar(colegaEntrando(), clique('sair'), clique('entrarDeNovo'), passeRecusado(3));
+  assert.equal(r.estado.tela, 'entrada');
+  assert.equal(r.estado.semColega, true);
+  assert.equal(r.estado.colega, null);
+});
+
+test('o voltar do colega abre sem corpo', () => {
+  const caiu = passo(colegaNaReuniao(), canalFechou(1006));
+  assert.deepEqual(caiu.efeitos, [esperar(2000, 'religar:1')]);
+  const e = seguir(caiu.estado, [
+    [tempo('religar:1'), [abrir(3), prazo(1)]],
+    [abriu(3), [abrirCanal(3)]],
+    [CANAL_ABRIU, [voltar(VOLTA_1)]],
+    [voltou(VOLTA_2), [camera(true)]],
+  ]);
+  assert.equal(e.canal, 'aberto');
+  // A conexão caída também volta sem corpo.
+  const r = rodar(colegaNaReuniao(), canalFechou(1006), SEM_CONEXAO);
+  assert.deepEqual(passo(r.estado, tempo('reconectar:2')).efeitos, [abrir(3), prazo(2)]);
+});
+
+test('a lista chega e o número aparece', () => {
+  const r = passo(colegaNaReuniao(), lista([EU, PEDRO], [MARIA, BIA]));
+  assert.deepEqual(r.estado.lista, { participantes: [EU, PEDRO], pedidos: [MARIA, BIA] });
+  assert.equal(r.estado.lista.pedidos.length, 2);
+  // A lista que não vale fica de fora.
+  semMudar(r.estado, mensagem({ tipo: 'participantes', pedidos: [] }));
+  // Ela sai com a reunião.
+  assert.deepEqual(passo(r.estado, clique('sair')).estado.lista, { participantes: [], pedidos: [] });
+});
+
+test('o painel e o chat não ficam abertos juntos', () => {
+  let r = passo(colegaComLista(), clique('chat'));
+  assert.equal(r.estado.chat.aberto, true);
+  r = passo(r.estado, clique('participantes'));
+  assert.equal(r.estado.gente, true);
+  assert.equal(r.estado.chat.aberto, false);
+  assert.deepEqual(r.efeitos, []);
+  r = passo(r.estado, clique('chat'));
+  assert.equal(r.estado.chat.aberto, true);
+  assert.equal(r.estado.gente, false);
+  assert.deepEqual(r.efeitos, [FOCAR_O_CAMPO]);
+  // O Ver os pedidos do cartão abre o painel, com o foco em quem espera.
+  r = passo(r.estado, clique('verPedidos'));
+  assert.equal(r.estado.gente, true);
+  assert.equal(r.estado.chat.aberto, false);
+  assert.deepEqual(r.efeitos, [focar('cartao')]);
+  // O Abrir o chat do aviso curto também fecha o painel.
+  r = passo(r.estado, clique('abrirChat'));
+  assert.equal(r.estado.chat.aberto, true);
+  assert.equal(r.estado.gente, false);
+  // O botão Participantes abre e fecha; o fechar do painel devolve o foco ao botão.
+  r = rodar(r.estado, clique('participantes'), clique('participantes'));
+  assert.equal(r.estado.gente, false);
+  assert.deepEqual(r.efeitos, []);
+  r = rodar(r.estado, clique('participantes'), clique('fecharParticipantes'));
+  assert.equal(r.estado.gente, false);
+  assert.deepEqual(r.efeitos, [focar('participantes')]);
+});
+
+test('aceitar e recusar', () => {
+  const e = colegaComLista();
+  let r = passo(e, cliqueEm('aceitar', MARIA.id));
+  assert.deepEqual(r.efeitos, [mandar({ tipo: 'aceitar', pedido: MARIA.id })]);
+  r = passo(e, cliqueEm('recusar', BIA.id));
+  assert.deepEqual(r.efeitos, [mandar({ tipo: 'recusar', pedido: BIA.id })]);
+  // Um pedido que não está na lista fica de fora, e sem o canal da pessoa nada sai.
+  semMudar(e, cliqueEm('aceitar', 'a00000000000000f'));
+  semMudar(e, clique('aceitar'));
+  semMudar(passo(e, canalFechou(1006)).estado, cliqueEm('aceitar', MARIA.id));
+});
+
+test('o Tirar pede o segundo clique', () => {
+  const e = colegaComLista();
+  const r = passo(e, cliqueEm('tirar', PEDRO.id));
+  assert.equal(r.estado.tirando, PEDRO.id);
+  assert.deepEqual(r.efeitos, []);
+  let s = passo(r.estado, cliqueEm('tirarMesmo', PEDRO.id));
+  assert.deepEqual(s.efeitos, [mandar({ tipo: 'tirar', participante: PEDRO.id })]);
+  assert.equal(s.estado.tirando, null);
+  s = passo(r.estado, clique('naoTirar'));
+  assert.equal(s.estado.tirando, null);
+  assert.deepEqual(s.efeitos, []);
+  // A lista nova sem aquela pessoa desfaz a pergunta; com ela, a pergunta fica.
+  assert.equal(passo(r.estado, lista([EU], [MARIA])).estado.tirando, null);
+  assert.equal(passo(r.estado, lista([EU, PEDRO], [])).estado.tirando, PEDRO.id);
+  // A própria pessoa não é tirada, e o tirarMesmo só vale com a pergunta daquela pessoa.
+  semMudar(e, cliqueEm('tirar', EU.id));
+  semMudar(e, cliqueEm('tirar', 'b00000000000000f'));
+  semMudar(e, cliqueEm('tirarMesmo', PEDRO.id));
+  semMudar(r.estado, cliqueEm('tirarMesmo', EU.id));
+});
+
+test('o Encerrar pergunta', () => {
+  const e = colegaComLista();
+  const r = passo(e, clique('encerrar'));
+  assert.equal(r.estado.encerrando, true);
+  assert.deepEqual(r.efeitos, []);
+  let s = passo(r.estado, clique('encerrarMesmo'));
+  assert.deepEqual(s.efeitos, [mandar({ tipo: 'encerrar' })]);
+  assert.equal(s.estado.encerrando, false);
+  s = passo(r.estado, clique('naoEncerrar'));
+  assert.equal(s.estado.encerrando, false);
+  assert.deepEqual(s.efeitos, [focar('encerrar')]);
+  // Sem a pergunta, o encerrarMesmo não faz nada; o encerrada que chega é o fim de hoje.
+  semMudar(e, clique('encerrarMesmo'));
+  s = passo(r.estado, mensagem({ tipo: 'encerrada' }));
+  assert.equal(s.estado.aviso, 'encerrada');
+  assert.equal(s.estado.encerrando, false);
+});
+
+test('a recusa cheia aparece, e a jaRespondido não', () => {
+  const e = colegaComLista();
+  const r = rodar(e, cliqueEm('aceitar', MARIA.id), recusa('aceitar', 'cheia'));
+  assert.equal(r.estado.cheiaAoAceitar, true);
+  assert.deepEqual(r.efeitos, []);
+  // Ela sai com a lista nova, ou quando a pessoa responde de novo.
+  assert.equal(passo(r.estado, lista([EU, PEDRO], [MARIA, BIA])).estado.cheiaAoAceitar, false);
+  assert.equal(passo(r.estado, cliqueEm('recusar', BIA.id)).estado.cheiaAoAceitar, false);
+  for (const motivo of ['jaRespondido', 'naoEncontrado', 'foraDaReuniao']) {
+    semMudar(e, recusa('aceitar', motivo));
+    const s = rodar(e, cliqueEm('aceitar', MARIA.id), recusa('aceitar', motivo));
+    assert.equal(s.estado.cheiaAoAceitar, false);
+    assert.equal(s.estado.avisoCurto, null);
+    assert.deepEqual(s.efeitos, []);
+  }
+});
+
+test('a recusa servidorVideo mostra o aviso curto do servidor', () => {
+  const e = colegaComLista();
+  const r = rodar(e, cliqueEm('tirar', PEDRO.id), cliqueEm('tirarMesmo', PEDRO.id), recusa('tirar', 'servidorVideo'));
+  assert.deepEqual(r.estado.avisoCurto, { n: 1, tipo: 'servidor' });
+  assert.deepEqual(r.efeitos, [tempoDoAviso(1), dizer('O servidor de reuniões não respondeu')]);
+  // O aviso vive os 5 segundos dos outros.
+  assert.equal(passo(r.estado, tempo('avisoCurto:1')).estado.avisoCurto, null);
+  // O encerrar recusado também.
+  const s = rodar(e, clique('encerrar'), clique('encerrarMesmo'), recusa('encerrar', 'servidorVideo'));
+  assert.deepEqual(s.estado.avisoCurto, { n: 1, tipo: 'servidor' });
+});
+
+test('o resultado de cada resposta é dito', () => {
+  const e = colegaComLista();
+  let r = rodar(e, cliqueEm('aceitar', MARIA.id), lista([EU, PEDRO, MARIA_NA_REUNIAO], [BIA]));
+  assert.deepEqual(r.efeitos, [dizer('O pedido de Maria Lima foi aceito')]);
+  // Uma vez só.
+  assert.deepEqual(passo(r.estado, lista([EU, PEDRO], [])).efeitos, []);
+  // A lista que ainda tem o pedido não diz nada; a que o tira, diz.
+  r = rodar(e, cliqueEm('recusar', BIA.id), lista([EU], [MARIA, BIA]));
+  assert.deepEqual(r.efeitos, []);
+  r = passo(r.estado, lista([EU], [MARIA]));
+  assert.deepEqual(r.efeitos, [dizer('O pedido de Bia Ramos foi recusado')]);
+  r = rodar(e, cliqueEm('tirar', PEDRO.id), cliqueEm('tirarMesmo', PEDRO.id), lista([EU], [MARIA, BIA]));
+  assert.deepEqual(r.efeitos, [dizer('Pedro Nunes saiu da reunião')]);
+  // Com um recusa no meio, nada é dito.
+  r = rodar(e, cliqueEm('aceitar', MARIA.id), recusa('aceitar', 'jaRespondido'), lista([EU, PEDRO], [BIA]));
+  assert.deepEqual(r.efeitos, []);
+  r = rodar(e, cliqueEm('aceitar', MARIA.id), recusa('aceitar', 'cheia'), lista([EU, PEDRO], [BIA]));
+  assert.deepEqual(r.efeitos, []);
+});
+
+test('o pedido que chega é dito', () => {
+  const e = passo(colegaNaReuniao(), lista([EU], [])).estado;
+  let r = passo(e, lista([EU], [MARIA]));
+  assert.deepEqual(r.efeitos, [dizer('Maria Lima quer entrar')]);
+  // O mesmo pedido não é dito de novo; o próximo que chega, é.
+  r = passo(r.estado, lista([EU, PEDRO], [MARIA]));
+  assert.deepEqual(r.efeitos, []);
+  r = passo(r.estado, lista([EU, PEDRO], [MARIA, BIA]));
+  assert.deepEqual(r.efeitos, [dizer('Bia Ramos quer entrar')]);
+});
+
+test('quem é de fora ignora o que é do colega', () => {
+  const e = naReuniao();
+  semMudar(e, lista([EU], [MARIA]));
+  semMudar(e, recusa('aceitar', 'cheia'));
+  semMudar(e, recusa('tirar', 'servidorVideo'));
+  for (const botao of ['participantes', 'fecharParticipantes', 'verPedidos', 'naoTirar', 'encerrar']) {
+    semMudar(e, clique(botao));
+  }
+  for (const botao of ['encerrarMesmo', 'naoEncerrar', 'entrar']) semMudar(e, clique(botao));
+  for (const botao of ['aceitar', 'recusar', 'tirar', 'tirarMesmo']) semMudar(e, cliqueEm(botao, MARIA.id));
+  // Na entrada de quem é de fora, o Entrar não faz nada.
+  semMudar(naEntrada(), clique('entrar'));
+});
+
+test('o Entrar de novo do colega', () => {
+  // A página de quem é de fora, com o canal fechado, faria o abrir sem corpo e o pedir novo.
+  const antes = rodar(colegaNaReuniao(), canalFechou(1006), clique('sair')).estado;
+  assert.equal(antes.canal, 'fechado');
+  let r = passo(antes, clique('entrarDeNovo'));
+  assert.equal(r.estado.tela, 'entrando');
+  assert.equal(r.estado.aceito, false);
+  assert.deepEqual(r.efeitos, [PEDIR_MIDIA, abrirDoColega(3), FOCAR]);
+  r = rodar(r.estado, abriu(3), CANAL_ABRIU);
+  assert.deepEqual(r.efeitos, [ENTRAR]);
+  r = passo(r.estado, mensagem({ ...ACEITO_COM_CHAVE, senha: 'senha-2' }));
+  assert.equal(r.estado.aceito, true);
+  // O colega que sai antes do aceito larga o canal do entrar, e o Entrar de novo abre outro.
+  r = passo(colegaEntrando(), clique('sair'));
+  assert.equal(r.estado.aviso, 'saiu');
+  assert.equal(r.estado.canal, 'fechado');
+  assert.deepEqual(r.efeitos, [FECHAR_CANAL, PARAR_MIDIA, FOCAR]);
+  r = passo(r.estado, clique('entrarDeNovo'));
+  assert.deepEqual(r.efeitos, [PEDIR_MIDIA, abrirDoColega(3), FOCAR]);
+});
+
+test('o estado nunca muda no lugar', () => {
+  // O passo congela o estado antes de cada evento: um evento que o mudasse no lugar daria erro.
+  const r = rodar(
+    inicial(),
+    COMECAR_COM_PASSE,
+    abriuColega(1, COLEGA),
+    midia('ligado', 'ligado'),
+    clique('entrar'),
+    abriuColega(2),
+    CANAL_ABRIU,
+    mensagem(ACEITO_COM_CHAVE),
+    ligacao('principal', 'confirmada'),
+    lista([EU, PEDRO], [MARIA, BIA]),
+    clique('chat'),
+    clique('participantes'),
+    clique('verPedidos'),
+    cliqueEm('aceitar', MARIA.id),
+    recusa('aceitar', 'cheia'),
+    cliqueEm('recusar', BIA.id),
+    lista([EU, PEDRO], [MARIA]),
+    cliqueEm('tirar', PEDRO.id),
+    clique('naoTirar'),
+    cliqueEm('tirar', PEDRO.id),
+    cliqueEm('tirarMesmo', PEDRO.id),
+    recusa('tirar', 'servidorVideo'),
+    lista([EU], [MARIA]),
+    clique('fecharParticipantes'),
+    clique('encerrar'),
+    clique('naoEncerrar'),
+    clique('encerrar'),
+    clique('encerrarMesmo'),
+    tempo('avisoCurto:1'),
+    mensagem({ tipo: 'encerrada' }),
+  );
+  assert.equal(r.estado.aviso, 'encerrada');
+  rodar(inicial(), COMECAR_COM_PASSE, passeRecusado(1), abriu(2));
+  rodar(colegaNaEntrada(), clique('entrar'), passeRecusado(2));
 });

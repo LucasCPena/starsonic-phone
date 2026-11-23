@@ -60,7 +60,18 @@
 // aqui: fora dela, o cartão fecha; sem a ligação principal no ar (fora da reunião, na conexão caída, ou nos instantes
 // depois de a ligação terminar), o sinalizador volta ao começo, e as medidas que ainda chegarem ficam de fora; e o
 // aviso da conexão ruim só fica enquanto o sinalizador diz ruim.
+//
+// O colega (o colega.js). A página que recebe um passe (o comecar com o passe) o leva no primeiro abrir, e a resposta
+// que reconhece o colega dá o nome dele, até quando o link vale e a chave do colega, que toma o lugar do passe: o
+// Entrar (e o Tentar de novo, o Entrar de novo e o 1011) abre de novo com ela, e o canal manda o entrar, em vez do
+// pedir, sem a espera. O voltar depois de uma queda é o de hoje, sem corpo. O passe ou a chave que não vale (o 401
+// passe) leva à entrada de quem é de fora, e a página nunca tenta de novo como colega. Na reunião, o colega recebe a
+// lista inteira (quem está nela e quem espera) a cada mudança, e responde pelo canal: aceitar, recusar, tirar e
+// encerrar. O que deu certo não tem resposta: a lista nova (ou o encerrada) diz, e o leitor de tela ouve o resultado
+// (o efeito dizer). A lista, o painel e as perguntas seguem a regra da tela da reunião, como o chat. Quem é de fora
+// nunca tem nada disso. A chave do colega e o passe não vão ao console, como a chave de volta.
 
+import { LISTA_VAZIA, ditoDaResposta, lerLista, tituloDoCartao } from './colega.js';
 import { MAX_MENSAGENS, textoLimpo } from './mensagens.js';
 import { lerPalco } from './palco.js';
 
@@ -112,6 +123,11 @@ const desligar = (qual) => ({ tipo: 'desligar', qual });
 const esperar = (ms, chave) => ({ tipo: 'esperar', ms, chave });
 const abrirCanal = (bilhete) => ({ tipo: 'abrirCanal', bilhete });
 const pedido = (e) => mandar({ tipo: 'pedir', nome: e.nome.trim() });
+// O colega não pede: ele entra.
+const ENTRAR = mandar({ tipo: 'entrar' });
+const pedidoOuEntrar = (e) => (e.colega !== null ? ENTRAR : pedido(e));
+const focar = (alvo) => ({ tipo: 'focar', alvo }); // os alvos do colega: participantes, cartao e encerrar
+const dizer = (texto) => ({ tipo: 'dizer', texto }); // o que o leitor de tela ouve
 
 // O chat da reunião sem nada: a lista, as não lidas, o painel fechado e o número da última mensagem.
 const CHAT_VAZIO = Object.freeze({ mensagens: Object.freeze([]), naoLidas: 0, aberto: false, seq: 0 });
@@ -127,10 +143,24 @@ const so = (estado, ...efeitos) => ({ estado, efeitos });
 const nada = (estado) => so(estado);
 
 // comAbrir: o com, e o abrir no fim. O abrir leva o número dele, a abertura, que o abriu e o abrirFalhou devolvem: a
-// resposta de um abrir que passou fica de fora.
+// resposta de um abrir que passou fica de fora. O corpo é o do estado novo (o corpoDoAbrir).
 function comAbrir(e, mudancas, ...efeitos) {
+  return abrirCom(e, corpoDoAbrir({ ...e, ...mudancas }), mudancas, ...efeitos);
+}
+
+// abrirCom: o comAbrir com o corpo dado. O abrir sem corpo (null) é o de quem é de fora, letra por letra.
+function abrirCom(e, corpo, mudancas, ...efeitos) {
   const abertura = e.abertura + 1;
-  return com(e, { ...mudancas, abertura }, ...efeitos, { tipo: 'abrir', abertura });
+  const abrir = corpo === null ? { tipo: 'abrir', abertura } : { tipo: 'abrir', abertura, corpo };
+  return com(e, { ...mudancas, abertura }, ...efeitos, abrir);
+}
+
+// O corpo do abrir que leva à reunião: o colega reconhecido abre com a chave; antes de o passe ter resposta, com o
+// passe; quem é de fora, sem corpo. O abrir do voltar nunca leva corpo: a chave de volta é que diz quem é a pessoa.
+function corpoDoAbrir(e) {
+  if (e.colega !== null) return { colega: e.chaveDoColega };
+  if (e.passe !== null) return { passe: e.passe };
+  return null;
 }
 
 // A chave de uma espera da volta e do religar leva a vez dela, como "reconectar:3": a de uma vez que passou fica de
@@ -173,13 +203,31 @@ export function inicial() {
     // O chat da reunião: as mensagens ({n, voce, nome, texto, hora, situacao, id, motivo}), as não lidas, o painel
     // aberto e o seq, o número da última mensagem, que nunca volta a zero.
     chat: CHAT_VAZIO,
-    avisoCurto: null, // o aviso curto na tela: {n, tipo: 'mensagem', nome, texto} ou {n, tipo: 'conexao'}
+    // O aviso curto na tela: {n, tipo: 'mensagem', nome, texto}, {n, tipo: 'conexao'} ou, na página do colega, o do
+    // servidor de vídeo que não respondeu a uma resposta dela, {n, tipo: 'servidor'}.
+    avisoCurto: null,
     avisos: 0, // o número do último aviso curto: o tempo de um aviso que passou fica de fora
     // O sinalizador de qualidade: o estado mostrado (medindo, boa, instavel ou ruim) e os números da última medida, a
     // perda (uma fração) e o atraso (em ms), ou null para o que o navegador não deu.
     qualidade: QUALIDADE_DO_COMECO,
     cartao: false, // o cartão do sinalizador, aberto
     conexaoAvisada: false, // o aviso de conexão ruim já saiu nos últimos 2 minutos
+    // O colega: quem o passe reconheceu ({nome, valeAte}, com o valeAte em ms ou null), a chave do colega que o abrir
+    // deu em troca do passe (nunca num texto), o passe que ainda não teve resposta, e se o passe (ou a chave) não
+    // valeu e a página seguiu como quem é de fora.
+    colega: null,
+    chaveDoColega: null,
+    passe: null,
+    semColega: false,
+    // Na reunião, só para o colega: a lista ({participantes, pedidos}), o painel Participantes aberto, o id de quem
+    // tem a pergunta "Tirar <Nome>?" à vista, a pergunta do Encerrar para todos à vista, a reunião cheia no último
+    // aceitar, e as respostas da página que esperam a lista nova ({de, id, nome}), para o leitor de tela.
+    lista: LISTA_VAZIA,
+    gente: false,
+    tirando: null,
+    encerrando: false,
+    cheiaAoAceitar: false,
+    respondendo: Object.freeze([]),
   };
 }
 
@@ -188,7 +236,11 @@ export function transicao(estado, evento) {
   let r;
   switch (evento.tipo) {
     case 'comecar':
-      r = estado.tela === 'carregando' ? comAbrir(estado, {}) : nada(estado);
+      // O passe que a página recebeu, se houver: o primeiro abrir o leva.
+      r =
+        estado.tela === 'carregando'
+          ? comAbrir(estado, { passe: typeof evento.passe === 'string' && evento.passe !== '' ? evento.passe : null })
+          : nada(estado);
       break;
     case 'abriu':
       r = evento.abertura === estado.abertura ? abriu(estado, evento) : nada(estado);
@@ -208,7 +260,7 @@ export function transicao(estado, evento) {
       else r = nada(estado);
       break;
     case 'clique':
-      r = clique(estado, evento.botao);
+      r = clique(estado, evento.botao, evento.id);
       break;
     case 'nome':
       r = estado.tela === 'entrada' ? com(estado, { nome: evento.valor, nomeRecusado: false }) : nada(estado);
@@ -288,11 +340,21 @@ function soNaReuniao(e) {
     f = { ...f, qualidade: QUALIDADE_DO_COMECO };
   }
   if (f.avisoCurto?.tipo === 'conexao' && f.qualidade.estado !== 'ruim') f = { ...f, avisoCurto: null };
+  // A lista do colega é da reunião, como o chat; o painel, as perguntas e a reunião cheia são da tela dela.
+  if (!naReuniaoOuEntrando(f) && (f.lista !== LISTA_VAZIA || f.respondendo.length > 0)) {
+    f = { ...f, lista: LISTA_VAZIA, respondendo: [] };
+  }
+  if (f.tela !== 'reuniao' && (f.gente || f.tirando !== null || f.encerrando || f.cheiaAoAceitar)) {
+    f = { ...f, gente: false, tirando: null, encerrando: false, cheiaAoAceitar: false };
+  }
   return f;
 }
 
+// A página espera a resposta do pedido: o de quem é de fora, nas telas da espera, e o entrar do colega, na tela
+// entrando, antes do aceito (o colega não passa pela espera).
+const naEspera = (e) => !e.aceito && (ESPERA.has(e.tela) || (e.colega !== null && e.tela === 'entrando'));
 // O abrir de um pedido (o do clique, o do Tentar de novo, o do Entrar de novo e o do 1011) roda com o canal fechado.
-const esperaOAbrir = (e) => !e.aceito && ESPERA.has(e.tela) && e.canal === 'fechado';
+const esperaOAbrir = (e) => naEspera(e) && e.canal === 'fechado';
 // A principal espera uma senha pelo canal.
 const esperaSenha = (e) => e.principal === 'pedindo' && e.senhaGuardada === null;
 const contrario = (v) => (v === 'ligado' ? 'desligado' : v === 'desligado' ? 'ligado' : v);
@@ -305,21 +367,47 @@ const chaveDe = (participante, volta) => (participante && volta ? { participante
 
 // O abriu do carregar dá o cabeçalho e pede a mídia. O do pedido abre o canal com o bilhete novo, que não fica no
 // estado. O do voltar também abre o canal, e só: na reunião, ele não leva à entrada nem pede a mídia.
-function abriu(e, { reuniao, bilhete }) {
-  if (e.tela === 'carregando') return com(e, { tela: 'entrada', reuniao, esperandoMidia: true }, PEDIR_MIDIA);
-  if (esperaOAbrir(e)) return com(e, { reuniao, canal: 'abrindo' }, abrirCanal(bilhete));
+function abriu(e, { reuniao, bilhete, colega }) {
+  if (e.tela === 'carregando') {
+    return com(e, { tela: 'entrada', reuniao, esperandoMidia: true, ...reconhecido(e, colega) }, PEDIR_MIDIA);
+  }
+  if (esperaOAbrir(e)) {
+    // O abrir com a chave responde o colega de novo, sem a chave: o nome e o valeAte de agora.
+    const deAgora = e.colega !== null && colegaQueVale(colega) ? { colega: colegaDaResposta(colega) } : {};
+    return com(e, { reuniao, canal: 'abrindo', ...deAgora }, abrirCanal(bilhete));
+  }
   if (e.esperandoBilhete) return com(e, { esperandoBilhete: false, canal: 'abrindo' }, abrirCanal(bilhete));
   return nada(e);
 }
 
+// O colega que a resposta do abrir traz: o nome, e o valeAte, que é um número ou null.
+const colegaQueVale = (c) => c !== null && typeof c === 'object' && typeof c.nome === 'string';
+const colegaDaResposta = (c) => ({ nome: c.nome, valeAte: numero(c.valeAte) ? c.valeAte : null });
+
+// O que o abriu do carregar diz do passe: o colega reconhecido, com a chave que vale daqui em diante, ou o passe que
+// não valeu. Sem o passe, nada: quem é de fora.
+function reconhecido(e, colega) {
+  if (e.passe === null) return {};
+  if (colegaQueVale(colega) && typeof colega.chave === 'string' && colega.chave !== '') {
+    return { colega: colegaDaResposta(colega), chaveDoColega: colega.chave, passe: null };
+  }
+  return { passe: null, semColega: true };
+}
+
 // O 404 é o link que não vale; o 429 conta até poder tentar de novo; o resto (a rede, o 5xx) é o semServidor. No abrir
 // do voltar, o 404 é a reunião que deixou de valer, e o resto é uma tentativa que falhou, sem o aviso tentativas.
-function abrirFalhou(e, { status, esperarSegundos }) {
+// O passe (ou a chave do colega) que não vale segue como quem é de fora: no carregar, um abrir sem corpo; no Entrar,
+// a entrada de quem é de fora, com o cabeçalho que a página já tem.
+function abrirFalhou(e, { status, esperarSegundos, passe }) {
   if (e.esperandoBilhete) {
     const f = { ...e, esperandoBilhete: false };
     return status === 404 ? linkInvalidoDoVoltar(f) : voltarFalhou(f);
   }
   if (e.tela !== 'carregando' && !esperaOAbrir(e)) return nada(e);
+  if (passe === true && corpoDoAbrir(e) !== null) {
+    const semColega = { colega: null, chaveDoColega: null, passe: null, semColega: true };
+    return e.tela === 'carregando' ? comAbrir(e, semColega) : com(e, { ...semColega, tela: 'entrada' });
+  }
   if (status === 404) return terminar(e, 'linkInvalido');
   if (status !== 429) return avisar(e, 'semServidor');
   const n = Math.max(0, Math.ceil(Number(esperarSegundos) || 0));
@@ -327,9 +415,10 @@ function abrirFalhou(e, { status, esperarSegundos }) {
   return avisar(e, 'tentativas', { esperarSegundos: n }, esperar(CONTAGEM_MS, 'contagem'));
 }
 
-// O canal abriu: o do pedido manda o nome; o do voltar, depois do aceito, manda a chave e espera o voltou.
+// O canal abriu: o do pedido manda o nome (o do colega, o entrar); o do voltar, depois do aceito, manda a chave e
+// espera o voltou.
 function canalAbriu(e) {
-  if (!e.aceito) return com(e, { canal: 'aberto' }, pedido(e));
+  if (!e.aceito) return com(e, { canal: 'aberto' }, pedidoOuEntrar(e));
   return com(e, { canal: 'voltando' }, mandar({ tipo: 'voltar', ...e.chave }));
 }
 
@@ -340,7 +429,7 @@ function canalAbriu(e) {
 function canalFechou(e, codigo) {
   if (e.canal === 'fechado') return nada(e); // o que a página fechou
   const f = { ...e, canal: 'fechado' };
-  if (!e.aceito && ESPERA.has(e.tela)) {
+  if (naEspera(e)) {
     if (codigo === 1011 && e.reabrindo < MAX_REABRIR) {
       return com(f, { reabrindo: e.reabrindo + 1 }, esperar(REABRIR_MS, 'reabrir'));
     }
@@ -361,13 +450,13 @@ function canalFechou(e, codigo) {
 
 // As mensagens do servidor (seção 10 do protocolo). O agora é a hora em que a mensagem chegou.
 function mensagem(e, m, agora) {
-  const naEspera = !e.aceito && ESPERA.has(e.tela);
+  const esperando = naEspera(e);
   switch (m.tipo) {
     case 'naoComecou':
     case 'aguardando':
-      return naEspera ? com(e, { tela: m.tipo }) : nada(e);
+      return esperando ? com(e, { tela: m.tipo }) : nada(e);
     case 'aceito':
-      if (!naEspera) return nada(e);
+      if (!esperando) return nada(e);
       return comSenha(e, m.senha, {
         tela: 'entrando',
         aceito: true,
@@ -397,7 +486,7 @@ function mensagem(e, m, agora) {
       }
       // Na volta, a recusa do senha é uma tentativa que falhou, como o erro.
       if (esperaSenha(e) && e.reconectando > 0) return tentativaFalhou(e);
-      return naEspera || esperaSenha(e) ? avisar(e, m.tipo) : nada(e);
+      return esperando || esperaSenha(e) ? avisar(e, m.tipo) : nada(e);
     case 'erro':
       return erro(e, m.erro);
     case 'palco':
@@ -406,6 +495,10 @@ function mensagem(e, m, agora) {
       return mensagemDoChat(e, m, agora);
     case 'mensagemRecusada':
       return mensagemRecusada(e, m);
+    case 'participantes':
+      return lista(e, m);
+    case 'recusa':
+      return recusa(e, m);
     default:
       return nada(e);
   }
@@ -508,7 +601,110 @@ function prazoDaMensagem(e, id) {
 // O chat abre: as não lidas zeram, o aviso curto da mensagem sai, e o foco vai ao campo de escrever.
 function abrirOChat(e) {
   const avisoCurto = e.avisoCurto?.tipo === 'mensagem' ? null : e.avisoCurto;
-  return com(e, { chat: { ...e.chat, aberto: true, naoLidas: 0 }, avisoCurto }, FOCAR_O_CAMPO);
+  return com(e, { chat: { ...e.chat, aberto: true, naoLidas: 0 }, avisoCurto, gente: false }, FOCAR_O_CAMPO);
+}
+
+// ---- O colega na reunião ----
+
+// A página do colega na reunião, ou entrando nela: só ela recebe a lista e responde aos pedidos.
+const colegaNaReuniao = (e) => e.colega !== null && naReuniaoOuEntrando(e);
+// As respostas mandam pelo canal da pessoa, na tela da reunião.
+const podeResponder = (e) => e.colega !== null && podeEscrever(e);
+// Quem a resposta procura na lista: o pedido, no aceitar e no recusar; o participante, no tirar.
+const daResposta = (l, de) => (de === 'tirar' ? l.participantes : l.pedidos);
+
+// A lista inteira chegou (a mensagem participantes): ela toma o lugar da anterior. A resposta da página cujo pedido
+// (ou participante) saiu da lista deu certo, e o leitor de tela ouve o resultado; o pedido que a lista anterior não
+// tinha, ele ouve que chegou. A pergunta do Tirar de quem já saiu se desfaz, e a reunião cheia do último aceitar sai.
+function lista(e, m) {
+  if (!colegaNaReuniao(e)) return nada(e);
+  const nova = lerLista(m);
+  if (nova === null) return nada(e);
+  const efeitos = [];
+  const respondendo = e.respondendo.filter((r) => {
+    if (daResposta(nova, r.de).some((x) => x.id === r.id)) return true;
+    efeitos.push(dizer(ditoDaResposta(r.de, r.nome)));
+    return false;
+  });
+  for (const p of nova.pedidos) {
+    // O que o leitor de tela ouve quando um pedido chega é o título do cartão dele sozinho: "<Nome> quer entrar".
+    if (!e.lista.pedidos.some((x) => x.id === p.id)) efeitos.push(dizer(tituloDoCartao([p])));
+  }
+  const tirando = nova.participantes.some((x) => x.id === e.tirando) ? e.tirando : null;
+  return com(e, { lista: nova, respondendo, tirando, cheiaAoAceitar: false }, ...efeitos);
+}
+
+// Uma resposta da página não deu certo (o recusa, com o de e o motivo): ela não espera mais a lista, e nada é dito
+// dela. O servidor responde na ordem em que recebe: a recusa é da mais antiga daquele tipo. A reunião cheia aparece no
+// cartão e no painel; o servidor de vídeo fora do ar, no aviso curto. Os outros motivos (a resposta de outro colega
+// chegou antes, a pessoa já saiu, ou a página não está mais na reunião para o chat) não mostram nada: a lista nova diz.
+function recusa(e, { de, motivo }) {
+  if (!colegaNaReuniao(e)) return nada(e);
+  const i = e.respondendo.findIndex((r) => r.de === de);
+  const mudancas = i < 0 ? {} : { respondendo: e.respondendo.filter((_, j) => j !== i) };
+  if (motivo === 'cheia' && de === 'aceitar') return com(e, { ...mudancas, cheiaAoAceitar: true });
+  if (motivo === 'servidorVideo' && e.tela === 'reuniao') {
+    const aviso = e.avisos + 1;
+    return com(
+      e,
+      { ...mudancas, avisos: aviso, avisoCurto: { n: aviso, tipo: 'servidor' } },
+      esperar(AVISO_CURTO_MS, `avisoCurto:${aviso}`),
+      dizer('O servidor de reuniões não respondeu'),
+    );
+  }
+  return i < 0 ? nada(e) : com(e, mudancas);
+}
+
+// Uma resposta sai pelo canal e espera a lista nova: {de, id, nome}. Responder de novo tira a reunião cheia.
+function responder(e, de, id, nome, m, mudancas = {}) {
+  const respondendo = [...e.respondendo, { de, id, nome }];
+  return com(e, { ...mudancas, respondendo, cheiaAoAceitar: false }, mandar(m));
+}
+
+// Os cliques do colega na reunião. O painel Participantes fica no lugar do chat: abrir um fecha o outro. O Tirar e o
+// Encerrar para todos pedem o segundo clique. Quem é de fora não tem nada disso.
+function cliqueDoColega(e, botao, id) {
+  if (e.colega === null || e.tela !== 'reuniao') return nada(e);
+  const comPainel = { gente: true, chat: { ...e.chat, aberto: false } };
+  switch (botao) {
+    case 'participantes':
+      // O botão abre e fecha. Ao fechar por ele, o foco já está nele.
+      return com(e, e.gente ? { gente: false } : comPainel);
+    case 'fecharParticipantes':
+      // O fechar do painel (o botão dele e o Esc) devolve o foco ao botão Participantes.
+      return e.gente ? com(e, { gente: false }, focar('participantes')) : nada(e);
+    case 'verPedidos':
+      // O Ver os pedidos do cartão abre o painel, com o foco no cartão de quem espera.
+      return com(e, comPainel, focar('cartao'));
+    case 'aceitar':
+    case 'recusar': {
+      const p = e.lista.pedidos.find((x) => x.id === id);
+      if (!p || !podeResponder(e)) return nada(e);
+      return responder(e, botao, p.id, p.nome, { tipo: botao, pedido: p.id });
+    }
+    case 'tirar': {
+      const p = e.lista.participantes.find((x) => x.id === id);
+      return p && !p.voce ? com(e, { tirando: p.id }) : nada(e);
+    }
+    case 'tirarMesmo': {
+      const p = e.lista.participantes.find((x) => x.id === id);
+      if (!p || e.tirando !== p.id || !podeResponder(e)) return nada(e);
+      return responder(e, 'tirar', p.id, p.nome, { tipo: 'tirar', participante: p.id }, { tirando: null });
+    }
+    case 'naoTirar':
+      return e.tirando !== null ? com(e, { tirando: null }) : nada(e);
+    case 'encerrar':
+      return e.encerrando ? nada(e) : com(e, { encerrando: true });
+    case 'encerrarMesmo':
+      // O encerrar não espera resposta na lista: o encerrada é o fim, e a recusa mostra o aviso.
+      if (!e.encerrando || !podeResponder(e)) return nada(e);
+      return com(e, { encerrando: false }, mandar({ tipo: 'encerrar' }));
+    case 'naoEncerrar':
+      // O Voltar da pergunta devolve o foco ao Encerrar para todos.
+      return e.encerrando ? com(e, { encerrando: false }, focar('encerrar')) : nada(e);
+    default:
+      return nada(e);
+  }
 }
 
 // ---- O sinalizador de qualidade ----
@@ -592,6 +788,8 @@ function comSenha(e, senha, mudancas = {}) {
 function erro(e, qual) {
   if (e.telaCompartilhada === 'pedindo') return com(e, { telaCompartilhada: 'nenhuma' }, PARAR_CAPTURA);
   if (esperaSenha(e)) return e.reconectando > 0 ? tentativaFalhou(e) : avisar(e, 'semServidor');
+  // O entrar do colega não tem nome a corrigir: o erro é o semServidor.
+  if (naEspera(e) && e.tela === 'entrando') return avisar(e, 'semServidor');
   if (e.tela !== 'pedindo') return nada(e);
   if (qual === 'invalido') return com(e, { tela: 'entrada', nomeRecusado: true, canal: 'fechado' }, FECHAR_CANAL);
   return avisar(e, 'semServidor');
@@ -676,7 +874,7 @@ function pararDeReligar(e) {
 
 // O voltar começa pelo abrir, que dá o bilhete do canal novo, e o prazo da tentativa começa junto.
 function abrirParaVoltar(e) {
-  const { estado, efeitos } = comAbrir(e, { esperandoBilhete: true });
+  const { estado, efeitos } = abrirCom(e, null, { esperandoBilhete: true }); // sem corpo: a chave de volta basta
   return so(estado, ...efeitos, prazoDaVez(e.vez));
 }
 
@@ -718,11 +916,15 @@ function telaCapturada(e, ok) {
   return so(e, PARAR_CAPTURA);
 }
 
-function clique(e, botao) {
+function clique(e, botao, id) {
   switch (botao) {
     case 'pedir':
-      if (e.tela !== 'entrada' || !nomeValido(e.nome)) return nada(e);
+      if (e.tela !== 'entrada' || e.colega !== null || !nomeValido(e.nome)) return nada(e);
       return comAbrir(e, { tela: 'pedindo', nomeRecusado: false, reabrindo: 0 });
+    case 'entrar':
+      // O Entrar do colega: o abrir com a chave dá o bilhete de um canal de colega, e ele entra sem a espera.
+      if (e.tela !== 'entrada' || e.colega === null) return nada(e);
+      return comAbrir(e, { tela: 'entrando', reabrindo: 0 });
     case 'desistir':
       return desistir(e);
     case 'tentarDeNovo':
@@ -730,7 +932,7 @@ function clique(e, botao) {
     case 'tentarMidia':
       return e.tela === 'entrada' ? com(e, { esperandoMidia: true }, PEDIR_MIDIA) : nada(e);
     case 'sair':
-      return e.tela === 'reuniao' || e.tela === 'entrando' ? terminar(e, 'saiu') : nada(e);
+      return sair(e);
     case 'entrarDeNovo':
       return entrarDeNovo(e);
     case 'microfone':
@@ -759,8 +961,17 @@ function clique(e, botao) {
       // O Esc e o clique fora do sinalizador fecham o cartão, e o foco fica onde está.
       return e.cartao ? com(e, { cartao: false }) : nada(e);
     default:
-      return nada(e);
+      return cliqueDoColega(e, botao, id);
   }
+}
+
+// Sair: da reunião, ou da tela entrando. O colega que sai antes do aceito larga o canal do entrar (o servidor ainda
+// não o ligou a nada): o Entrar de novo abre outro, com a chave.
+function sair(e) {
+  if (e.tela !== 'reuniao' && e.tela !== 'entrando') return nada(e);
+  if (e.aceito || e.canal === 'fechado') return terminar(e, 'saiu');
+  const r = terminar({ ...e, canal: 'fechado' }, 'saiu');
+  return so(r.estado, FECHAR_CANAL, ...r.efeitos);
 }
 
 // Desistir retira o pedido: com o canal aberto, o desistir vai antes de fechar. O nome e a mídia ficam.
@@ -776,15 +987,18 @@ function desistir(e) {
 function tentarDeNovo(e) {
   if (e.tela !== 'aviso' || !DE_NOVO.has(e.aviso) || e.esperarSegundos > 0) return nada(e);
   const volta = { aviso: null, reabrindo: 0 };
+  // O colega volta à tela entrando, e não à espera.
+  const doPedido = e.colega !== null ? 'entrando' : 'pedindo';
   if (e.canal !== 'aberto') {
-    return comAbrir(e, { ...volta, tela: e.reuniao ? 'pedindo' : 'carregando', aceito: false, acesso: null });
+    return comAbrir(e, { ...volta, tela: e.reuniao ? doPedido : 'carregando', aceito: false, acesso: null });
   }
-  if (!e.aceito) return com(e, { ...volta, tela: 'pedindo' }, pedido(e));
+  if (!e.aceito) return com(e, { ...volta, tela: doPedido }, pedidoOuEntrar(e));
   return com(e, { ...volta, tela: 'entrando', principal: 'pedindo', senhaRepetida: false }, mandar({ tipo: 'senha' }));
 }
 
 // O Entrar de novo depois do saiu. Com o canal aberto: uma senha nova para o mesmo participante e a mídia de novo, e o
-// ligar sai quando as duas chegarem. Com o canal fechado, o pedido passa pela espera outra vez.
+// ligar sai quando as duas chegarem. Com o canal fechado, o pedido passa pela espera outra vez; o do colega abre com a
+// chave e entra direto.
 function entrarDeNovo(e) {
   if (e.aviso !== 'saiu') return nada(e);
   const volta = { aviso: null, esperandoMidia: true };
@@ -792,7 +1006,8 @@ function entrarDeNovo(e) {
     const mudancas = { ...volta, tela: 'entrando', principal: 'pedindo', senhaRepetida: false };
     return com(e, mudancas, PEDIR_MIDIA, mandar({ tipo: 'senha' }));
   }
-  return comAbrir(e, { ...volta, tela: 'pedindo', aceito: false, acesso: null, reabrindo: 0 }, PEDIR_MIDIA);
+  const tela = e.colega !== null ? 'entrando' : 'pedindo';
+  return comAbrir(e, { ...volta, tela, aceito: false, acesso: null, reabrindo: 0 }, PEDIR_MIDIA);
 }
 
 // O Microfone e a Câmera. Na reunião, a ligação troca junto. Antes dela, só o estado muda, e quem roda o ligar lê a

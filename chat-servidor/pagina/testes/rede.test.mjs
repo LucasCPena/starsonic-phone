@@ -64,3 +64,62 @@ test('o canal novo no lugar de um que ainda conecta', () => {
   rede.fecharCanal();
   assert.deepEqual(novo.fechamentos, [SocketFalso.OPEN]);
 });
+
+// O abrir, com um fetch falso: ele guarda cada chamada e responde o que o teste mandou.
+const chamadas = [];
+let resposta = { status: 200, corpo: {} };
+globalThis.fetch = async (url, opcoes) => {
+  chamadas.push({ url, opcoes });
+  const { status, corpo } = resposta;
+  return { ok: status >= 200 && status < 300, status, json: async () => corpo };
+};
+const REUNIAO = { tipo: 'naHora', assunto: '', inicio: 0 };
+
+async function abrirCom(corpoDoAbrir, status, corpo) {
+  chamadas.length = 0;
+  resposta = { status, corpo };
+  const eventos = [];
+  const rede = criarRede((e) => eventos.push(e), 'k7q49xwpht');
+  if (corpoDoAbrir === undefined) await rede.abrir(4);
+  else await rede.abrir(4, corpoDoAbrir);
+  assert.equal(chamadas.length, 1);
+  assert.equal(chamadas[0].url, '/api/v1/pagina/reunioes/k7q49xwpht');
+  return { opcoes: chamadas[0].opcoes, eventos };
+}
+
+test('o abrir sem corpo não manda corpo nem Content-Type', async () => {
+  const { opcoes, eventos } = await abrirCom(undefined, 200, { reuniao: REUNIAO, bilhete: 'bilhete-4' });
+  assert.equal(opcoes.method, 'POST');
+  assert.equal(opcoes.body, undefined);
+  assert.equal(opcoes.headers, undefined);
+  // Sem o colega, o abriu é o de hoje, letra por letra.
+  assert.deepEqual(eventos, [{ tipo: 'abriu', reuniao: REUNIAO, bilhete: 'bilhete-4', abertura: 4 }]);
+});
+
+test('o abrir com corpo manda o JSON', async () => {
+  for (const corpo of [{ passe: 'p'.repeat(43) }, { colega: 'c'.repeat(43) }]) {
+    const { opcoes } = await abrirCom(corpo, 200, { reuniao: REUNIAO, bilhete: 'bilhete-4' });
+    assert.equal(opcoes.method, 'POST');
+    assert.deepEqual(opcoes.headers, { 'Content-Type': 'application/json' });
+    assert.deepEqual(JSON.parse(opcoes.body), corpo);
+  }
+});
+
+test('o 200 com o colega o repassa', async () => {
+  const colega = { nome: 'Júlia Martins', chave: 'c'.repeat(43), valeAte: null };
+  const resposta = { reuniao: REUNIAO, bilhete: 'bilhete-4', colega };
+  const { eventos } = await abrirCom({ passe: 'p'.repeat(43) }, 200, resposta);
+  assert.deepEqual(eventos, [{ tipo: 'abriu', reuniao: REUNIAO, bilhete: 'bilhete-4', abertura: 4, colega }]);
+});
+
+test('o 401 com o erro passe dá o abrirFalhou com o passe', async () => {
+  let { eventos } = await abrirCom({ passe: 'p'.repeat(43) }, 401, { erro: 'passe' });
+  assert.deepEqual(eventos, [
+    { tipo: 'abrirFalhou', status: 401, esperarSegundos: undefined, abertura: 4, passe: true },
+  ]);
+  // Os outros erros são os de hoje, sem o passe.
+  ({ eventos } = await abrirCom(undefined, 404, { erro: 'naoEncontrado' }));
+  assert.deepEqual(eventos, [{ tipo: 'abrirFalhou', status: 404, esperarSegundos: undefined, abertura: 4 }]);
+  ({ eventos } = await abrirCom({ colega: 'c'.repeat(43) }, 429, { erro: 'tentativas', esperarSegundos: 7 }));
+  assert.deepEqual(eventos, [{ tipo: 'abrirFalhou', status: 429, esperarSegundos: 7, abertura: 4 }]);
+});

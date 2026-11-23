@@ -130,7 +130,7 @@ export function iniciar(raiz, servicos) {
   function executar(efeito) {
     switch (efeito.tipo) {
       case 'abrir':
-        rede.abrir(efeito.abertura);
+        rede.abrir(efeito.abertura, efeito.corpo);
         break;
       case 'abrirCanal':
         rede.abrirCanal(efeito.bilhete);
@@ -177,6 +177,9 @@ export function iniciar(raiz, servicos) {
         break;
       case 'focarOSinal':
         botaoDoSinal.focus();
+        break;
+      case 'dizer':
+        dizer(efeito.texto);
         break;
     }
   }
