@@ -512,6 +512,60 @@ main {
   font-size: 16px;
 }
 
+/* A entrada do colega: no lugar do campo do nome, o cartão branco com as iniciais e o nome, e a frase de ajuda. */
+.colega {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.colega-cartao {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--borda);
+  border-radius: 14px;
+  background: var(--branco);
+}
+
+.colega-iniciais {
+  flex: none;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--ciano), var(--marinho));
+  color: var(--branco);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.colega-textos {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.colega-rotulo {
+  font-size: 13px;
+  color: var(--apagado);
+}
+
+.colega-nome {
+  font-size: 17px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.colega-ajuda {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--apagado);
+}
+
 .gravado {
   display: flex;
   align-items: center;
@@ -1368,13 +1422,14 @@ button.quadro:focus-visible .pilula {
   background: var(--sair);
 }
 
-/* O Chat aberto: a borda ciano e o fundo mais escuro. */
-.controle-chat[aria-pressed="true"] {
+/* O Chat (ou o Participantes) aberto: a borda ciano e o fundo mais escuro. */
+.controle-chat[aria-pressed="true"],
+.controle-participantes[aria-pressed="true"] {
   border-color: var(--ciano);
   background: var(--reuniao-apertado);
 }
 
-/* O número das mensagens novas, depois do texto do botão Chat. */
+/* O número das mensagens novas, depois do texto do botão Chat, e o de quem espera para entrar, no Participantes. */
 .contagem {
   min-width: 22px;
   height: 22px;
@@ -1458,12 +1513,15 @@ button.quadro:focus-visible .pilula {
   cursor: pointer;
 }
 
-/* O aviso da conexão ruim: a borda da falha, uma linha só de texto, mais forte, e o Ver os detalhes mais discreto. */
-.aviso-curto[data-tipo="conexao"] {
+/* O aviso da conexão ruim: a borda da falha, uma linha só de texto, mais forte, e o Ver os detalhes mais discreto. O
+   do servidor de vídeo que não respondeu a uma resposta do colega é igual, sem botão. */
+.aviso-curto[data-tipo="conexao"],
+.aviso-curto[data-tipo="servidor"] {
   border-color: var(--reuniao-falha-borda);
 }
 
-.aviso-curto[data-tipo="conexao"] .aviso-curto-linha {
+.aviso-curto[data-tipo="conexao"] .aviso-curto-linha,
+.aviso-curto[data-tipo="servidor"] .aviso-curto-linha {
   font-weight: 700;
 }
 
@@ -1471,6 +1529,95 @@ button.quadro:focus-visible .pilula {
   border: 1px solid var(--reuniao-borda);
   background: var(--reuniao-botao);
   color: var(--branco);
+}
+
+/* ---- O cartão do pedido (só do colega): 400 px, ou a largura da área dos quadros menos 32 px, a 28 px do alto e a
+   40 px da direita dela. Com a janela estreita ou o dedo (a regra do painel do chat), a largura dela menos 24 px. ---- */
+
+.pedido {
+  position: absolute;
+  z-index: 3;
+  top: 28px;
+  right: 40px;
+  width: min(400px, 100% - 32px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--ciano);
+  border-radius: 14px;
+  background: var(--reuniao-cartao);
+  box-shadow: 0 24px 50px -20px rgba(0, 0, 0, 0.8);
+  color: var(--branco);
+}
+
+@media not all and (min-width: 900px) and (pointer: fine) {
+  .pedido {
+    top: 12px;
+    right: 12px;
+    width: calc(100% - 24px);
+  }
+}
+
+.pedido-textos {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* O título vem do nome que a pessoa digitou: uma palavra comprida quebra em qualquer lugar. */
+.pedido-titulo {
+  font-size: 16px;
+  line-height: 1.3;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.pedido-texto,
+.pedido-cheia {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.pedido-texto {
+  color: var(--topo-rotulo);
+}
+
+.pedido-cheia {
+  font-weight: 700;
+  color: var(--reuniao-atencao);
+}
+
+.pedido-botoes {
+  display: flex;
+  gap: 10px;
+}
+
+.pedido-botao {
+  flex: 1 1 0;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 14.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pedido-botao:hover {
+  filter: brightness(1.1);
+}
+
+.pedido-recusar {
+  border-color: var(--reuniao-borda);
+  background: var(--reuniao-botao);
+  color: var(--branco);
+}
+
+.pedido-aceitar {
+  background: var(--ciano);
+  color: var(--sobre-ciano);
 }
 
 /* ---- O chat da reunião: o painel (painel.js). Ao lado dos quadros no PC (data-modo="lado"), e cobrindo a tela onde o
@@ -2118,8 +2265,17 @@ button.quadro:focus-visible .pilula {
     display: none;
   }
 
-  /* O número fica no canto do botão Chat, sem mexer no desenho nem no texto dele. */
-  .controle-chat {
+  /* Os cinco controles do colega (com o Participantes): cada coluna com a largura do texto dela, e o que sobra
+     dividido entre elas, para o "Participantes" caber. */
+  .controles:has(> .controle-participantes:not([hidden])) {
+    grid-template-columns: repeat(5, auto);
+    justify-content: stretch;
+    gap: 6px;
+  }
+
+  /* O número fica no canto do botão Chat (e do Participantes), sem mexer no desenho nem no texto dele. */
+  .controle-chat,
+  .controle-participantes {
     position: relative;
   }
 

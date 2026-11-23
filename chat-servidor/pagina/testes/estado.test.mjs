@@ -2578,6 +2578,19 @@ test('o pedido que chega é dito', () => {
   assert.deepEqual(r.efeitos, [dizer('Bia Ramos quer entrar')]);
 });
 
+// A região que o leitor de tela ouve guarda um texto só: o que um passo diz sai num dizer, os textos na ordem.
+test('o que um passo diz sai junto', () => {
+  const e = passo(colegaNaReuniao(), lista([EU], [])).estado;
+  // Dois pedidos na mesma lista.
+  assert.deepEqual(passo(e, lista([EU], [MARIA, BIA])).efeitos, [
+    dizer('Maria Lima quer entrar. Bia Ramos quer entrar'),
+  ]);
+  // O resultado de uma resposta e um pedido novo: o resultado antes.
+  const ROBERTO = { id: 'a000000000000003', nome: 'Roberto Alves' };
+  const r = rodar(colegaComLista(), cliqueEm('aceitar', MARIA.id), lista([EU, PEDRO, MARIA_NA_REUNIAO], [BIA, ROBERTO]));
+  assert.deepEqual(r.efeitos, [dizer('O pedido de Maria Lima foi aceito. Roberto Alves quer entrar')]);
+});
+
 test('quem é de fora ignora o que é do colega', () => {
   const e = naReuniao();
   semMudar(e, lista([EU], [MARIA]));

@@ -21,6 +21,26 @@ export type RespostaDoAbrir = { status: number; corpo: unknown } | 'semResposta'
 
 export type Mensagem = { tipo: string; [campo: string]: unknown };
 
+/**
+ * O colega que o abrir reconhece pelo passe (ou pela chave): o nome dele, até quando o link vale (em ms, ou null) e a
+ * chave do colega, que só vai na resposta do abrir com o passe.
+ */
+export interface ColegaDoAbrir {
+  nome: string;
+  valeAte: number | null;
+  chave: string;
+}
+
+/** A Júlia Martins, numa reunião cujo link vale até as 23:59 de hoje. */
+export const COLEGA: ColegaDoAbrir = {
+  nome: 'Júlia Martins',
+  valeAte: new Date('2026-11-17T23:59:00-03:00').getTime(),
+  chave: 'chave-do-colega-1',
+};
+
+/** O 401 do passe (ou da chave) que não vale. */
+export const PASSE_QUE_NAO_VALE: RespostaDoAbrir = { status: 401, corpo: { erro: 'passe' } };
+
 /** Um canal que a página abriu, visto do lado do servidor. */
 export class Canal {
   /** As mensagens que a página mandou, na ordem. */
@@ -96,6 +116,13 @@ export class RedeFalsa {
   readonly videos: VideoFalso[] = [];
   /** O que o servidor responde a cada pedir; sem ele, nada. */
   aoPedir: ((canal: Canal) => void) | null = null;
+  /** O que o servidor responde a cada entrar (o do colega); sem ele, nada. */
+  aoEntrar: ((canal: Canal) => void) | null = null;
+  /**
+   * Quem o abrir com o passe, ou com a chave, reconhece: o 200 dele leva o colega (a chave, só na troca do passe). O
+   * abrir sem corpo é o de quem é de fora, sem o colega.
+   */
+  colega: ColegaDoAbrir = COLEGA;
   /** Falso: os canais novos ficam conectando, até o abrir de cada um. */
   canaisAbrem = true;
   /** Falso: os WSS do vídeo ficam conectando, e a ligação não começa; verdadeiro: eles abrem, e o JsSIP manda o
@@ -144,6 +171,11 @@ export class RedeFalsa {
   private async abrir(route: Route): Promise<void> {
     this.abrires.push(new URL(route.request().url()).pathname);
     const ok = { status: 200, corpo: { reuniao: this.reuniao, bilhete: `bilhete-${this.abrires.length}` } };
+    const corpo = (route.request().postDataJSON() ?? {}) as { passe?: unknown; colega?: unknown };
+    if (corpo.passe !== undefined) Object.assign(ok.corpo, { colega: this.colega });
+    else if (corpo.colega !== undefined) {
+      Object.assign(ok.corpo, { colega: { nome: this.colega.nome, valeAte: this.colega.valeAte } });
+    }
     let resposta = this.fila.shift() ?? ok;
     if (resposta === 'semResposta') return;
     if (resposta === 'segurada') {
@@ -165,6 +197,7 @@ export class RedeFalsa {
       const m = JSON.parse(String(texto)) as Mensagem;
       canal.recebidas.push(m);
       if (m.tipo === 'pedir') this.aoPedir?.(canal);
+      if (m.tipo === 'entrar') this.aoEntrar?.(canal);
     });
     ws.onClose((codigo) => {
       canal.fechadoPelaPagina = codigo ?? null;

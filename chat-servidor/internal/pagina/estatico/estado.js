@@ -615,22 +615,25 @@ const daResposta = (l, de) => (de === 'tirar' ? l.participantes : l.pedidos);
 
 // A lista inteira chegou (a mensagem participantes): ela toma o lugar da anterior. A resposta da página cujo pedido
 // (ou participante) saiu da lista deu certo, e o leitor de tela ouve o resultado; o pedido que a lista anterior não
-// tinha, ele ouve que chegou. A pergunta do Tirar de quem já saiu se desfaz, e a reunião cheia do último aceitar sai.
+// tinha, ele ouve que chegou. Tudo o que a lista diz sai num dizer só, os textos na ordem: a região que o leitor de
+// tela ouve guarda um texto de cada vez, e dois dizer no mesmo passo deixariam só o último. A pergunta do Tirar de
+// quem já saiu se desfaz, e a reunião cheia do último aceitar sai.
 function lista(e, m) {
   if (!colegaNaReuniao(e)) return nada(e);
   const nova = lerLista(m);
   if (nova === null) return nada(e);
-  const efeitos = [];
+  const ditos = [];
   const respondendo = e.respondendo.filter((r) => {
     if (daResposta(nova, r.de).some((x) => x.id === r.id)) return true;
-    efeitos.push(dizer(ditoDaResposta(r.de, r.nome)));
+    ditos.push(ditoDaResposta(r.de, r.nome));
     return false;
   });
   for (const p of nova.pedidos) {
     // O que o leitor de tela ouve quando um pedido chega é o título do cartão dele sozinho: "<Nome> quer entrar".
-    if (!e.lista.pedidos.some((x) => x.id === p.id)) efeitos.push(dizer(tituloDoCartao([p])));
+    if (!e.lista.pedidos.some((x) => x.id === p.id)) ditos.push(tituloDoCartao([p]));
   }
   const tirando = nova.participantes.some((x) => x.id === e.tirando) ? e.tirando : null;
+  const efeitos = ditos.length > 0 ? [dizer(ditos.join('. '))] : [];
   return com(e, { lista: nova, respondendo, tirando, cheiaAoAceitar: false }, ...efeitos);
 }
 

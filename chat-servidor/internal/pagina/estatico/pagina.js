@@ -4,7 +4,9 @@
 // mídia (midia.js), as ligações (ligacao.js) e o relógio. Os eventos que um efeito dá entram numa fila e passam pelo
 // cérebro um de cada vez, depois dos efeitos do evento de agora. Nada do estado nem dos efeitos vai ao console: eles
 // levam o bilhete, as senhas, as credenciais do TURN, a chave de volta e as mensagens do chat. As medidas do
-// sinalizador também não vão a lugar nenhum fora da página.
+// sinalizador também não vão a lugar nenhum fora da página. Na página do colega, ela desenha também a entrada dele, o
+// botão Participantes e o cartão do pedido; os nomes entram sempre como texto.
+import { iniciais, rotuloDoBotao, tituloDoCartao } from './colega.js';
 import { cabecalho, inicial, nomeValido, podeEscrever, quando, transicao } from './estado.js';
 import { contagem as numeroDoBotao, dito, escreveu, falha, nomeDoBotao, numaLinha } from './mensagens.js';
 import { criarPainel } from './painel.js';
@@ -14,8 +16,8 @@ import { AVISO_DA_CONEXAO_RUIM, criarMedidor, numerosDoCartao, textosDoSinal } f
 /** A espera do ligar da principal pela câmera que a pessoa acabou de ligar e que ainda está sendo pedida, em ms. */
 const PRAZO_DA_CAMERA_MS = 3000;
 
-// Os cliques que levam à reunião: o silêncio do midia.js nasce, ou acorda, dentro deles.
-const DE_ENTRAR = new Set(['pedir', 'entrarDeNovo', 'tentarDeNovo']);
+// Os cliques que levam à reunião: o silêncio do midia.js nasce, ou acorda, dentro deles. O entrar é o do colega.
+const DE_ENTRAR = new Set(['pedir', 'entrar', 'entrarDeNovo', 'tentarDeNovo']);
 
 // A seção que cada tela do cérebro mostra. O pedindo já é a espera: o pedido saiu, e o Desistir vale nele. O
 // carregando não mostra nenhuma.
@@ -31,7 +33,8 @@ const SECAO = {
 
 /**
  * Começa a página. A raiz é o elemento com as telas (o body). Os serviços: rede, midia e ligacao são as fábricas dos
- * adaptadores, que recebem a função que leva os eventos ao cérebro; o relogio é {agora(), depois(ms, fn)}.
+ * adaptadores, que recebem a função que leva os eventos ao cérebro; o relogio é {agora(), depois(ms, fn)}; o passe,
+ * opcional, é o que a página recebeu para reconhecer o colega (sem ele, a página é a de quem é de fora).
  */
 export function iniciar(raiz, servicos) {
   const um = (seletor) => raiz.querySelector(seletor);
@@ -41,6 +44,9 @@ export function iniciar(raiz, servicos) {
   const carregando = um('.carregando');
   const nome = um('#nome');
   const pedir = um('[data-botao="pedir"]');
+  const entrar = um('[data-botao="entrar"]');
+  const campoDoNome = nome.closest('.campo');
+  const colegaNaEntrada = um('.colega');
   const som = um('#som');
   const anuncio = um('[data-campo="anuncio"]');
   const contagem = um('[data-aviso="tentativas"] [data-botao="tentarDeNovo"]');
@@ -49,6 +55,11 @@ export function iniciar(raiz, servicos) {
   const numeroDoChat = botaoChat.querySelector('.contagem');
   const raizDoPainel = um('.painel');
   const avisoCurto = um('.aviso-curto');
+  const botaoParticipantes = um('[data-botao="participantes"]');
+  const numeroDeParticipantes = botaoParticipantes.querySelector('.contagem');
+  const cartaoDoPedido = um('.pedido');
+  // A frase do aviso curto do servidor de vídeo que não respondeu é o título do aviso semServidor.
+  const servidorNaoRespondeu = um('[data-aviso="semServidor"] h1').textContent;
   const sinal = um('.sinal');
   const botaoDoSinal = um('.sinal-botao');
   const cartaoDoSinal = um('.sinal-cartao');
@@ -263,7 +274,18 @@ export function iniciar(raiz, servicos) {
     if (nome.value !== e.nome) nome.value = e.nome;
     const valido = nomeValido(e.nome);
     pedir.disabled = !(e.tela === 'entrada' && valido);
-    um('[data-dica="semNome"]').hidden = valido;
+    // O colega não digita o nome: ele vê quem é, e entra pelo Entrar.
+    const { colega } = e;
+    campoDoNome.hidden = colega !== null;
+    pedir.hidden = colega !== null;
+    colegaNaEntrada.hidden = colega === null;
+    entrar.hidden = colega === null;
+    entrar.disabled = !(e.tela === 'entrada' && colega !== null);
+    if (colega !== null) {
+      texto(colegaNaEntrada.querySelector('.colega-nome'), colega.nome);
+      texto(colegaNaEntrada.querySelector('.colega-iniciais'), iniciais(colega.nome));
+    }
+    um('[data-dica="semNome"]').hidden = valido || colega !== null;
     um('#nome-recusado').hidden = !e.nomeRecusado;
     if (e.nomeRecusado) nome.setAttribute('aria-invalid', 'true');
     else nome.removeAttribute('aria-invalid');
@@ -320,8 +342,37 @@ export function iniciar(raiz, servicos) {
     compartilhar.disabled = !(e.canal === 'aberto' && e.reconectando === 0);
     um('[data-botao="pararDeCompartilhar"]').hidden = !compartilhando;
     desenharOChat(e);
+    desenharOColega(e);
     desenharOSinal(e);
     desenharOAvisoCurto(e);
+  }
+
+  // O que é só do colega na reunião: o botão Participantes (apertado com o painel aberto, e o número de quem espera) e
+  // o cartão do pedido. O cartão sai com o painel aberto, que mostra os pedidos, e embaixo do cartão da conexão caída.
+  function desenharOColega(e) {
+    const doColega = e.colega !== null && e.tela === 'reuniao';
+    const pedidos = doColega ? e.lista.pedidos : [];
+    const n = pedidos.length;
+    botaoParticipantes.hidden = !doColega;
+    botaoParticipantes.setAttribute('aria-pressed', doColega && e.gente ? 'true' : 'false');
+    // O número é só o desenho; o nome do botão diz quantas pessoas querem entrar.
+    texto(numeroDeParticipantes, numeroDoBotao(n));
+    numeroDeParticipantes.hidden = n === 0;
+    if (n > 0) botaoParticipantes.setAttribute('aria-label', rotuloDoBotao(pedidos));
+    else botaoParticipantes.removeAttribute('aria-label');
+
+    cartaoDoPedido.hidden = n === 0 || e.gente || e.reconectando > 0;
+    if (cartaoDoPedido.hidden) return;
+    // Com um pedido, o Recusar e o Aceitar dele; com mais, o Ver os pedidos.
+    const so = n === 1;
+    texto(cartaoDoPedido.querySelector('.pedido-titulo'), tituloDoCartao(pedidos));
+    cartaoDoPedido.querySelector('.pedido-texto').hidden = !so;
+    cartaoDoPedido.querySelector('.pedido-cheia').hidden = !e.cheiaAoAceitar;
+    for (const b of cartaoDoPedido.querySelectorAll('[data-botao="recusar"], [data-botao="aceitar"]')) {
+      b.hidden = !so;
+      b.dataset.id = pedidos[0].id;
+    }
+    cartaoDoPedido.querySelector('[data-botao="verPedidos"]').hidden = so;
   }
 
   // O n da última mensagem do chat que a página já viu na tela da reunião: as de outras pessoas depois dela são ditas.
@@ -406,20 +457,23 @@ export function iniciar(raiz, servicos) {
   // O n do último aviso de conexão ruim que o leitor de tela ouviu.
   let conexaoDita = 0;
 
-  // O aviso curto, um por vez: o da mensagem nova (quem escreveu, o texto numa linha e o Abrir o chat) ou o da conexão
-  // que virou ruim (uma linha só e o Ver os detalhes). O da conexão é dito ao leitor de tela, uma vez; as mensagens,
-  // quem diz é o desenho do chat.
+  // O aviso curto, um por vez: o da mensagem nova (quem escreveu, o texto numa linha e o Abrir o chat), o da conexão
+  // que virou ruim (uma linha só e o Ver os detalhes) ou, na página do colega, o do servidor de vídeo que não respondeu
+  // a uma resposta dela (uma linha só, sem botão). O da conexão é dito ao leitor de tela, uma vez; as mensagens, quem
+  // diz é o desenho do chat; o do servidor, o cérebro.
   function desenharOAvisoCurto(e) {
     const aviso = e.tela === 'reuniao' ? e.avisoCurto : null;
     avisoCurto.hidden = aviso === null;
     if (aviso === null) return;
+    const daMensagem = aviso.tipo === 'mensagem';
     const daConexao = aviso.tipo === 'conexao';
     avisoCurto.dataset.tipo = aviso.tipo;
     const quem = avisoCurto.querySelector('.aviso-curto-quem');
-    quem.hidden = daConexao;
-    texto(quem, daConexao ? '' : escreveu(aviso));
-    texto(avisoCurto.querySelector('.aviso-curto-linha'), daConexao ? AVISO_DA_CONEXAO_RUIM : numaLinha(aviso.texto));
-    avisoCurto.querySelector('[data-botao="abrirChat"]').hidden = daConexao;
+    quem.hidden = !daMensagem;
+    texto(quem, daMensagem ? escreveu(aviso) : '');
+    const linha = daMensagem ? numaLinha(aviso.texto) : daConexao ? AVISO_DA_CONEXAO_RUIM : servidorNaoRespondeu;
+    texto(avisoCurto.querySelector('.aviso-curto-linha'), linha);
+    avisoCurto.querySelector('[data-botao="abrirChat"]').hidden = !daMensagem;
     avisoCurto.querySelector('[data-botao="verDetalhes"]').hidden = !daConexao;
     if (daConexao && aviso.n !== conexaoDita) {
       conexaoDita = aviso.n;
@@ -454,12 +508,14 @@ export function iniciar(raiz, servicos) {
 
   // ---- Os cliques e o nome viram eventos. ----
 
+  // O botão com o data-id (o Aceitar e o Recusar do cartão do pedido) leva o id ao cérebro.
   raiz.addEventListener('click', (ev) => {
     const b = ev.target.closest('button[data-botao]');
     if (!b) return;
-    if (b.dataset.botao === 'pedir') tocarOSom();
-    if (DE_ENTRAR.has(b.dataset.botao)) midia.despertar();
-    despachar({ tipo: 'clique', botao: b.dataset.botao });
+    const { botao, id } = b.dataset;
+    if (botao === 'pedir' || botao === 'entrar') tocarOSom();
+    if (DE_ENTRAR.has(botao)) midia.despertar();
+    despachar(id === undefined ? { tipo: 'clique', botao } : { tipo: 'clique', botao, id });
   });
   // O Compartilhar a tela não é um clique do cérebro: a captura nasce nele (o desenho, item 4: o Safari e o Firefox só
   // a deixam dentro do gesto), e o cérebro recebe a resposta, o telaCapturada. O silêncio da ligação da tela acorda
@@ -496,7 +552,7 @@ export function iniciar(raiz, servicos) {
     if (ev.key === 'Enter' && !pedir.disabled) pedir.click();
   });
 
-  // O primeiro play() do som nasce no clique do Pedir para entrar, antes de tudo: o Safari do iPhone só toca depois de
+  // O primeiro play() do som nasce no clique do Pedir para entrar (ou do Entrar do colega), antes de tudo: o Safari do iPhone só toca depois de
   // um gesto, e o som da reunião chega sem outro toque. Sem o som ainda, ele pode recusar, e a recusa não importa.
   function tocarOSom() {
     som.play()?.catch(() => {});
@@ -518,7 +574,7 @@ export function iniciar(raiz, servicos) {
   });
 
   desenhar(estado);
-  despachar({ tipo: 'comecar' });
+  despachar({ tipo: 'comecar', passe: servicos.passe ?? null });
 }
 
 // O texto do elemento, mudado só quando é outro.
