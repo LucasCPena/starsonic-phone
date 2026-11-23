@@ -1,7 +1,27 @@
-// As contas e os textos da página do colega: a lista da reunião (quem está nela e quem espera para entrar), o nome do
-// botão Participantes, o título do cartão do pedido, as frases do Encerrar para todos e o que o leitor de tela ouve.
-// Tudo puro, sem DOM, sem rede e sem relógio: o agora vem de quem chama. Os textos são os da seção "Os textos" do plano
-// da etapa 2a. Os nomes da lista nunca vão ao console.
+// As contas e os textos da página do colega: o passe do endereço, o Windows (a tela "o app ou o navegador"), a lista da
+// reunião (quem está nela e quem espera para entrar), o nome do botão Participantes, o título do cartão do pedido, as
+// frases do Encerrar para todos e o que o leitor de tela ouve. Tudo puro, sem DOM, sem rede e sem relógio: o agora e o
+// navegador vêm de quem chama. Os textos são os da seção "Os textos" do plano da etapa 2a. Os nomes da lista e o passe
+// nunca vão ao console.
+
+// O passe que o app põe no fim do endereço: 43 caracteres base64url (32 bytes), sozinho depois do #p=.
+const PASSE_NO_ENDERECO = /^#p=([A-Za-z0-9_-]{43})$/;
+
+/** O passe do fim do endereço (o location.hash, "#p=<passe>"), ou null para qualquer outra coisa. */
+export function passeDoEndereco(hash) {
+  const m = typeof hash === 'string' ? PASSE_NO_ENDERECO.exec(hash) : null;
+  return m ? m[1] : null;
+}
+
+/**
+ * O navegador está no Windows: o navigator, com o userAgent e o userAgentData. O platform do userAgentData decide onde
+ * o navegador o tem (o Chromium); sem ele (o Firefox, o Safari), o agente diz o Windows NT.
+ */
+export function ehWindows(navegador) {
+  const plataforma = navegador?.userAgentData?.platform;
+  if (typeof plataforma === 'string' && plataforma !== '') return plataforma === 'Windows';
+  return /Windows NT/.test(String(navegador?.userAgent ?? ''));
+}
 
 /** A lista sem ninguém: a do começo, e a de fora da reunião. */
 export const LISTA_VAZIA = Object.freeze({ participantes: Object.freeze([]), pedidos: Object.freeze([]) });

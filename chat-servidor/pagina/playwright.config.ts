@@ -18,6 +18,10 @@ export default defineConfig({
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   use: {
     ...devices['Desktop Chrome'],
+    // O agente do Linux: o do Desktop Chrome é o do Windows (e o Playwright tira dele o navigator.userAgentData), e no
+    // Windows a página mostra antes a tela "o app ou o navegador". Os testes dela (escolha.spec.ts) põem o Windows.
+    userAgent:
+      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.7390.37 Safari/537.36',
     baseURL: CHAT,
     // O tamanho do quadro aprovado no PC.
     viewport: { width: 1280, height: 800 },

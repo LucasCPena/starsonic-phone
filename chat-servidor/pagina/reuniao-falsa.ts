@@ -306,40 +306,33 @@ export async function naReuniao(page: Page): Promise<NaReuniao> {
 /** O passe que a página do colega recebe (43 caracteres base64url, como o de verdade). */
 export const PASSE = 'passeDoColegaNosTestesDaPagina'.padEnd(43, '0');
 
-/**
- * A página que recebe o PASSE: o inicio.js de verdade, com o passe nos serviços que ele dá ao iniciar. (O passe do
- * endereço é de outra parte da etapa.)
- */
-async function comOPasse(page: Page): Promise<void> {
-  await page.route('**/r/estatico/inicio.js', async (route) => {
-    const resposta = await route.fetch();
-    const original = await resposta.text();
-    const importar = "import { iniciar } from './pagina.js';";
-    if (!original.includes(importar)) throw new Error('o inicio.js mudou: o comOPasse não acha o import do iniciar');
-    const body = original.replace(
-      importar,
-      "import { iniciar as iniciarDeVerdade } from './pagina.js';\n" +
-        `const iniciar = (raiz, servicos) => iniciarDeVerdade(raiz, { ...servicos, passe: ${JSON.stringify(PASSE)} });`,
-    );
-    await route.fulfill({ response: resposta, body });
-  });
-}
-
-/**
- * A página do colega na entrada dele: com a ligação falsa, o relógio parado e o PASSE, que a rede falsa (já instalada)
- * reconhece pelo colega dela. A câmera e o microfone já chegaram.
- */
-export async function abrirComoColega(page: Page): Promise<void> {
+/** A ligação falsa e o relógio parado às 10:00, antes de a página abrir. */
+export async function prepararAPagina(page: Page): Promise<void> {
   await page.route('**/r/estatico/ligacao.js', (r) =>
     r.fulfill({ contentType: 'text/javascript; charset=utf-8', body: LIGACAO_FALSA }),
   );
-  await comOPasse(page);
   await page.clock.install({ time: AGORA - 1000 });
   await page.clock.pauseAt(AGORA);
-  await page.goto(`/r/${CODIGO}`);
+}
+
+/**
+ * A página aberta no endereço (o caminho do link e, se houver, o que vem depois do #), com a ligação falsa e o relógio
+ * parado, até a entrada: a câmera e o microfone já chegaram.
+ */
+export async function abrirNaEntrada(page: Page, endereco: string): Promise<void> {
+  await prepararAPagina(page);
+  await page.goto(endereco);
   await expect
     .poll(() => page.locator('video.previa').first().evaluate((v: HTMLVideoElement) => v.srcObject !== null))
     .toBe(true);
+}
+
+/**
+ * A página do colega na entrada dele: o PASSE no fim do endereço, depois do #, como o app a abre no navegador; a rede
+ * falsa (já instalada) o reconhece pelo colega dela.
+ */
+export async function abrirComoColega(page: Page): Promise<void> {
+  await abrirNaEntrada(page, `/r/${CODIGO}#p=${PASSE}`);
 }
 
 /** O colega na reunião, pelo Entrar, sem a espera: a rede (já instalada) aceita o entrar. Devolve o canal 1. */

@@ -70,6 +70,11 @@
 // encerrar. O que deu certo não tem resposta: a lista nova (ou o encerrada) diz, e o leitor de tela ouve o resultado
 // (o efeito dizer). A lista, o painel e as perguntas seguem a regra da tela da reunião, como o chat. Quem é de fora
 // nunca tem nada disso. A chave do colega e o passe não vão ao console, como a chave de volta.
+//
+// A tela "o app ou o navegador" (a escolha). No Windows (o comecar com o windows), o abriu do carregar de quem a página
+// não reconheceu como colega leva à escolha, e não à entrada: o "Abrir no app" é um link, e a página fica nela; o
+// "Entrar pelo navegador" (o clique peloNavegador) leva à entrada de quem é de fora, que pede a mídia. A reunião de
+// teste nunca pergunta, e a escolha vale para a página inteira: depois dela, nenhum abrir mostra a escolha de novo.
 
 import { LISTA_VAZIA, ditoDaResposta, lerLista, tituloDoCartao } from './colega.js';
 import { MAX_MENSAGENS, textoLimpo } from './mensagens.js';
@@ -177,7 +182,7 @@ const prazoDaVez = (vez) => esperar(PRAZO_VOLTA_MS, daVez('prazo', vez));
 /** O estado do começo: a tela carregando, antes do abrir. */
 export function inicial() {
   return {
-    tela: 'carregando', // carregando, entrada, pedindo, aguardando, naoComecou, entrando, reuniao ou aviso
+    tela: 'carregando', // carregando, escolha, entrada, pedindo, aguardando, naoComecou, entrando, reuniao ou aviso
     aviso: null, // com a tela aviso, um dos 10 avisos
     esperarSegundos: 0, // a contagem do aviso tentativas
     reuniao: null, // a reuniao do abrir: {tipo, assunto, inicio}
@@ -222,6 +227,9 @@ export function inicial() {
     chaveDoColega: null,
     passe: null,
     semColega: false,
+    // A escolha: o navegador está no Windows, e a pessoa já escolheu o navegador nesta página.
+    windows: false,
+    peloNavegador: false,
     // Na reunião, só para o colega: a lista ({participantes, pedidos}), o painel Participantes aberto, o id de quem
     // tem a pergunta "Tirar <Nome>?" à vista, a pergunta do Encerrar para todos à vista, a reunião cheia no último
     // aceitar, e as respostas da página que esperam a lista nova ({de, id, nome}), para o leitor de tela.
@@ -239,10 +247,13 @@ export function transicao(estado, evento) {
   let r;
   switch (evento.tipo) {
     case 'comecar':
-      // O passe que a página recebeu, se houver: o primeiro abrir o leva.
+      // O passe que a página recebeu, se houver: o primeiro abrir o leva. E se o navegador está no Windows.
       r =
         estado.tela === 'carregando'
-          ? comAbrir(estado, { passe: typeof evento.passe === 'string' && evento.passe !== '' ? evento.passe : null })
+          ? comAbrir(estado, {
+              passe: typeof evento.passe === 'string' && evento.passe !== '' ? evento.passe : null,
+              windows: evento.windows === true,
+            })
           : nada(estado);
       break;
     case 'abriu':
@@ -368,11 +379,14 @@ const voltarEmCurso = (e) => e.esperandoBilhete || canalDoVoltar(e);
 // A chave do aceito ou do voltou. Sem ela (um servidor de antes da chave), a página não volta sozinha.
 const chaveDe = (participante, volta) => (participante && volta ? { participante, volta } : null);
 
-// O abriu do carregar dá o cabeçalho e pede a mídia. O do pedido abre o canal com o bilhete novo, que não fica no
-// estado. O do voltar também abre o canal, e só: na reunião, ele não leva à entrada nem pede a mídia.
+// O abriu do carregar dá o cabeçalho e pede a mídia; no Windows, quem a página não reconheceu vai antes à escolha,
+// sem a mídia. O do pedido abre o canal com o bilhete novo, que não fica no estado. O do voltar também abre o canal, e
+// só: na reunião, ele não leva à entrada nem pede a mídia.
 function abriu(e, { reuniao, bilhete, colega }) {
   if (e.tela === 'carregando') {
-    return com(e, { tela: 'entrada', reuniao, esperandoMidia: true, ...reconhecido(e, colega) }, PEDIR_MIDIA);
+    const f = { ...e, reuniao, ...reconhecido(e, colega) };
+    if (vaiAEscolha(f)) return com(f, { tela: 'escolha' });
+    return com(f, { tela: 'entrada', esperandoMidia: true }, PEDIR_MIDIA);
   }
   if (esperaOAbrir(e)) {
     // O abrir com a chave responde o colega de novo, sem a chave: o nome e o valeAte de agora.
@@ -382,6 +396,10 @@ function abriu(e, { reuniao, bilhete, colega }) {
   if (e.esperandoBilhete) return com(e, { esperandoBilhete: false, canal: 'abrindo' }, abrirCanal(bilhete));
   return nada(e);
 }
+
+// A escolha aparece no Windows, para quem a página não reconheceu, fora da reunião de teste, e só até a pessoa
+// escolher o navegador.
+const vaiAEscolha = (e) => e.windows && e.colega === null && e.reuniao?.tipo !== 'teste' && !e.peloNavegador;
 
 // O colega que a resposta do abrir traz: o nome, e o valeAte, que é um número ou null.
 const colegaQueVale = (c) => c !== null && typeof c === 'object' && typeof c.nome === 'string';
@@ -411,7 +429,8 @@ function abrirFalhou(e, { status, esperarSegundos, passe }) {
     const semColega = { colega: null, chaveDoColega: null, passe: null, semColega: true };
     return e.tela === 'carregando' ? comAbrir(e, semColega) : com(e, { ...semColega, tela: 'entrada' });
   }
-  if (status === 404) return terminar(e, 'linkInvalido');
+  // O link que não vale é o fim: o passe que o primeiro abrir levava sai do estado.
+  if (status === 404) return terminar({ ...e, passe: null }, 'linkInvalido');
   if (status !== 429) return avisar(e, 'semServidor');
   const n = Math.max(0, Math.ceil(Number(esperarSegundos) || 0));
   if (n === 0) return avisar(e, 'tentativas');
@@ -929,6 +948,10 @@ function telaCapturada(e, ok) {
 
 function clique(e, botao, id) {
   switch (botao) {
+    case 'peloNavegador':
+      // O Entrar pelo navegador da escolha: a entrada de quem é de fora, e a mídia pedida só agora.
+      if (e.tela !== 'escolha') return nada(e);
+      return com(e, { tela: 'entrada', peloNavegador: true, esperandoMidia: true }, PEDIR_MIDIA);
     case 'pedir':
       if (e.tela !== 'entrada' || e.colega !== null || !nomeValido(e.nome)) return nada(e);
       return comAbrir(e, { tela: 'pedindo', nomeRecusado: false, reabrindo: 0 });

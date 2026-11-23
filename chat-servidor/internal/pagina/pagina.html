@@ -43,6 +43,10 @@
 <symbol id="i-fechar" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"></path></symbol>
 <symbol id="i-voltar" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"></path></symbol>
 <symbol id="i-enviar" viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-3-7z"></path></symbol>
+<symbol id="i-app" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line><path d="M9 10l2 2 4-4"></path></symbol>
+<symbol id="i-globo" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></symbol>
+<symbol id="i-abrir-fora" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></symbol>
+<symbol id="i-seta" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="13 6 19 12 13 18"></polyline></symbol>
 </svg>
 
 <header class="topo">
@@ -62,9 +66,62 @@
 </div>
 </div>
 
+<!-- O app ou o navegador: no Windows, quem a página não reconheceu escolhe antes da entrada. O Abrir no app é um link
+para o app, com o código do endereço (o pagina.js o põe); a página fica aqui depois do clique. O Entrar pelo navegador
+leva à entrada de quem é de fora. A faixa de cima é a do passe que não valeu. -->
+<section class="tela tela-clara escolha" data-tela="escolha" hidden>
+<p class="faixa-sem-colega" data-faixa="semColega" hidden>
+<svg class="icone icone-20" aria-hidden="true"><use href="#i-alerta"></use></svg>
+<span>Não foi possível reconhecer você como colega. Abra a reunião de novo pelo app, ou entre como convidado.</span>
+</p>
+<div class="escolha-titulo">
+<p class="sobretitulo"><span class="traco" aria-hidden="true"></span><span data-campo="tipo"></span></p>
+<h1 tabindex="-1" data-campo="titulo"></h1>
+<p class="escolha-dia">
+<svg class="icone icone-18" aria-hidden="true"><use href="#i-calendario"></use></svg>
+<span data-campo="dia"></span>
+</p>
+</div>
+<div class="escolha-cartoes">
+<div class="escolha-cartao">
+<span class="escolha-icone escolha-icone-app" aria-hidden="true"><svg class="icone icone-26"><use href="#i-app"></use></svg></span>
+<h2>Tem o Starsonic Phone neste computador?</h2>
+<p class="escolha-texto">Colegas da empresa entram direto pelo app, sem passar pela espera.</p>
+<div class="escolha-acao">
+<a class="botao botao-ciano escolha-botao" data-link="app" href="starsonic://reuniao/">
+<svg class="icone icone-18" aria-hidden="true"><use href="#i-abrir-fora"></use></svg>
+<span>Abrir no app</span>
+</a>
+<p class="ajuda">Se o app não abrir, entre pelo navegador.</p>
+</div>
+</div>
+<div class="escolha-cartao">
+<span class="escolha-icone escolha-icone-navegador" aria-hidden="true"><svg class="icone icone-26"><use href="#i-globo"></use></svg></span>
+<h2>Vai entrar pelo navegador?</h2>
+<p class="escolha-texto">Para quem é de fora, ou para quem não tem o app aqui. Você digita o seu nome e espera um colega aceitar o pedido.</p>
+<div class="escolha-acao">
+<button type="button" class="botao escolha-botao escolha-navegador" data-botao="peloNavegador">
+<svg class="icone icone-18" aria-hidden="true"><use href="#i-seta"></use></svg>
+<span>Entrar pelo navegador</span>
+</button>
+<p class="ajuda">Funciona no navegador do PC e do celular, sem instalar nada.</p>
+</div>
+</div>
+</div>
+<p class="gravado">
+<svg class="icone icone-16" aria-hidden="true"><use href="#i-cadeado"></use></svg>
+<span>Nada é gravado. O seu nome só aparece para quem está na reunião.</span>
+</p>
+</section>
+
 <!-- A entrada: a imagem da câmera com o Microfone e a Câmera, e o nome com o Pedir para entrar. O colega que o passe
-reconheceu não digita o nome: no lugar do campo, ele vê quem é, e entra pelo Entrar. -->
+reconheceu não digita o nome: no lugar do campo, ele vê quem é, e entra pelo Entrar. A faixa de cima é a do passe que
+não valeu. -->
 <section class="tela tela-clara entrada" data-tela="entrada" hidden>
+<p class="faixa-sem-colega" data-faixa="semColega" hidden>
+<svg class="icone icone-20" aria-hidden="true"><use href="#i-alerta"></use></svg>
+<span>Não foi possível reconhecer você como colega. Abra a reunião de novo pelo app, ou entre como convidado.</span>
+</p>
 <div class="aviso-acesso" role="alert" hidden>
 <svg class="icone icone-24" aria-hidden="true"><use href="#i-alerta"></use></svg>
 <div class="aviso-acesso-texto">

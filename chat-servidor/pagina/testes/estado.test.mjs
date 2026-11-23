@@ -173,6 +173,8 @@ test('o carregar abre', () => {
     chaveDoColega: null,
     passe: null,
     semColega: false,
+    windows: false,
+    peloNavegador: false,
     lista: { participantes: [], pedidos: [] },
     gente: false,
     tirando: null,
@@ -2672,4 +2674,136 @@ test('o estado nunca muda no lugar', () => {
   assert.equal(r.estado.aviso, 'encerrada');
   rodar(inicial(), COMECAR_COM_PASSE, passeRecusado(1), abriu(2));
   rodar(colegaNaEntrada(), clique('entrar'), passeRecusado(2));
+});
+
+test('o link que não vale tira o passe do estado', () => {
+  // O 404 do primeiro abrir é o fim: o passe que ele levava não fica para nada.
+  const r = rodar(inicial(), COMECAR_COM_PASSE, abrirFalhou(1, 404));
+  assert.equal(r.estado.aviso, 'linkInvalido');
+  assert.equal(r.estado.passe, null);
+  assert.ok(!JSON.stringify(r.estado).includes(PASSE));
+});
+
+// ---- A tela "o app ou o navegador" ----
+
+// A página no Windows, sem o passe; a reunião na hora e a de teste.
+const COMECAR_NO_WINDOWS = { tipo: 'comecar', passe: null, windows: true };
+const NA_HORA = { tipo: 'naHora', assunto: 'Conversa rápida', inicio: null };
+const DE_TESTE = { tipo: 'teste', assunto: null, inicio: null };
+const abriuA = (abertura, reuniao) => ({ ...abriu(abertura), reuniao });
+const NOME = { tipo: 'nome', valor: 'Maria Lima' };
+
+test('a escolha no Windows', () => {
+  for (const reuniao of [REUNIAO, NA_HORA]) {
+    const r = rodar(inicial(), COMECAR_NO_WINDOWS, abriuA(1, reuniao));
+    assert.equal(r.estado.tela, 'escolha');
+    assert.deepEqual(r.estado.reuniao, reuniao);
+    // A mídia não é pedida: só a entrada a pede.
+    assert.equal(r.estado.esperandoMidia, false);
+    assert.deepEqual(r.efeitos, [FOCAR]);
+    assert.equal(r.estado.semColega, false);
+  }
+  // O passe que não vale, no Windows: a escolha, com a faixa do colega que não foi reconhecido.
+  const r = rodar(inicial(), { ...COMECAR_NO_WINDOWS, passe: PASSE }, passeRecusado(1), abriu(2));
+  assert.equal(r.estado.tela, 'escolha');
+  assert.equal(r.estado.semColega, true);
+  assert.equal(r.estado.colega, null);
+  assert.deepEqual(r.efeitos, [FOCAR]);
+  // Na escolha, o que é da entrada não faz nada.
+  for (const evento of [NOME, clique('pedir'), clique('entrar'), clique('tentarMidia')]) semMudar(r.estado, evento);
+});
+
+test('sem escolha', () => {
+  // Na reunião de teste, mesmo no Windows.
+  let r = rodar(inicial(), COMECAR_NO_WINDOWS, abriuA(1, DE_TESTE));
+  assert.equal(r.estado.tela, 'entrada');
+  assert.deepEqual(r.efeitos, [PEDIR_MIDIA, FOCAR]);
+  // Fora do Windows: o windows falso, ausente, ou que não é o true.
+  const foraDoWindows = [COMECAR, { tipo: 'comecar', passe: null, windows: false }, { tipo: 'comecar', windows: 'sim' }];
+  for (const comecar of foraDoWindows) {
+    r = rodar(inicial(), comecar, abriu(1));
+    assert.equal(r.estado.tela, 'entrada', JSON.stringify(comecar));
+    assert.deepEqual(r.efeitos, [PEDIR_MIDIA, FOCAR]);
+  }
+  // Com o colega reconhecido, no Windows: a entrada dele.
+  r = rodar(inicial(), { ...COMECAR_NO_WINDOWS, passe: PASSE }, abriuColega(1, COLEGA));
+  assert.equal(r.estado.tela, 'entrada');
+  assert.deepEqual(r.estado.colega, { nome: 'Júlia Martins', valeAte: VALE_ATE });
+  assert.deepEqual(r.efeitos, [PEDIR_MIDIA, FOCAR]);
+});
+
+test('Entrar pelo navegador', () => {
+  const naEscolha = rodar(inicial(), COMECAR_NO_WINDOWS, abriu(1)).estado;
+  // A entrada de quem é de fora, e a mídia é pedida só aqui.
+  let r = passo(naEscolha, clique('peloNavegador'));
+  assert.equal(r.estado.tela, 'entrada');
+  assert.equal(r.estado.colega, null);
+  assert.equal(r.estado.esperandoMidia, true);
+  assert.equal(r.estado.peloNavegador, true);
+  assert.deepEqual(r.efeitos, [PEDIR_MIDIA, FOCAR]);
+  // O nome e o Pedir para entrar de hoje: o abrir sem corpo, e o pedir.
+  r = rodar(r.estado, midia('ligado', 'ligado'), NOME, clique('pedir'));
+  assert.deepEqual(r.efeitos, [abrir(2), FOCAR]);
+  r = rodar(r.estado, abriu(2), CANAL_ABRIU);
+  assert.deepEqual(r.efeitos, [PEDIR]);
+  // A faixa do passe que não valeu fica na entrada.
+  r = rodar(inicial(), { ...COMECAR_NO_WINDOWS, passe: PASSE }, passeRecusado(1), abriu(2), clique('peloNavegador'));
+  assert.equal(r.estado.tela, 'entrada');
+  assert.equal(r.estado.semColega, true);
+  // Fora da escolha, o clique não faz nada.
+  semMudar(naEntrada(), clique('peloNavegador'));
+  semMudar(passo(inicial(), COMECAR_NO_WINDOWS).estado, clique('peloNavegador'));
+  semMudar(naReuniao(), clique('peloNavegador'));
+});
+
+test('os avisos passam na frente', () => {
+  for (const [falha, aviso] of [
+    [abrirFalhou(1, 404), 'linkInvalido'],
+    [abrirFalhou(1, 0), 'semServidor'],
+    [abrirFalhou(1, 429, 5), 'tentativas'],
+  ]) {
+    const r = rodar(inicial(), COMECAR_NO_WINDOWS, falha);
+    assert.equal(r.estado.tela, 'aviso');
+    assert.equal(r.estado.aviso, aviso);
+  }
+  // O Tentar de novo volta a carregar, e a escolha só vem com o abriu.
+  let r = rodar(inicial(), COMECAR_NO_WINDOWS, abrirFalhou(1, 0), clique('tentarDeNovo'));
+  assert.equal(r.estado.tela, 'carregando');
+  assert.deepEqual(r.efeitos, [abrir(2), FOCAR]);
+  r = passo(r.estado, abriu(2));
+  assert.equal(r.estado.tela, 'escolha');
+  assert.deepEqual(r.efeitos, [FOCAR]);
+});
+
+test('a escolha não volta', () => {
+  const pelaEscolha = rodar(
+    inicial(),
+    COMECAR_NO_WINDOWS,
+    abriu(1),
+    clique('peloNavegador'),
+    midia('ligado', 'ligado'),
+    NOME,
+  ).estado;
+  // O Tentar de novo: o pedido que falhou abre de novo, e segue na espera.
+  let r = rodar(pelaEscolha, clique('pedir'), abrirFalhou(2, 0), clique('tentarDeNovo'), abriu(3));
+  assert.equal(r.estado.tela, 'pedindo');
+  assert.equal(r.estado.canal, 'abrindo');
+  // A volta: na reunião, o canal cai e volta por trás com o abrir do voltar.
+  r = rodar(
+    pelaEscolha,
+    clique('pedir'),
+    abriu(2),
+    CANAL_ABRIU,
+    mensagem(ACEITO_COM_CHAVE),
+    ligacao('principal', 'confirmada'),
+    canalFechou(1006),
+    tempo('religar:1'),
+    abriu(3),
+  );
+  assert.equal(r.estado.tela, 'reuniao');
+  assert.deepEqual(r.efeitos, [abrirCanal(3)]);
+  // E um abriu do carregar, na mesma página, vai direto à entrada.
+  r = passo({ ...pelaEscolha, tela: 'carregando', abertura: 4 }, abriu(4));
+  assert.equal(r.estado.tela, 'entrada');
+  assert.deepEqual(r.efeitos, [PEDIR_MIDIA, FOCAR]);
 });

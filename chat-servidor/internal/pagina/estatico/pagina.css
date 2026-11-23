@@ -124,6 +124,7 @@ p {
 .icone-20 { width: 20px; height: 20px; }
 .icone-22 { width: 22px; height: 22px; }
 .icone-24 { width: 24px; height: 24px; }
+.icone-26 { width: 26px; height: 26px; }
 .icone-28 { width: 28px; height: 28px; }
 .icone-30 { width: 30px; height: 30px; }
 .icone-40 { width: 40px; height: 40px; }
@@ -572,6 +573,140 @@ main {
   gap: 8px;
   font-size: 13.5px;
   color: var(--apagado);
+}
+
+/* A faixa do passe que não valeu, no alto da escolha e da entrada de quem é de fora. */
+.faixa-sem-colega {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 18px;
+  border-radius: 14px;
+  background: var(--alerta-fundo);
+  color: var(--alerta);
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.faixa-sem-colega > .icone {
+  margin-top: 1px;
+}
+
+.entrada:has(.faixa-sem-colega:not([hidden])) {
+  padding-top: 32px;
+}
+
+/* ---- A escolha: o app ou o navegador. Clara, como a entrada: dois cartões brancos lado a lado, um embaixo do outro
+   na janela estreita. ---- */
+
+.escolha {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 56px 24px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.escolha:has(.faixa-sem-colega:not([hidden])) {
+  padding-top: 32px;
+}
+
+.escolha-titulo {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.escolha h1 {
+  font-size: 34px;
+  line-height: 1.15;
+  font-weight: 800;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+
+.escolha-dia {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--apagado);
+}
+
+.escolha-cartoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+}
+
+.escolha-cartao {
+  flex: 1 1 340px;
+  min-width: 0;
+  padding: 28px;
+  border: 1px solid var(--borda);
+  border-radius: 18px;
+  background: var(--branco);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.escolha-icone {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.escolha-icone-app {
+  background: var(--azul-fundo);
+  color: var(--marinho);
+}
+
+.escolha-icone-navegador {
+  background: #dff8f9;
+  color: #03606a;
+}
+
+.escolha-cartao h2 {
+  font-size: 21px;
+  line-height: 1.25;
+  font-weight: 700;
+}
+
+.escolha-texto {
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--apagado);
+}
+
+.escolha-acao {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.escolha-botao {
+  padding: 12px 24px;
+  text-decoration: none;
+}
+
+/* O Entrar pelo navegador: branco, com a borda e o texto marinho. */
+.escolha-navegador {
+  border-color: var(--borda-forte);
+  background: var(--branco);
+  color: var(--marinho);
+}
+
+.escolha-navegador:hover {
+  background: var(--azul-fundo);
 }
 
 /* ---- A espera, a reunião que não começou, o entrando e os avisos: um cartão no meio da página. ---- */
@@ -2336,6 +2471,32 @@ button.quadro:focus-visible .pilula {
 
   .entrada h1 {
     font-size: 24px;
+  }
+
+  .entrada:has(.faixa-sem-colega:not([hidden])) {
+    padding-top: 22px;
+  }
+
+  .escolha,
+  .escolha:has(.faixa-sem-colega:not([hidden])) {
+    padding: 22px 20px 32px;
+    gap: 20px;
+  }
+
+  .escolha h1 {
+    font-size: 26px;
+  }
+
+  .escolha-cartoes {
+    gap: 16px;
+  }
+
+  .escolha-cartao {
+    padding: 22px;
+  }
+
+  .escolha-botao {
+    align-self: stretch;
   }
 
   .entrada-imagem {

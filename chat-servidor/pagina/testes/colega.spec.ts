@@ -4,7 +4,7 @@
 // listas chegam pelo canal falso, como o servidor as manda. Quem é de fora não vê nada disso.
 import { expect, test, type Page } from '@playwright/test';
 import { MARCADA } from '../ligacoes-falsas';
-import { PASSE_QUE_NAO_VALE, RedeFalsa, type Canal } from '../rede-falsa';
+import { CODIGO, RedeFalsa, type Canal } from '../rede-falsa';
 import {
   ACEITO,
   BIA,
@@ -12,13 +12,13 @@ import {
   MARIA,
   ROBERTO,
   abrirComoColega,
+  abrirNaEntrada,
   area,
   botao,
   caixa,
   conferir,
   doConsole,
   entrarComoColega,
-  esperadoNoConsole,
   mandarLista,
   subir,
   vigiar,
@@ -335,11 +335,10 @@ test.describe('no celular', () => {
 // ---- Quem é de fora. ----
 
 test('quem é de fora não vê nada disso', async ({ page }) => {
-  // O passe que não vale: a página segue como quem é de fora, com o campo "Seu nome".
+  // A página sem o passe: a entrada de quem é de fora, com o campo "Seu nome". (O passe que não vale dá a mesma
+  // entrada, com a faixa de cima: o escolha.spec.ts.)
   const rede = await RedeFalsa.instalar(page, MARCADA);
-  rede.responder(PASSE_QUE_NAO_VALE);
-  await abrirComoColega(page);
-  esperadoNoConsole(page, (m) => m.includes('status of 401'));
+  await abrirNaEntrada(page, `/r/${CODIGO}`);
   await expect(page.getByLabel('Seu nome')).toBeVisible();
   await expect(page.getByText('Você entra como', { exact: true })).toBeHidden();
   await expect(botao(page, 'Entrar')).toBeHidden();

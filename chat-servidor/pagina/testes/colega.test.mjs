@@ -5,9 +5,11 @@ import { test } from 'node:test';
 import {
   LISTA_VAZIA,
   ditoDaResposta,
+  ehWindows,
   fraseDoEncerrar,
   iniciais,
   lerLista,
+  passeDoEndereco,
   rotuloDoBotao,
   tituloDoCartao,
 } from '../../internal/pagina/estatico/colega.js';
@@ -130,4 +132,64 @@ test('lerLista', () => {
   // 14 participantes valem: quem limita é o servidor.
   const muitos = Array.from({ length: 14 }, (_, i) => ({ ...ana, id: `c${i}`, voce: i === 0 }));
   assert.equal(lerLista({ participantes: muitos, pedidos: [] }).participantes.length, 14);
+});
+
+test('passeDoEndereco', () => {
+  // 43 caracteres base64url: as letras, os números, o - e o _.
+  const passe = 'Ab9_-'.repeat(8) + 'xyz';
+  assert.equal(passe.length, 43);
+  assert.equal(passeDoEndereco(`#p=${passe}`), passe);
+  for (const [hash, porque] of [
+    [`#p=${passe.slice(1)}`, 'com 42'],
+    [`#p=${passe}a`, 'com 44'],
+    [`#p=${passe.slice(1)}=`, 'com o ='],
+    [`#p=${passe.slice(1)}+`, 'com o +'],
+    [`#q=${passe}`, 'com outro nome'],
+    [`#p=${passe}&x=1`, 'com dois parâmetros'],
+    [`#x=1&p=${passe}`, 'com dois parâmetros, o passe no fim'],
+    ['', 'vazio'],
+    ['#', 'só o #'],
+    ['#p=', 'sem o passe'],
+    [passe, 'sem o #p='],
+    [null, 'sem o hash'],
+    [undefined, 'sem o hash'],
+  ]) {
+    assert.equal(passeDoEndereco(hash), null, porque);
+  }
+});
+
+test('ehWindows', () => {
+  // Os agentes de verdade, com o userAgentData onde o navegador o tem (o Chromium); sem ele, decide o agente.
+  const CHROME_WINDOWS =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+  const EDGE_WINDOWS = `${CHROME_WINDOWS} Edg/131.0.0.0`;
+  const FIREFOX_WINDOWS = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0';
+  const CHROME_ANDROID =
+    'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
+  const SAFARI_IPHONE =
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1';
+  const CHROME_MAC =
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+  const CHROME_LINUX =
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+  const dados = (platform) => ({ platform, mobile: platform === 'Android', brands: [] });
+  for (const [navegador, esperado, qual] of [
+    [{ userAgent: CHROME_WINDOWS, userAgentData: dados('Windows') }, true, 'o Chrome no Windows'],
+    [{ userAgent: EDGE_WINDOWS, userAgentData: dados('Windows') }, true, 'o Edge no Windows'],
+    [{ userAgent: FIREFOX_WINDOWS }, true, 'o Firefox no Windows'],
+    [{ userAgent: CHROME_ANDROID, userAgentData: dados('Android') }, false, 'o Chrome no Android'],
+    [{ userAgent: SAFARI_IPHONE }, false, 'o Safari no iPhone'],
+    [{ userAgent: CHROME_MAC, userAgentData: dados('macOS') }, false, 'o Chrome no macOS'],
+    [{ userAgent: CHROME_LINUX, userAgentData: dados('Linux') }, false, 'o Chrome no Linux'],
+    // Com o userAgentData, quem decide é ele, e não o agente.
+    [{ userAgent: CHROME_LINUX, userAgentData: dados('Windows') }, true, 'o platform Windows'],
+    [{ userAgent: CHROME_WINDOWS, userAgentData: dados('Linux') }, false, 'o platform Linux'],
+    // Sem o platform, o agente.
+    [{ userAgent: CHROME_WINDOWS, userAgentData: dados('') }, true, 'o platform vazio'],
+    [{ userAgent: CHROME_WINDOWS, userAgentData: null }, true, 'o userAgentData null'],
+    [{}, false, 'sem nada'],
+    [undefined, false, 'sem o navegador'],
+  ]) {
+    assert.equal(ehWindows(navegador), esperado, qual);
+  }
 });

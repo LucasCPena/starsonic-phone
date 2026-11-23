@@ -6,7 +6,7 @@
 // levam o bilhete, as senhas, as credenciais do TURN, a chave de volta e as mensagens do chat. As medidas do
 // sinalizador também não vão a lugar nenhum fora da página. Na página do colega, ela desenha também a entrada dele, o
 // botão Participantes, o cartão do pedido e o painel Participantes (participantes.js); os nomes entram sempre como
-// texto.
+// texto. No Windows, ela desenha a tela "o app ou o navegador" (a escolha), com o link do app para o código do endereço.
 import { iniciais, rotuloDoBotao, tituloDoCartao } from './colega.js';
 import { cabecalho, inicial, nomeValido, podeEscrever, quando, transicao } from './estado.js';
 import { contagem as numeroDoBotao, dito, escreveu, falha, nomeDoBotao, numaLinha } from './mensagens.js';
@@ -24,6 +24,7 @@ const DE_ENTRAR = new Set(['pedir', 'entrar', 'entrarDeNovo', 'tentarDeNovo']);
 // A seção que cada tela do cérebro mostra. O pedindo já é a espera: o pedido saiu, e o Desistir vale nele. O
 // carregando não mostra nenhuma.
 const SECAO = {
+  escolha: 'escolha',
   entrada: 'entrada',
   pedindo: 'aguardando',
   aguardando: 'aguardando',
@@ -36,7 +37,8 @@ const SECAO = {
 /**
  * Começa a página. A raiz é o elemento com as telas (o body). Os serviços: rede, midia e ligacao são as fábricas dos
  * adaptadores, que recebem a função que leva os eventos ao cérebro; o relogio é {agora(), depois(ms, fn)}; o passe,
- * opcional, é o que a página recebeu para reconhecer o colega (sem ele, a página é a de quem é de fora).
+ * opcional, é o que a página recebeu para reconhecer o colega (sem ele, a página é a de quem é de fora); e o windows,
+ * opcional, diz que o navegador está no Windows (a tela "o app ou o navegador").
  */
 export function iniciar(raiz, servicos) {
   const um = (seletor) => raiz.querySelector(seletor);
@@ -68,6 +70,9 @@ export function iniciar(raiz, servicos) {
   const cartaoDoSinal = um('.sinal-cartao');
   // O Compartilhar a tela só existe onde o navegador tem a captura da tela.
   const temCaptura = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
+  // O Abrir no app da escolha é um link para o app, com o código do endereço (/r/<código>).
+  const codigo = location.pathname.split('/')[2] ?? '';
+  um('[data-link="app"]').setAttribute('href', `starsonic://reuniao/${encodeURIComponent(codigo)}`);
 
   let estado = inicial();
   const fila = [];
@@ -269,6 +274,8 @@ export function iniciar(raiz, servicos) {
     if (e.reuniao) desenharCabecalho(e.reuniao);
     for (const n of todos('[data-campo="nome"]')) texto(n, e.nome.trim());
     desenharEntrada(e);
+    // A faixa do passe que não valeu, no alto da escolha e da entrada de quem é de fora.
+    for (const f of todos('[data-faixa="semColega"]')) f.hidden = !e.semColega;
     desenharMidia(e);
     desenharAvisos(e);
     desenharReuniao(e);
@@ -283,6 +290,13 @@ export function iniciar(raiz, servicos) {
     for (const s of todos('[data-campo="sobretitulo"]')) texto(s, sobretitulo);
     for (const t of todos('[data-campo="titulo"]')) texto(t, titulo);
     for (const l of todos('[data-campo="linha"]')) texto(l, linha);
+    // A escolha diz o tipo e, embaixo do título, o dia e a hora da marcada. (A reunião de teste não chega a ela.)
+    const marcada = reuniao.tipo === 'marcada';
+    for (const t of todos('[data-campo="tipo"]')) texto(t, marcada ? 'Reunião marcada' : sobretitulo);
+    for (const d of todos('[data-campo="dia"]')) {
+      texto(d, marcada ? quando(reuniao.inicio, agora) : '');
+      d.closest('.escolha-dia').hidden = !marcada;
+    }
   }
 
   function desenharEntrada(e) {
@@ -593,7 +607,7 @@ export function iniciar(raiz, servicos) {
   });
 
   desenhar(estado);
-  despachar({ tipo: 'comecar', passe: servicos.passe ?? null });
+  despachar({ tipo: 'comecar', passe: servicos.passe ?? null, windows: servicos.windows === true });
 }
 
 // O texto do elemento, mudado só quando é outro.
