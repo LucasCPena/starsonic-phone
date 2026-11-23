@@ -68,7 +68,8 @@
 // passe) leva à entrada de quem é de fora, e a página nunca tenta de novo como colega. Na reunião, o colega recebe a
 // lista inteira (quem está nela e quem espera) a cada mudança, e responde pelo canal: aceitar, recusar, tirar e
 // encerrar. O que deu certo não tem resposta: a lista nova (ou o encerrada) diz, e o leitor de tela ouve o resultado
-// (o efeito dizer). A lista, o painel e as perguntas seguem a regra da tela da reunião, como o chat. Quem é de fora
+// (o efeito dizer). A resposta que não pode sair (o canal no religar, ou o que desistiu) é como a recusa servidorVideo:
+// o aviso curto do servidor. A lista, o painel e as perguntas seguem a regra da tela da reunião, como o chat. Quem é de fora
 // nunca tem nada disso. A chave do colega e o passe não vão ao console, como a chave de volta.
 //
 // A tela "o app ou o navegador" (a escolha). No Windows (o comecar com o windows), o abriu do carregar de quem a página
@@ -999,20 +1000,27 @@ function recusa(e, { de, motivo }) {
   if (motivo === 'cheia' && de === 'aceitar') {
     return com(e, { ...mudancas, cheiaAoAceitar: true }, dizer('A reunião está cheia: ninguém mais entra agora.'));
   }
-  if (motivo === 'servidorVideo' && e.tela === 'reuniao') {
-    const aviso = e.avisos + 1;
-    return com(
-      e,
-      { ...mudancas, avisos: aviso, avisoCurto: { n: aviso, tipo: 'servidor' } },
-      esperar(AVISO_CURTO_MS, `avisoCurto:${aviso}`),
-      dizer('O servidor de reuniões não respondeu'),
-    );
-  }
+  if (motivo === 'servidorVideo' && e.tela === 'reuniao') return avisoDoServidor(e, mudancas);
   return i < 0 ? nada(e) : com(e, mudancas);
 }
 
-// Uma resposta sai pelo canal e espera a lista nova: {de, id, nome}. Responder de novo tira a reunião cheia.
+// O aviso curto do servidor de reuniões, que o leitor de tela ouve: o da recusa servidorVideo, e o da resposta que não
+// sai.
+function avisoDoServidor(e, mudancas) {
+  const aviso = e.avisos + 1;
+  return com(
+    e,
+    { ...mudancas, avisos: aviso, avisoCurto: { n: aviso, tipo: 'servidor' } },
+    esperar(AVISO_CURTO_MS, `avisoCurto:${aviso}`),
+    dizer('O servidor de reuniões não respondeu'),
+  );
+}
+
+// Uma resposta sai pelo canal e espera a lista nova: {de, id, nome}. Responder de novo tira a reunião cheia. Sem o
+// canal da pessoa (o religar em curso, ou o que desistiu), nada sai: é como a recusa servidorVideo, com o aviso curto
+// do servidor, e a pergunta que a resposta fecharia fecha do mesmo jeito.
 function responder(e, de, id, nome, m, mudancas = {}) {
+  if (!podeResponder(e)) return avisoDoServidor(e, mudancas);
   const respondendo = [...e.respondendo, { de, id, nome }];
   return com(e, { ...mudancas, respondendo, cheiaAoAceitar: false }, mandar(m));
 }
@@ -1036,7 +1044,7 @@ function cliqueDoColega(e, botao, id) {
     case 'aceitar':
     case 'recusar': {
       const p = e.lista.pedidos.find((x) => x.id === id);
-      if (!p || !podeResponder(e)) return nada(e);
+      if (!p || !e.aceito) return nada(e);
       return responder(e, botao, p.id, p.nome, { tipo: botao, pedido: p.id });
     }
     case 'tirar': {
@@ -1045,7 +1053,7 @@ function cliqueDoColega(e, botao, id) {
     }
     case 'tirarMesmo': {
       const p = e.lista.participantes.find((x) => x.id === id);
-      if (!p || e.tirando !== p.id || !podeResponder(e)) return nada(e);
+      if (!p || e.tirando !== p.id || !e.aceito) return nada(e);
       return responder(e, 'tirar', p.id, p.nome, { tipo: 'tirar', participante: p.id }, { tirando: null });
     }
     case 'naoTirar':
@@ -1054,8 +1062,10 @@ function cliqueDoColega(e, botao, id) {
     case 'encerrar':
       return e.encerrando ? nada(e) : com(e, { encerrando: true }, focar('naoEncerrar'));
     case 'encerrarMesmo':
-      // O encerrar não espera resposta na lista: o encerrada é o fim, e a recusa mostra o aviso.
-      if (!e.encerrando || !podeResponder(e)) return nada(e);
+      // O encerrar não espera resposta na lista: o encerrada é o fim, e a recusa mostra o aviso. Sem o canal, o aviso
+      // vem na hora, como o da recusa.
+      if (!e.encerrando || !e.aceito) return nada(e);
+      if (!podeResponder(e)) return avisoDoServidor(e, { encerrando: false });
       return com(e, { encerrando: false }, mandar({ tipo: 'encerrar' }));
     case 'naoEncerrar':
       // O Voltar da pergunta devolve o foco ao Encerrar para todos.

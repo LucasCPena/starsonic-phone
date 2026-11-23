@@ -2492,10 +2492,14 @@ test('aceitar e recusar', () => {
   assert.deepEqual(r.efeitos, [mandar({ tipo: 'aceitar', pedido: MARIA.id })]);
   r = passo(e, cliqueEm('recusar', BIA.id));
   assert.deepEqual(r.efeitos, [mandar({ tipo: 'recusar', pedido: BIA.id })]);
-  // Um pedido que não está na lista fica de fora, e sem o canal da pessoa nada sai.
+  // Um pedido que não está na lista fica de fora. Sem o canal da pessoa, nada sai, e o aviso do servidor aparece (os
+  // testes "sem o canal", abaixo).
   semMudar(e, cliqueEm('aceitar', 'a00000000000000f'));
   semMudar(e, clique('aceitar'));
-  semMudar(passo(e, canalFechou(1006)).estado, cliqueEm('aceitar', MARIA.id));
+  assert.deepEqual(passo(passo(e, canalFechou(1006)).estado, cliqueEm('aceitar', MARIA.id)).estado.avisoCurto, {
+    n: 1,
+    tipo: 'servidor',
+  });
 });
 
 test('o Tirar pede o segundo clique', () => {
@@ -2571,6 +2575,51 @@ test('a recusa servidorVideo mostra o aviso curto do servidor', () => {
   // O encerrar recusado também.
   const s = rodar(e, clique('encerrar'), clique('encerrarMesmo'), recusa('encerrar', 'servidorVideo'));
   assert.deepEqual(s.estado.avisoCurto, { n: 1, tipo: 'servidor' });
+});
+
+// O colega na reunião sem o canal: o religar em curso (o canal caiu, e a ligação segue no ar), e o religar que
+// desistiu (a chave recusada: a reunião segue sem o canal).
+const RECUSADA_NO_RELIGAR = mensagem({ tipo: 'erro', erro: 'invalido' });
+const colegaSemCanal = () => ({
+  religando: passo(colegaComLista(), canalFechou(1006)).estado,
+  desistiu: rodar(colegaComLista(), canalFechou(1006), tempo('religar:1'), abriu(3), CANAL_ABRIU, RECUSADA_NO_RELIGAR)
+    .estado,
+});
+// A resposta que não sai é como a recusa servidorVideo: nada vai ao canal, e o aviso curto do servidor aparece e é dito.
+function comOAvisoDoServidor(antes, r) {
+  const n = antes.avisos + 1;
+  assert.deepEqual(r.estado.avisoCurto, { n, tipo: 'servidor' });
+  assert.deepEqual(r.efeitos, [tempoDoAviso(n), dizer('O servidor de reuniões não respondeu')]);
+  assert.deepEqual(r.estado.respondendo, []);
+}
+
+test('o aceitar sem o canal mostra o aviso do servidor', () => {
+  for (const [quando, e] of Object.entries(colegaSemCanal())) {
+    assert.notEqual(e.canal, 'aberto', quando);
+    comOAvisoDoServidor(e, passo(e, cliqueEm('aceitar', MARIA.id)));
+  }
+});
+
+test('o recusar sem o canal mostra o aviso do servidor', () => {
+  for (const e of Object.values(colegaSemCanal())) comOAvisoDoServidor(e, passo(e, cliqueEm('recusar', BIA.id)));
+});
+
+test('o tirar sem o canal mostra o aviso do servidor, e a pergunta se desfaz', () => {
+  for (const e of Object.values(colegaSemCanal())) {
+    const perguntando = passo(e, cliqueEm('tirar', PEDRO.id)).estado;
+    const r = passo(perguntando, cliqueEm('tirarMesmo', PEDRO.id));
+    comOAvisoDoServidor(perguntando, r);
+    assert.equal(r.estado.tirando, null);
+  }
+});
+
+test('o encerrar sem o canal mostra o aviso do servidor, e o diálogo fecha', () => {
+  for (const e of Object.values(colegaSemCanal())) {
+    const perguntando = passo(e, clique('encerrar')).estado;
+    const r = passo(perguntando, clique('encerrarMesmo'));
+    comOAvisoDoServidor(perguntando, r);
+    assert.equal(r.estado.encerrando, false);
+  }
 });
 
 test('o resultado de cada resposta é dito', () => {

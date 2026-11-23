@@ -249,6 +249,34 @@ test('o servidor de vídeo que não respondeu ao aceitar', async ({ page }) => {
   await expect(aviso(page)).toBeHidden();
 });
 
+test('o Aceitar sem o canal mostra o aviso do servidor', async ({ page }) => {
+  const rede = await RedeFalsa.instalar(page, MARCADA);
+  const canal = await entrarComoColega(page, rede);
+  mandarLista(canal, { pedidos: [pedidoDe(MARIA)] });
+  await expect(tituloDoCartao(page)).toHaveText('Maria Lima quer entrar');
+  const semCanal = async () => {
+    await botao(page, 'Aceitar').click();
+    await expect(aviso(page).locator('.aviso-curto-linha')).toHaveText('O servidor de reuniões não respondeu');
+    await expect(anuncio(page)).toHaveText('O servidor de reuniões não respondeu');
+    await page.clock.runFor(5_000);
+    await expect(aviso(page)).toBeHidden();
+  };
+  // O canal cai, e a página tenta religar por trás: o clique não sai, e o aviso do servidor aparece.
+  await canal.fechar(1006);
+  await page.clock.runFor(2_000);
+  const volta = await rede.canalNumero(2);
+  await expect.poll(() => volta.tipos()).toEqual(['voltar']);
+  await semCanal();
+  // O religar desiste (a chave recusada): a reunião segue sem o canal, e o clique também mostra o aviso.
+  volta.mandar({ tipo: 'erro', erro: 'invalido' });
+  await expect.poll(() => volta.fechadoPelaPagina).not.toBeUndefined();
+  await semCanal();
+  // Nada foi pelos canais, e o pedido continua no cartão.
+  expect(respostas(canal)).toEqual([]);
+  expect(respostas(volta)).toEqual([]);
+  await expect(tituloDoCartao(page)).toHaveText('Maria Lima quer entrar');
+});
+
 test('o nome não vira HTML', async ({ page }) => {
   const canal = await colegaNaReuniao(page);
   const nome = '<img src=x onerror=alert(1)>';
