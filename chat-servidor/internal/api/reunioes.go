@@ -338,26 +338,17 @@ type acessoJSON struct {
 	Reuniao reuniaoJSON `json:"reuniao"`
 }
 
-// POST /api/v1/reunioes/{codigo}/entrar: um colega da mesma empresa entra direto. A ordem das conferências:
-//  1. a janela das tentativas (sem contar): cheia, é 429 tentativas, até com o código certo;
-//  2. a empresa tem as reuniões liberadas (403 semReunioes);
-//  3. o código existe (404);
-//  4. o link vale (404, de qualquer empresa);
-//  5. a reunião é da empresa (403 outraEmpresa);
-//  6. o gerente: o link vale (404, de novo, por causa das corridas), o vídeo está no ar (503), a reunião cabe mais uma pessoa (409 cheia) e,
-//     parada, cabe no limite de reuniões ao mesmo tempo (409 servidorCheio).
-//
-// Conta na janela só o que não deu em reunião em que a pessoa pudesse entrar: o 404, o outraEmpresa e o
-// semReunioes. Quem entra, e a reunião cheia, o servidor cheio e o vídeo fora do ar de um código bom, não contam:
-// um escritório atrás de um endereço só entra de uma vez na hora marcada.
-func (s *servidor) entrarNaReuniao(w http.ResponseWriter, r *http.Request) {
+// conferirReuniaoDoColega faz as conferências 1 a 5 e a da pessoa da vez, que o entrar e o passe têm em comum: a
+// ordem, o que conta na janela aberturas e o 404 que esconde o link morto ficam só aqui. Se algo falha, já responde
+// e devolve ok false. O errada é para o chamador contar na janela e responder o que ainda puder dar errado depois.
+func (s *servidor) conferirReuniaoDoColega(w http.ResponseWriter, r *http.Request) (c banco.Computador, reuniao banco.Reuniao, pessoa banco.Pessoa, errada func(int, string), ok bool) {
 	c, e := computadorDe(r)
 	endereco := limites.Endereco(r)
-	if ok, esperar := s.aberturas.Cabe(endereco, 1); !ok {
+	if cabe, esperar := s.aberturas.Cabe(endereco, 1); !cabe {
 		erroEspera(w, "tentativas", esperar)
 		return
 	}
-	errada := func(status int, codigo string) {
+	errada = func(status int, codigo string) {
 		s.aberturas.Contar(endereco, 1)
 		escreverErro(w, status, codigo, nil)
 	}
@@ -365,8 +356,8 @@ func (s *servidor) entrarNaReuniao(w http.ResponseWriter, r *http.Request) {
 		errada(http.StatusForbidden, "semReunioes")
 		return
 	}
-	codigo, ok := segredo.NormalizarCodigoReuniao(r.PathValue("codigo"))
-	if !ok {
+	codigo, valido := segredo.NormalizarCodigoReuniao(r.PathValue("codigo"))
+	if !valido {
 		errada(http.StatusNotFound, "naoEncontrado")
 		return
 	}
@@ -389,9 +380,29 @@ func (s *servidor) entrarNaReuniao(w http.ResponseWriter, r *http.Request) {
 		errada(http.StatusForbidden, "outraEmpresa")
 		return
 	}
-	pessoa, err := s.banco.PessoaPorID(r.Context(), c.EmpresaID, c.PessoaID)
+	pessoa, err = s.banco.PessoaPorID(r.Context(), c.EmpresaID, c.PessoaID)
 	if err != nil {
 		erroDaPessoaDaVez(w, err)
+		return
+	}
+	return c, reuniao, pessoa, errada, true
+}
+
+// POST /api/v1/reunioes/{codigo}/entrar: um colega da mesma empresa entra direto. A ordem das conferências:
+//  1. a janela das tentativas (sem contar): cheia, é 429 tentativas, até com o código certo;
+//  2. a empresa tem as reuniões liberadas (403 semReunioes);
+//  3. o código existe (404);
+//  4. o link vale (404, de qualquer empresa);
+//  5. a reunião é da empresa (403 outraEmpresa);
+//  6. o gerente: o link vale (404, de novo, por causa das corridas), o vídeo está no ar (503), a reunião cabe mais uma pessoa (409 cheia) e,
+//     parada, cabe no limite de reuniões ao mesmo tempo (409 servidorCheio).
+//
+// Conta na janela só o que não deu em reunião em que a pessoa pudesse entrar: o 404, o outraEmpresa e o
+// semReunioes. Quem entra, e a reunião cheia, o servidor cheio e o vídeo fora do ar de um código bom, não contam:
+// um escritório atrás de um endereço só entra de uma vez na hora marcada.
+func (s *servidor) entrarNaReuniao(w http.ResponseWriter, r *http.Request) {
+	c, reuniao, pessoa, errada, ok := s.conferirReuniaoDoColega(w, r)
+	if !ok {
 		return
 	}
 	acesso, err := s.gerente.EntrarColega(r.Context(), reuniao, pessoa, c.ID)
@@ -412,44 +423,8 @@ func (s *servidor) entrarNaReuniao(w http.ResponseWriter, r *http.Request) {
 // cheia não barra: quem diz cheia é o canal. Por último vem a janela dos passes (10 por minuto, pelo computador);
 // só o pedido que ganharia o passe conta nela. O código e o passe não vão aos registros.
 func (s *servidor) passeDaReuniao(w http.ResponseWriter, r *http.Request) {
-	c, e := computadorDe(r)
-	endereco := limites.Endereco(r)
-	if ok, esperar := s.aberturas.Cabe(endereco, 1); !ok {
-		erroEspera(w, "tentativas", esperar)
-		return
-	}
-	errada := func(status int, codigo string) {
-		s.aberturas.Contar(endereco, 1)
-		escreverErro(w, status, codigo, nil)
-	}
-	if !e.Reunioes {
-		errada(http.StatusForbidden, "semReunioes")
-		return
-	}
-	codigo, ok := segredo.NormalizarCodigoReuniao(r.PathValue("codigo"))
+	c, reuniao, _, _, ok := s.conferirReuniaoDoColega(w, r)
 	if !ok {
-		errada(http.StatusNotFound, "naoEncontrado")
-		return
-	}
-	reuniao, err := s.banco.ReuniaoPorCodigo(r.Context(), codigo)
-	if errors.Is(err, banco.ErrNaoEncontrado) {
-		errada(http.StatusNotFound, "naoEncontrado")
-		return
-	}
-	if err != nil {
-		erroServidor(w, err)
-		return
-	}
-	if !reuniao.Vale(s.agoraMs()) {
-		errada(http.StatusNotFound, "naoEncontrado")
-		return
-	}
-	if reuniao.EmpresaID != c.EmpresaID {
-		errada(http.StatusForbidden, "outraEmpresa")
-		return
-	}
-	if _, err := s.banco.PessoaPorID(r.Context(), c.EmpresaID, c.PessoaID); err != nil {
-		erroDaPessoaDaVez(w, err)
 		return
 	}
 	if ok, esperar := s.passesDoMinuto.Usar(strconv.FormatInt(c.ID, 10), 1); !ok {
