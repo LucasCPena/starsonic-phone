@@ -44,7 +44,7 @@
 5. O "Abrir no navegador" abre a reunião no navegador padrão com o colega reconhecido, sem digitar o nome e sem esperar.
 6. O "Abrir no app" da página traz o app para a frente, na entrada daquela reunião. O app nunca entra sozinho.
 7. Com a reunião escondida, o pedido aparece no aviso do Windows, e o "Aceitar" dali põe a pessoa na reunião.
-8. Numa ligação da central atendida no meio da reunião, os outros não ouvem a ligação e a pessoa não ouve a reunião. Quando a ligação acaba, a reunião volta como estava em até 2 s.
+8. Numa ligação da central atendida no meio da reunião, os outros não ouvem a ligação e a pessoa não ouve a reunião. Quando a ligação acaba, a reunião volta como estava em até 2 s. Vale com a reunião dentro do app e, com o app e a página conectados ao chat, com a reunião aberta no navegador pelo app (em até 3 s).
 9. O "Compartilhar a tela" funciona de dentro do app.
 10. Sem um passe que valha, a página trata a pessoa como de fora. Um passe usado, vencido, de outra reunião ou de outra empresa não reconhece ninguém.
 11. Os registros dos servidores e o diagnóstico do app não ganham nomes, assuntos, códigos de link, passes nem chaves.
@@ -73,7 +73,7 @@ O quadro mostra a janela no tamanho Normal e no grande, no tema claro. A aba Reu
   - o "Entrar", o "Copiar link" e o menu.
 - **O "Copiar link"** vira "Link copiado" por 2 s.
 - **O menu** mostra até quando o link vale e tem o "Abrir no navegador" e o "Cancelar a reunião".
-- **O campo "Cole aqui o link de uma reunião"** serve para quem recebeu o link de outra pessoa. Ele aceita o link inteiro deste servidor do chat, ou só o código. Com um texto no campo, aparece o "Entrar".
+- **O campo "Cole aqui o link de uma reunião"** serve para quem recebeu o link de outra pessoa. Ele aceita o link inteiro deste servidor do chat, ou só o código. Com um texto no campo, aparecem o "Entrar" e, menor, o "Abrir no navegador": é por ali que o colega que não marcou a reunião chega ao navegador reconhecido.
 - **A "Nova reunião":** o assunto (opcional), o dia, a hora e até quando o link vale: "O fim do dia da reunião" (o padrão) ou "Outro dia e hora", no máximo 31 dias depois. Ao criar, a pessoa volta à lista, com a reunião nova e o link já copiado.
 - **Não existe editar.** Para trocar o dia ou a hora, a pessoa cancela e marca outra.
 - **Cancelar** pergunta antes (tela 5). O link para de valer na hora, e quem está na reunião sai.
@@ -82,7 +82,7 @@ O quadro mostra a janela no tamanho Normal e no grande, no tema claro. A aba Reu
 ### 4.3 Entrar numa reunião
 
 - **Pelo app** (o "Entrar" da lista, o campo do link, ou o "Abrir no app" da página): a janela vai para o tamanho grande e mostra a entrada da reunião (tela 6). A pessoa escolhe se entra com a câmera e o microfone ligados e clica em "Entrar". Ela entra direto, e uma reunião parada começa.
-- **Pelo navegador** (o "Abrir no navegador" do menu): o navegador padrão abre a mesma entrada, com o colega reconhecido.
+- **Pelo navegador** (o "Abrir no navegador" do menu, ou o do campo do link): o navegador padrão abre a mesma entrada, com o colega reconhecido.
 - **Sem o app naquele aparelho** (em casa, no celular), o colega entra como quem é de fora: digita o nome e espera.
 - **O link de outra empresa:** o app diz que a reunião é de outra empresa e oferece abrir no navegador, onde a pessoa passa pela sala de espera.
 - **No PC com Windows, a página pergunta primeiro** (a tela 1 do quadro da página): "Abrir no app" ou "Entrar pelo navegador". A reunião de teste da administração não pergunta.
@@ -107,13 +107,17 @@ O quadro mostra a janela no tamanho Normal e no grande, no tema claro. A aba Reu
 - **O "Telefone"** mostra o app de sempre, no tamanho de sempre, sem sair da reunião: os outros continuam ouvindo e vendo a pessoa. Uma faixa no alto diz "Você está na reunião", o estado do microfone, e tem o "Voltar para a reunião" (tela 14). Antes de a pessoa entrar, o "Telefone" só fecha a entrada.
 - **Uma ligação da central** toca num cartão por cima da reunião (tela 12). Atender tira a pessoa da reunião enquanto a ligação durar: o microfone, a câmera e o som da reunião desligam, e a tela compartilhada para. A janela volta ao tamanho de sempre, com a tela da ligação e a faixa "Você está fora da reunião" (tela 13).
 - **Quando a ligação acaba,** o microfone, a câmera e o som voltam como estavam, e a janela volta para a reunião. A tela compartilhada não volta sozinha.
-- **O "Voltar para a reunião"** da faixa põe a ligação em espera e volta para a reunião. Um cartão por cima da reunião mostra "<Nome> em espera", com "Voltar à ligação" e "Desligar".
+- **O "Voltar para a reunião"** da faixa põe a ligação em espera e volta para a reunião. Um cartão por cima da reunião mostra "<Nome> em espera", com "Voltar à ligação" e "Desligar". O botão só aparece com uma ligação só, já atendida: chamando, com duas ligações, na consulta ou na conferência, a faixa fica sem ele, e a pessoa volta quando as ligações acabam.
+- **Com a reunião aberta no navegador pelo app,** o app também a põe em pausa numa ligação, pelo servidor do chat (7.9). A página mostra "Você está numa ligação no Starsonic Phone", com o "Voltar para a reunião".
 - **Ligar para alguém do "Telefone"** também tira a pessoa da reunião enquanto a ligação durar.
 - **Numa reunião, as ligações da central são só de voz:** sem o "Atender com vídeo" e sem a câmera (ela está com a reunião).
 - **Com a reunião escondida** (outra janela na frente, a janela minimizada ou a pessoa no "Telefone"), o pedido de quem quer entrar aparece no aviso do Windows (tela 11), um de cada vez, com "Recusar" e "Aceitar". O clique fora dos botões traz a reunião para a frente. O Não perturbe não cala esse aviso: ele é da reunião em que a pessoa está.
 - **Fechar a janela** durante a reunião pergunta antes: "Sair da reunião?". Minimizar não pergunta, e a reunião continua.
 - **Quando a reunião acaba para a pessoa** (o "Sair", o "Encerrar para todos", o "Tirar", o cancelamento), a janela volta ao tamanho de sempre, na aba Reuniões. Menos no "Sair", um aviso diz o que aconteceu. Se ela está no "Telefone" ou numa ligação, fica onde está: a faixa some, e o aviso aparece como os avisos curtos do app.
-- **Com a sessão do Windows bloqueada,** a câmera da reunião desliga, e volta ao desbloquear, como a da videochamada.
+- **Se a reunião cai para a pessoa sem ela pedir** (a página desistiu de voltar depois de uma queda), a página mostra o "Você saiu da reunião" dela, com o "Entrar de novo", dentro da janela, e o app deixa de tratar a pessoa como "em reunião". Com a reunião escondida nessa hora, o app fecha a vista e diz, num aviso curto, que a conexão caiu.
+- **Com a sessão do Windows bloqueada,** a câmera da reunião desliga, e volta ao desbloquear, como a da videochamada. Só vale para a reunião dentro do app.
+- **Sair do app** (a bandeja, o Alt+F4, o Windows desligando) com uma reunião aberta é como fechar a aba do navegador: não há pergunta, e a página desliga a ligação ao ir embora, como já faz. O "Atualizar agora" do app pergunta antes, como o fechar.
+- **Trocar de conta, ou desligar o computador do chat,** com uma reunião aberta no app: a página sai da reunião antes, e um aviso curto diz por quê. O app também esquece as reuniões abertas no navegador: não mostra mais os avisos delas nem as põe em pausa. Elas continuam no navegador, com a pessoa que entrou.
 
 ## 5. Fora do escopo
 
@@ -157,7 +161,7 @@ O responsável escolheu o 1, e pediu que o navegador também funcione para o col
 
 | Parte | O que muda |
 |---|---|
-| O servidor do chat | O passe, a chave do colega e o canal do colega na página (7.2 e 7.3). A página pode ser mostrada dentro do app (7.4) |
+| O servidor do chat | O passe, a chave do colega e o canal do colega na página (7.2 e 7.3). A página pode ser mostrada dentro do app (7.4). O repasse da pausa (7.9) |
 | A página da reunião | O modo do colega (as telas 6 a 10), a conversa com o app (7.5), a pausa, e a escolha entre o app e o navegador |
 | A interface do app | A aba Reuniões, a vista da reunião, as faixas, o cartão da ligação, o aviso (7.6) |
 | O núcleo e o executável | As permissões, a navegação do `iframe`, os comandos novos, o link `starsonic://`, o aviso do canto (7.7) |
@@ -200,6 +204,7 @@ O responsável escolheu o 1, e pediu que o navegador também funcione para o col
  "pedidos": [{"id": "<16 hex>", "nome": "Maria Lima"}]}
 {"tipo": "recusa", "de": "aceitar" | "recusar" | "tirar" | "encerrar",
  "motivo": "jaRespondido" | "naoEncontrado" | "cheia" | "foraDaReuniao" | "servidorVideo"}
+{"tipo": "pausa", "pausada": true, "vez": "<id>"}   // o app pôs a reunião em pausa, ou a tirou dela (7.9)
 ```
 - **O `entrar`** responde o `aceito` de hoje (o Acesso e a chave de volta), ou `cheia`, `servidorCheio`, `semServidor` ou `linkInvalido`, com as regras que o `pedir` tem para cada um. Nunca `naoComecou`, `aguardando` nem `recusado`: uma reunião parada começa. Vale uma vez por canal, e o prazo de 2 minutos do primeiro `pedir` vale para ele.
 - **O participante do colega** nasce como o do `entrar` do app: `deFora` falso, com o nome do cadastro na hora, da pessoa e do computador do passe. Para o resto do protocolo, **aquele computador chamou o `entrar`**: ele recebe os eventos da seção 11 (`reuniaoPedido`, `reuniaoPedidoFim`, `reuniaoParticipantes`, `reuniaoAcabou`), e as rotas "Com a pessoa na reunião" valem para a pessoa. É assim que o aviso do Windows aceita e recusa.
@@ -225,8 +230,8 @@ Mensagens `postMessage`, sempre um objeto com `"starsonic": 1` e o `tipo`. A pá
 | página | `pronta` | — | A página carregou e quer um passe. Ela manda ao carregar, e de novo se a chave do colega deixar de valer |
 | app | `passe` | `passe`, `aparelhos` | O passe, e os nomes do microfone, do alto-falante e da câmera das Configurações |
 | app | `aparelhos` | os mesmos nomes | A pessoa trocou um aparelho nas Configurações |
-| página | `estado` | `fase` (`entrada`, `naReuniao`), `microfone` | A cada mudança: é o que a barra, as faixas e a pausa do app usam |
-| página | `fim` | `motivo` (`saiu`, `tirado`, `acabou`, `linkInvalido`) | A reunião acabou para a pessoa depois de ela entrar: o app fecha a vista |
+| página | `estado` | `fase` (`entrada`, `naReuniao`, `fora`), `microfone` | A cada mudança: é o que a barra, as faixas e a pausa do app usam. O `fora` é a página no "Você saiu da reunião" depois de uma queda: para o app, a pessoa não está mais em reunião, e a vista se comporta como na entrada |
+| página | `fim` | `motivo` (`saiu`, `tirado`, `acabou`, `linkInvalido`) | A reunião acabou para a pessoa depois de ela entrar: o app fecha a vista. O `saiu` é só o do botão "Sair" e o da resposta ao `sair` do app; a queda é o `fora` do `estado` |
 | página | `link` | `url` | A pessoa clicou num link do chat da reunião: o app abre no navegador padrão |
 | app | `pausar` e `retomar` | — | Uma ligação da central começou ou acabou (7.8) |
 | app | `bloqueio` | `ligado` | A sessão do Windows bloqueou ou voltou: a página desliga a câmera, ou a devolve ao que era |
@@ -270,6 +275,18 @@ Mensagens `postMessage`, sempre um objeto com `"starsonic": 1` e o `tipo`. A pá
 - **O atender automático** continua valendo numa reunião: a ligação é atendida, e a reunião entra em pausa.
 - **O toque** de uma ligação toca por cima do som da reunião, como hoje toca por cima de tudo.
 
+### 7.9 A pausa da reunião aberta no navegador
+
+Dentro do app, a pausa vai por mensagem ao `iframe`: é na hora, e não depende do chat. No navegador, quem leva a pausa é o servidor do chat.
+
+- **O app sabe em quais reuniões o computador entrou pelo navegador:** as do "Abrir no navegador" para as quais os eventos da seção 11 do protocolo chegam.
+- **A rota** — `POST /api/v1/reunioes/{codigo}/pausa`, com `{"pausada": true | false, "vez": "<id>"}`. É da família "Com a pessoa na reunião": responde `204`, ou `409 foraDaReuniao` quando a pessoa da vez não está naquela reunião por uma página deste computador (o app então esquece a reunião). O `vez` é um id que o app escolhe para cada pausa.
+- **O servidor só repassa:** ele manda o `pausa` (7.3) aos canais abertos das páginas daquele computador naquela reunião, e não guarda nada.
+- **O app manda** o `pausada` verdadeiro quando a pausa começa (a regra da 7.8) e de novo a cada 10 s enquanto ela dura, para a página que estava sem o canal, ou que carregou de novo, entrar na pausa. No fim, manda o falso.
+- **A página** faz a pausa da 7.8 e mostra, por cima da reunião, "Você está numa ligação no Starsonic Phone. A reunião não ouve nem vê você.", com o "Voltar para a reunião". O botão desfaz a pausa ali mesmo (a ligação no app continua: a pessoa decide), e a página ignora as repetições daquela mesma `vez`. O `pausada` falso desfaz a pausa.
+- **Se o app fecha no meio da ligação,** a página fica em pausa até a pessoa clicar em "Voltar para a reunião".
+- **Sem o chat no ar** naquele momento, a pausa do navegador não chega. O app então diz, na tela da ligação, que a reunião do navegador continua ouvindo a pessoa.
+
 ## 8. Os valores
 
 | Valor | Quanto |
@@ -281,6 +298,7 @@ Mensagens `postMessage`, sempre um objeto com `"starsonic": 1` e o `tipo`. A pá
 | A aba escondida pelo `semReunioes` | o app pergunta de novo a cada 5 minutos |
 | A página sem dizer `pronta` | 15 s até "A reunião não abriu" |
 | O `sair` sem resposta | 2 s |
+| A pausa do navegador | repetida a cada 10 s enquanto a ligação dura |
 | O "Link copiado" | 2 s |
 | Um link do chat da reunião | `http` ou `https`, até 2.048 caracteres |
 | A janela da reunião | o grande de hoje (1280×800) e a tela cheia |
@@ -332,6 +350,9 @@ Os textos saem das telas do quadro. Os que o quadro não mostra:
 - **A ligação em espera:** "<Nome> em espera", "Voltar à ligação" e "Desligar".
 - **O fechar:** "Sair da reunião?"; "Fechar a janela tira você da reunião."; "Continuar na reunião"; "Sair da reunião".
 - **Depois do fim, na aba:** "Você foi tirado da reunião"; "A reunião acabou"; "Este link não vale mais".
+- **Os avisos curtos:** "A conexão com a reunião caiu. Entre de novo pela aba Reuniões."; "Você saiu da reunião porque a conta mudou.".
+- **Na tela da ligação, com a reunião no navegador e o chat fora do ar:** "A reunião no navegador continua ouvindo você. Desligue o microfone lá.".
+- **Na página, a pausa pedida pelo app:** "Você está numa ligação no Starsonic Phone. A reunião não ouve nem vê você.", com "Voltar para a reunião".
 - **O link do app sem o chat:** "Este computador não está ligado ao chat da empresa. Entre pelo navegador.".
 - **Na página, o colega:**
   - o botão, para o leitor de tela: "Participantes, 1 pessoa quer entrar" e "Participantes, N pessoas querem entrar";
@@ -356,6 +377,8 @@ O leitor de tela ouve o pedido que chega ("<Nome> quer entrar") e o resultado de
 6. **A câmera ocupada por outro programa:** a página entra só com o que tem, como hoje.
 7. **Dois colegas respondem ao mesmo pedido:** vale a primeira resposta, e a outra recebe `jaRespondido`, que não aparece como erro.
 8. **A pessoa está na mesma reunião no app e no navegador:** são dois participantes. O app não impede.
+9. **O app fecha, ou o chat cai, com a reunião do navegador em pausa:** a página continua em pausa, com o "Voltar para a reunião" à vista (7.9).
+10. **A reunião cai para a pessoa** depois das tentativas de voltar: o `fora` do `estado` (4.5 e 7.5).
 
 ### 12.2 Testes automáticos
 
@@ -365,13 +388,15 @@ O leitor de tela ouve o pedido que chega ("<Nome> quer entrar") e o resultado de
   - o canal do colega: entra direto, começa a reunião parada, a reunião cheia, o `participantes` a cada mudança, o aceitar, o recusar, o tirar e o encerrar, a primeira resposta entre a página e a rota do app, e as mensagens novas recusadas num canal que não é de colega;
   - os eventos da seção 11 chegando ao computador do passe;
   - o `voltar` de um colega continua de colega;
-  - a chave do colega deixa de valer com a pessoa desativada, o computador desligado do chat e a reunião cancelada.
+  - a chave do colega deixa de valer com a pessoa desativada, o computador desligado do chat e a reunião cancelada;
+  - a pausa: o repasse só às páginas daquele computador naquela reunião, e o `foraDaReuniao`.
 - **A página, nos testes de unidade** (o cérebro continua puro): o modo do colega, a conversa com o app, a pausa e a volta, a escolha entre o app e o navegador.
 - **A página, nos testes de tela:** as telas 6 a 10 e a tela "o app ou o navegador", com o teclado e o leitor de tela, e a conversa com uma janela de cima falsa.
 - **De ponta a ponta, com o FreeSWITCH de verdade:**
   - um colega entra com um passe pedido pela rota do app, vê o pedido de quem é de fora, aceita, tira e encerra;
-  - a página dentro de um `iframe` de uma origem de teste: a câmera e o microfone falsos funcionam nos dois sentidos, a tela compartilhada sai, o `pausar` cala os dois sentidos e o `retomar` os devolve.
-- **A interface do app** (a ponte falsa e o servidor do chat de verdade, como os testes do chat de hoje): a aba nos três tamanhos e com as seis abas; criar, copiar, cancelar e cada erro; a vista com a página de verdade no `iframe`, até a entrada; as faixas; o cartão da ligação; o fechar; a página do aviso com um pedido; o link numa conversa.
+  - a página dentro de um `iframe` de uma origem de teste: a câmera e o microfone falsos funcionam nos dois sentidos, a tela compartilhada sai, o `pausar` cala os dois sentidos e o `retomar` os devolve;
+  - a pausa pela rota do app, com a página fora de um `iframe`: cala os dois sentidos, o "Voltar para a reunião" a desfaz, e a repetição da mesma `vez` não pausa de novo.
+- **A interface do app** (a ponte falsa e o servidor do chat de verdade, como os testes do chat de hoje): a aba nos três tamanhos e com as seis abas; criar, copiar, cancelar e cada erro; a vista com a página de verdade no `iframe`, até a entrada; as faixas; o cartão da ligação; o fechar; a página do aviso com um pedido; o link numa conversa; o "Abrir no navegador" do menu e do campo; a pausa da reunião do navegador (a rota no começo e no fim de uma ligação, a repetição, e o esquecer no `foraDaReuniao`); a queda (o `fora`); a troca de conta.
 - **O núcleo e o executável,** nos testes em C++ que rodam fora do Windows: o formato do `starsonic:`, a regra das permissões, a regra da navegação do `iframe`, a conferência de um link, a regra do aviso com um pedido, os comandos novos.
 - **No Windows do GitHub, com o WebView2 de verdade** (a fumaça que já existe): a entrada de uma reunião dentro do app, com a câmera e o microfone falsos, e a captura de tela liberada para a página. Ela precisa de um servidor do chat na máquina do teste e de um jeito, só no build de teste, de apontar o app para ele.
 
@@ -383,7 +408,7 @@ Uma seção nova do `docs/teste-manual.md`, para o responsável rodar no Windows
 
 A construção se corta em duas entregas, cada uma com o seu plano e a sua revisão final:
 
-1. **O servidor do chat e a página:** o passe, a chave do colega, o canal do colega, o modo do colega na página, a página dentro de um `iframe`, a conversa com o app, a pausa e a tela "o app ou o navegador". Sem o app novo, nada muda para ninguém: a página continua tratando todos como de fora.
+1. **O servidor do chat e a página:** o passe, a chave do colega, o canal do colega, o modo do colega na página, a página dentro de um `iframe`, a conversa com o app, a pausa (a do app e a do navegador) e a tela "o app ou o navegador". Sem o app novo, nada muda para ninguém: a página continua tratando todos como de fora. A tela "o app ou o navegador" pode ir junto porque, sem o app novo, só existe a reunião de teste, que não a mostra: uma reunião marcada só nasce de um app `0.5.0`.
 2. **O app `0.5.0`:** o núcleo, o executável e o instalador; a aba Reuniões; a vista da reunião e a convivência com as ligações.
 
 - **A prova no WebView2 de verdade vem antes da entrega 2 crescer:** a câmera, o microfone e a captura de tela dentro do `iframe`, na fumaça do Windows do GitHub. Se ela falhar, a construção para e volta ao responsável com as reservas da seção 14.
@@ -421,6 +446,11 @@ O responsável aprovou as telas e a ordem. Estas escolhas são do desenho, e ele
 13. No app, a reunião usa os aparelhos das Configurações do app.
 14. O vermelho dos botões novos é o `#c23b3b` da página: o `#d64545` do app não dá o contraste mínimo com o texto branco de 15 px.
 15. A tela "o app ou o navegador" aparece só no Windows, e não na reunião de teste.
+16. **A pausa vale também para a reunião aberta no navegador,** levada pelo servidor do chat (7.9). É trabalho a mais no servidor, na página e no app. O caminho mais barato seria só avisar, na tela da ligação, que a reunião do navegador continua ouvindo: se o responsável preferir esse, a 7.9 sai e fica só o aviso.
+17. O campo do link ganha o "Abrir no navegador" ao lado do "Entrar", para o colega que não marcou a reunião. Não está no quadro.
+18. Quando a reunião cai sem a pessoa pedir, a tela "Você saiu da reunião" da página fica dentro da janela, com o "Entrar de novo".
+19. Sair do app pela bandeja não pergunta; o "Atualizar agora" pergunta; trocar de conta tira a pessoa da reunião do app.
+20. O "Voltar para a reunião" de uma ligação só aparece com uma ligação só, já atendida.
 
 ## 16. O que fica para quem constrói
 
