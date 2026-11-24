@@ -1,11 +1,14 @@
 # Fumaca do app novo instalado (Task 13): instala o instalador em silencio (/S) numa pasta temporaria (/D=), roda o
 # tests\smoke\windows_smoke.py no StarsonicPhone.exe instalado (CDP do WebView2, registrador falso, ligacoes, aviso
-# e a escala de 150%) e desinstala em silencio. As capturas ficam em -Capturas.
+# e a escala de 150%; e a reuniao dentro da janela do app, com o programa do chat de -Chat) e desinstala em silencio.
+# As capturas ficam em -Capturas.
 # Usa as chaves de registro do usuario atual (feito para o CI): o Test-Installer.ps1 roda depois, com tudo desfeito.
 # Uso: .\tests\smoke\Test-InstalledApp.ps1 -Setup dist\StarsonicPhone-0.0.0-setup.exe -Capturas capturas-windows
+#        -Chat <pasta>\starsonic-chat.exe
 param(
     [Parameter(Mandatory = $true)][string]$Setup,
     [string]$Capturas = 'capturas-windows',
+    [Parameter(Mandatory = $true)][string]$Chat,
     [string]$Python = 'python'
 )
 $ErrorActionPreference = 'Stop'
@@ -68,7 +71,7 @@ try {
     Write-Host "openh264: $installDir sem openh264*.dll"
 
     # O windows_smoke.py fecha o app que o instalador abriu (--sair) e abre o dele, com o CDP.
-    & $Python (Join-Path $PSScriptRoot 'windows_smoke.py') --exe $exe --capturas $Capturas --python $Python
+    & $Python (Join-Path $PSScriptRoot 'windows_smoke.py') --exe $exe --capturas $Capturas --python $Python --chat $Chat
     if ($LASTEXITCODE -ne 0) {
         $failed = "A fumaca do app instalado falhou (codigo $LASTEXITCODE)."
     }

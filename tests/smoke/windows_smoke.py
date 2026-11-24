@@ -67,7 +67,17 @@ Fumaça (padrão), contra o StarsonicPhone.exe instalado do build de teste (STAR
    crescendo); com o H.264 instalado, o meio de cada "Vídeo de <número>" fica perto da cor dele (± 8) numa captura; o
    Desligar, a pergunta e o Encerrar: o bye-in do 2002 e do 2004 chega ao registrador em até 15 s; o diagnostico.log
    tem as linhas "sala:" (comecou, entrou e acabou) sem nenhum dos números. O resultado vai na chave "sala".
-Os itens 7 a 11 juntam o que falhou e reprovam no fim (um não esconde o outro).
+13. (0.5.0) a reunião dentro da janela do app (tests/smoke/reuniao_fumaca.py), depois do item 11: o programa do chat
+   (--chat) em modo de teste, atrás de uma frente TLS no endereço privado da máquina e na porta 8443, com uma
+   autoridade feita na hora na lista do Windows (certutil) e o nome do chat no hosts; antes de abrir o app, o nome
+   leva só à frente e um pedido https por ele, que só confia nessa autoridade, responde 200 por ela. Em aberturas
+   novas do app, cada uma numa pasta de dados nova, a fumaça põe a página da reunião num iframe da página do app:
+   a principal (a entrada do colega, a câmera e o microfone de mentira, o alto-falante, a captura
+   reuniao-entrada.png e a tela), as outras tentativas da tela se ela não capturou, uma com a proteção Local Network
+   Access ligada (só registra) e, por último, as recusas (a câmera e a tela pedidas pela página do app e três
+   quadros que não entram); as linhas das regras do quadro no diagnostico.log fecham a prova. O hosts e a lista do
+   Windows voltam ao que eram. O resultado vai na chave "reuniao", sem o código, o passe nem a chave.
+Os itens 7 a 11 juntam o que falhou e reprovam no fim (um não esconde o outro); o 13 também, ao fim dele.
 O item 12 fica à parte: junta os problemas dele (um não esconde o outro) e reprova ao fim dele mesmo, antes dos itens
 seguintes (o app já foi fechado e reaberto neles).
 Na escala de 100%, a área da interface tem 400x720 lógicos (as bordas invisíveis de redimensionar ficam fora dela). A escala de 150% de verdade (outro DPI) não dá para mudar no runner.
@@ -80,6 +90,7 @@ Contatos; captura ensaio-conectado.png e ensaio-contatos.png; fecha com --sair. 
 Grava <capturas>/resultado.json (o que foi visto) e imprime o diagnostico.log no fim. Código 0 = passou.
 
 Uso: python tests/smoke/windows_smoke.py --exe <pasta>\\StarsonicPhone.exe --capturas capturas-windows
+                                         --chat <pasta>\\starsonic-chat.exe
      python tests/smoke/windows_smoke.py --ensaio --exe <pasta>\\StarsonicPhone.exe --controle 5070
                                          --contato "Ana Ensaio" --capturas capturas-windows
 Precisa do Playwright para Python (tests/smoke/requirements-windows.txt); o Chromium dele não é usado.
@@ -834,6 +845,12 @@ def run_smoke(args, result):
 
     win = Win32()
     exe = pathlib.Path(args.exe).resolve()
+    # O item 13 precisa do programa do chat da fumaça: sem ele, a fumaça falha logo, antes de abrir qualquer coisa.
+    if not args.chat:
+        raise SmokeFailure("falta o --chat: o programa do chat da fumaca")
+    chat = pathlib.Path(args.chat)
+    if not chat.is_file():
+        raise SmokeFailure("o programa do chat da fumaca nao existe: %s" % chat)
     if not (exe.parent / "ui" / "index.html").is_file():
         raise SmokeFailure("a interface nao foi instalada: falta %s" % (exe.parent / "ui" / "index.html"))
     data_dir = pathlib.Path(tempfile.mkdtemp(prefix="starsonic-fumaca-"))
@@ -1034,6 +1051,15 @@ def run_smoke(args, result):
             log("OK: a lista da empresa veio do caminho (tambem aberto como no Excel), os erros do caminho apareceram, "
                 "o nome dela chegou a recebida, as janelas de arquivo abriram e cancelaram, e o --sair fechou com uma "
                 "delas aberta")
+
+            # 13. (0.5.0) A reunião dentro da janela do app (reuniao_fumaca.py recebe este módulo: um import daria uma
+            # segunda cópia dele, com outra SmokeFailure).
+            from reuniao_fumaca import run_meeting
+            run_meeting(sys.modules[__name__], pw, win, exe, capturas, result, problems, chat)
+            if problems:
+                raise SmokeFailure("; ".join(problems))
+            log("OK: a pagina da reuniao abriu no quadro da janela do app, a camera, o microfone, o alto-falante e a "
+                "tela chegaram a ela pela regra do app, e as recusas aconteceram")
     finally:
         if app:
             app.kill()
@@ -2494,6 +2520,7 @@ def main(argv):
     parser.add_argument("--capturas", default="capturas-windows")
     parser.add_argument("--controle", type=int, default=5070, help="porta de controle do registrador falso")
     parser.add_argument("--python", default=sys.executable, help="o Python que roda o registrador falso")
+    parser.add_argument("--chat", default="", help="o programa do chat da fumaca (starsonic-chat.exe), para o item 13")
     parser.add_argument("--ensaio", action="store_true", help="o ensaio da atualizacao da rc.7 (app ja aberto)")
     parser.add_argument("--contato", default="Ana Ensaio", help="no ensaio: o contato que veio da rc.7")
     parser.add_argument("--registros-antes", type=int, default=0,

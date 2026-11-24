@@ -167,7 +167,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           python -m pip install --disable-pip-version-check --no-input -r tests/smoke/requirements-windows.txt
-          python -m unittest -v tests/smoke/test_reuniao_local.py
+          python -m unittest -v tests/smoke/test_reuniao_local.py tests/smoke/test_reuniao_fumaca.py
         env:
           STARSONIC_CHAT_BIN: ${{ runner.temp }}/starsonic-chat
 
@@ -408,11 +408,19 @@ jobs:
           python -m pip install --disable-pip-version-check --no-input -r tests\smoke\requirements-windows.txt
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
-      # Leva uns 2 minutos: o limite só corta uma página presa (uma impressão que travasse o aviso, por exemplo).
+      - name: Baixar o servidor do chat da fumaça
+        id: chat-fumaca
+        if: ${{ !cancelled() && steps.installer-teste.outcome == 'success' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: chat-fumaca-windows
+          path: ${{ runner.temp }}/chat-fumaca
+
+      # Leva uns 2 minutos, e a reunião dentro da janela do app (item 13) mais alguns: o limite só corta uma página presa.
       - name: Fumaça do app novo instalado (CDP, ligações no registrador falso)
-        if: ${{ !cancelled() && steps.fumaca-deps.outcome == 'success' && steps.installer-teste.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.fumaca-deps.outcome == 'success' && steps.installer-teste.outcome == 'success' && steps.chat-fumaca.outcome == 'success' }}
         timeout-minutes: 20
-        run: .\tests\smoke\Test-InstalledApp.ps1 -Setup "dist-teste\StarsonicPhone-$($env:STARSONIC_VERSION)-setup.exe" -Capturas capturas-windows
+        run: .\tests\smoke\Test-InstalledApp.ps1 -Setup "dist-teste\StarsonicPhone-$($env:STARSONIC_VERSION)-setup.exe" -Capturas capturas-windows -Chat "$env:RUNNER_TEMP\chat-fumaca\starsonic-chat.exe"
 
       - name: Teste do instalador
         if: ${{ !cancelled() && steps.installer.outcome == 'success' }}
