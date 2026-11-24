@@ -15,6 +15,7 @@ import (
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/eventos"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/limites"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/reunioes"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/segredo"
 )
 
 // OrigemPadrao é a origem do WebView do app.
@@ -54,6 +55,9 @@ type servidor struct {
 	canais        *Canais           // os canais abertos da página, para o desligamento
 	gerente       *reunioes.Gerente // nil: as rotas das reuniões não existem
 	base          string            // o começo do link das reuniões, sem a barra do fim
+	// partida é a partida do servidor (43 caracteres base64url), sorteada quando ele sobe: o abrir da página a diz, e
+	// a página sabe que o servidor reiniciou quando ela muda.
+	partida string
 	// aberturas são as tentativas de abrir uma reunião, por endereço: 20 por minuto. Só contam as que não levam a
 	// uma reunião em que a pessoa possa entrar: o entrar do app (reunioes.go), o abrir da página e o voltar da página que falha (pagina.go).
 	aberturas *limites.Janela
@@ -103,6 +107,7 @@ func Novo(d Deps) http.Handler {
 		gerente:        d.Gerente,
 		base:           strings.TrimRight(d.Base, "/"),
 		canais:         d.Canais,
+		partida:        segredo.NovoToken(),
 		origensPagina:  map[string]bool{},
 
 		aberturas:     limites.Nova(maxAberturas, periodoAberturas, d.Banco.Relogio()),

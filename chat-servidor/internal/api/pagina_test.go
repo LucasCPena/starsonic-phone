@@ -145,8 +145,8 @@ func TestAbrir(t *testing.T) {
 			t.Fatalf("status = %d", resp.StatusCode)
 		}
 		corpo := apitest.LerJSON[map[string]json.RawMessage](t, resp)
-		if len(corpo) != 2 {
-			t.Fatalf("corpo = %v; queria só reuniao e bilhete", corpo)
+		if len(corpo) != 3 {
+			t.Fatalf("corpo = %v; queria só reuniao, bilhete e partida", corpo)
 		}
 		var bilhete string
 		json.Unmarshal(corpo["bilhete"], &bilhete)

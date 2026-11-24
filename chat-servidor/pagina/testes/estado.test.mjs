@@ -163,6 +163,7 @@ test('o carregar abre', () => {
     esperandoBilhete: false,
     vez: 0,
     abertura: 0,
+    partida: null,
     palco: null,
     chat: { mensagens: [], naoLidas: 0, aberto: false, seq: 0 },
     avisoCurto: null,
@@ -2255,6 +2256,20 @@ test('o um-a-cada-2-minutos vale também para quem sai e entra de novo', () => {
   assert.deepEqual(r.efeitos, []);
   r = rodar(r.estado, ...deNovo, medida('ruim'));
   assert.deepEqual(r.estado.avisoCurto, avisoDaConexao(2));
+});
+
+// A partida do servidor do chat (seção 10 do protocolo): muda quando ele reinicia.
+const comPartida = (evento, partida = 'partida-1') => ({ ...evento, partida });
+
+test('a partida do servidor fica no estado, e o abrir de uma entrada a troca', () => {
+  assert.equal(inicial().partida, null);
+  let r = rodar(inicial(), COMECAR, comPartida(abriu(1)), midia('ligado', 'ligado'));
+  assert.equal(r.estado.partida, 'partida-1');
+  r = rodar(r.estado, { tipo: 'nome', valor: 'Maria Lima' }, clique('pedir'), comPartida(abriu(2), 'partida-2'));
+  assert.equal(r.estado.partida, 'partida-2');
+  assert.deepEqual(r.efeitos, [abrirCanal(2)]);
+  // Sem a partida na resposta (um servidor de antes dela), a que a página tem fica.
+  assert.equal(rodar(naEntrada(), clique('pedir'), abriu(2)).estado.partida, null);
 });
 
 // ---- O colega ----

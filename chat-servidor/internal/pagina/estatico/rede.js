@@ -33,6 +33,7 @@ export function criarRede(aoEvento, codigo) {
       if (r.ok && typeof dados?.bilhete === 'string' && dados.reuniao) {
         evento = { tipo: 'abriu', reuniao: dados.reuniao, bilhete: dados.bilhete, abertura };
         if (dados.colega) evento.colega = dados.colega;
+        if (typeof dados.partida === 'string') evento.partida = dados.partida; // a do servidor do chat
       } else {
         // O 200 sem o que a página precisa conta como a rede que falhou.
         const status = r.ok ? 0 : r.status;

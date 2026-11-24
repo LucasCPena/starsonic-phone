@@ -148,6 +148,7 @@ func (s *servidor) abrirPagina(w http.ResponseWriter, r *http.Request) {
 		s.passes.prenderBilhete(bilhete, colega)
 	}
 	resposta["bilhete"] = bilhete
+	resposta["partida"] = s.partida
 	s.aberturasBoas.Contar(endereco, 1)
 	w.Header().Set("Cache-Control", "no-store")
 	escreverJSON(w, http.StatusOK, resposta)

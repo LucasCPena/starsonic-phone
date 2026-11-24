@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -23,6 +24,7 @@ type abrirResp struct {
 		Tipo string `json:"tipo"`
 	} `json:"reuniao"`
 	Bilhete string `json:"bilhete"`
+	Partida string `json:"partida"`
 	Colega  *struct {
 		Nome    string  `json:"nome"`
 		Chave   *string `json:"chave"`
@@ -62,6 +64,22 @@ func (c *cenaR) abrirBom(t *testing.T, codigo string, corpo any) abrirResp {
 	return apitest.LerJSON[abrirResp](t, resp)
 }
 
+func TestAbrirPagina_Partida(t *testing.T) {
+	forma := regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	a := c.abrirBom(t, r.Codigo, nil)
+	b := c.abrirBom(t, r.Codigo, nil)
+	if !forma.MatchString(a.Partida) || a.Partida != b.Partida {
+		t.Fatalf("as partidas são %q e %q; queria a mesma, com 43 caracteres base64url", a.Partida, b.Partida)
+	}
+	outro := novaCenaR(t)
+	ro := outro.marcada(t, outro.kAna)
+	if o := outro.abrirBom(t, ro.Codigo, nil); o.Partida == a.Partida {
+		t.Fatal("dois servidores deram a mesma partida")
+	}
+}
+
 func TestAbrirColega_SemCorpoComoHoje(t *testing.T) {
 	c := novaCenaR(t)
 	r := c.marcada(t, c.kAna)
@@ -70,8 +88,8 @@ func TestAbrirColega_SemCorpoComoHoje(t *testing.T) {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
 	corpo := apitest.LerJSON[map[string]json.RawMessage](t, resp)
-	if _, tem := corpo["colega"]; tem || len(corpo) != 2 {
-		t.Fatalf("corpo = %v; queria só reuniao e bilhete", corpo)
+	if _, tem := corpo["colega"]; tem || len(corpo) != 3 {
+		t.Fatalf("corpo = %v; queria só reuniao, bilhete e partida", corpo)
 	}
 }
 

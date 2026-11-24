@@ -258,6 +258,7 @@ export function inicial() {
     esperandoBilhete: false, // o abrir do voltar saiu, e o abriu ainda não chegou
     vez: 0, // a vez das esperas e dos prazos da volta e do religar: cada espera nova ganha a sua
     abertura: 0, // o número do último abrir
+    partida: null, // a partida do servidor do chat no último abrir que não foi o do voltar: muda quando ele reinicia
     palco: null, // o último palco que vale, depois do aceito: {largura, altura, quadros}
     // O chat da reunião: as mensagens ({n, voce, nome, texto, hora, situacao, id, motivo}), as não lidas, o painel
     // aberto e o seq, o número da última mensagem, que nunca volta a zero.
@@ -477,9 +478,11 @@ const chaveDe = (participante, volta) => (participante && volta ? { participante
 // O abriu do carregar dá o cabeçalho e pede a mídia; no Windows, quem a página não reconheceu vai antes à escolha,
 // sem a mídia. O do pedido abre o canal com o bilhete novo, que não fica no estado. O do voltar também abre o canal, e
 // só: na reunião, ele não leva à entrada nem pede a mídia.
-function abriu(e, { reuniao, bilhete, colega }) {
+function abriu(e, { reuniao, bilhete, colega, partida }) {
+  // A partida que a resposta traz; sem ela (um servidor de antes dela), fica a que a página tem.
+  const dela = typeof partida === 'string' ? { partida } : {};
   if (e.tela === 'carregando') {
-    const f = { ...e, reuniao, ...reconhecido(e, colega) };
+    const f = { ...e, reuniao, ...dela, ...reconhecido(e, colega) };
     if (vaiAEscolha(f)) return com(f, { tela: 'escolha' });
     return com(f, { tela: 'entrada', esperandoMidia: true }, PEDIR_MIDIA);
   }
@@ -487,13 +490,13 @@ function abriu(e, { reuniao, bilhete, colega }) {
     // O passe novo do app, no lugar da chave que não valeu: a chave nova, e o canal de colega. Sem o colega na
     // resposta, a página segue como quem é de fora, e o bilhete não serve.
     const r = reconhecido(e, colega);
-    if (r.semColega) return com(e, { ...r, reuniao, colega: null, chaveDoColega: null, tela: 'entrada' });
-    return com(e, { reuniao, canal: 'abrindo', ...r }, abrirCanal(bilhete));
+    if (r.semColega) return com(e, { ...r, reuniao, ...dela, colega: null, chaveDoColega: null, tela: 'entrada' });
+    return com(e, { reuniao, ...dela, canal: 'abrindo', ...r }, abrirCanal(bilhete));
   }
   if (esperaOAbrir(e)) {
     // O abrir com a chave responde o colega de novo, sem a chave: o nome e o valeAte de agora.
     const deAgora = e.colega !== null && colegaQueVale(colega) ? { colega: colegaDaResposta(colega) } : {};
-    return com(e, { reuniao, canal: 'abrindo', ...deAgora }, abrirCanal(bilhete));
+    return com(e, { reuniao, ...dela, canal: 'abrindo', ...deAgora }, abrirCanal(bilhete));
   }
   if (e.esperandoBilhete) return com(e, { esperandoBilhete: false, canal: 'abrindo' }, abrirCanal(bilhete));
   return nada(e);
