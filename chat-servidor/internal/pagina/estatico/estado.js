@@ -82,7 +82,8 @@
 // perguntas fecham, e o leitor de tela ouve o aviso; a ligação e o painel aberto ficam. O mesmo vale para a chave
 // recusada no religar e para o link que deixou de valer no voltar (a resposta, ou o 404 do abrir). Com o semCuidar, o
 // Encerrar para todos não abre a pergunta, como antes de a primeira lista chegar. Ele acaba com a saída da tela da
-// reunião, por qualquer fim.
+// reunião, por qualquer fim, e onde o canal volta a ser o da pessoa: o voltou da volta das duas (o link que deixou de
+// valer guarda a chave) e o começo da entrada de novo.
 // Dentro do app, o chat que reiniciou com o colega na reunião e a ligação no ar não é o semCuidar: a página entra de
 // novo sozinha (o reentrando). A lista, as perguntas e o palco saem, sem o aviso; ela pede outro passe ao app, abre
 // com ele, e o canal novo manda o entrar, e não o voltar. Até o aceito, a ligação de antes segue no ar, e o canal novo
@@ -1074,7 +1075,7 @@ function feito(e, { de, id }) {
   return com(e, { respondendo: e.respondendo.filter((x) => x !== r) }, dizer(ditoDaResposta(de, r.nome)));
 }
 
-// Uma resposta da página não deu certo (o recusa, com o de e o motivo): ela não espera mais a lista, e o resultado
+// Uma resposta da página não deu certo (o recusa, com o de e o motivo): ela não espera mais o feito, e o resultado
 // dela não é dito. O servidor responde na ordem em que recebe: a recusa é da mais antiga daquele tipo. A reunião cheia
 // aparece no cartão e no painel, e o leitor de tela a ouve; o servidor de vídeo fora do ar, no aviso curto. Os outros
 // motivos (a resposta de outro colega chegou antes, a pessoa já saiu, ou a página não está mais na reunião para o chat)
@@ -1153,8 +1154,8 @@ function cliqueDoColega(e, botao, id) {
       if (e.encerrando || e.semCuidar || e.lista.participantes.length === 0) return nada(e);
       return com(e, { encerrando: true }, focar('naoEncerrar'));
     case 'encerrarMesmo':
-      // O encerrar não espera resposta na lista: o encerrada é o fim, e a recusa mostra o aviso. Sem o canal, o aviso
-      // vem na hora, como o da recusa.
+      // O encerrar não espera o feito: o encerrada é o fim, e a recusa mostra o aviso. Sem o canal, o aviso vem na
+      // hora, como o da recusa.
       if (!e.encerrando || !e.aceito) return nada(e);
       if (!podeResponder(e)) return avisoDoServidor(e, { encerrando: false });
       return com(e, { encerrando: false }, mandar({ tipo: 'encerrar' }));
@@ -1233,6 +1234,11 @@ function respostaDoEntrar(e, m) {
 
 // O aceito da entrada de novo: o canal novo é o da pessoa, com o acesso e a chave de volta novos, e a ligação é
 // trocada pela volta de hoje: as duas descem, e a espera leva à senha nova e ao ligar. A senha do aceito não é usada.
+// Ele não olha a principal: a ligação de antes que o servidor terminou, nos 2 s do fimSemAviso, não impede a nova. O
+// chat que reiniciou aceitou o entrar, e não tem como mandar um tirado nem um encerrada pelo canal de antes; a ligação
+// nova é o que a entrada de novo vem buscar. O custo, raro e pequeno: a ligação de antes também pode ter terminado
+// porque um colega que já entrou de novo encerrou a reunião, ou tirou o participante de antes (sem nome para o chat
+// novo), logo antes deste entrar. Nesses 2 s, a página recomeça sozinha a reunião encerrada, ou volta depois de tirada.
 function entrouDeNovo(e, m) {
   const { mudancas, efeitos } = desligarAsDuas(e);
   const { vez, espera } = esperaNova(e, 'reconectar', RECONECTAR_MS[0]);
@@ -1240,10 +1246,10 @@ function entrouDeNovo(e, m) {
   return com(e, { ...mudancas, ...novos, reentrando: null, reconectando: 1, religando: 0, vez }, ...efeitos, espera);
 }
 
-// O voltou: o canal é de novo o da pessoa, com a chave nova. Na volta depois da conexão caída, a tentativa segue com o
-// senha; no religar, ele acabou.
+// O voltou: o canal é de novo o da pessoa, com a chave nova, e o colega volta a cuidar da reunião (o semCuidar sai). Na
+// volta depois da conexão caída, a tentativa segue com o senha; no religar, ele acabou.
 function voltou(e, volta) {
-  const mudancas = { canal: 'aberto', chave: chaveDe(e.chave.participante, volta) };
+  const mudancas = { canal: 'aberto', chave: chaveDe(e.chave.participante, volta), semCuidar: false };
   if (e.reconectando > 0) return com(e, { ...mudancas, principal: 'pedindo' }, mandar({ tipo: 'senha' }));
   return com(e, { ...mudancas, religando: 0 });
 }
@@ -1271,14 +1277,20 @@ function comSenha(e, senha, mudancas = {}) {
   return com(e, { ...mudancas, principal: 'ligando', camDaLigacao: e.cam }, ligar('principal', senha));
 }
 
-// O erro responde ao que a página pediu: a tela, uma senha ou o pedir. O do senha da volta (o limite de 5 por minuto,
-// por exemplo) é uma tentativa que falhou. O pedir com o nome recusado volta à entrada, e o canal dele fecha: o próximo
-// Pedir abre outro, com um bilhete novo.
+// O erro responde ao que a página pediu: a tela, uma senha, o pedir ou uma resposta do colega. O do senha da volta (o
+// limite de 5 por minuto, por exemplo) é uma tentativa que falhou. O pedir com o nome recusado volta à entrada, e o
+// canal dele fecha: o próximo Pedir abre outro, com um bilhete novo.
 function erro(e, qual) {
   if (e.telaCompartilhada === 'pedindo') return com(e, { telaCompartilhada: 'nenhuma' }, PARAR_CAPTURA);
   if (esperaSenha(e)) return e.reconectando > 0 ? tentativaFalhou(e) : avisar(e, 'semServidor');
   // O entrar do colega não tem nome a corrigir: o erro é o semServidor.
   if (naEspera(e) && e.tela === 'entrando') return avisar(e, 'semServidor');
+  // Na reunião, o erro é o de uma resposta do colega (o limite das 20 do minuto ignora a mensagem): o servidor responde
+  // na ordem, e a mais antiga não espera mais o feito. É como a recusa servidorVideo: o aviso curto do servidor, e o
+  // mesmo clique manda de novo.
+  if (colegaNaReuniao(e) && e.tela === 'reuniao' && e.respondendo.length > 0) {
+    return avisoDoServidor(e, { respondendo: e.respondendo.slice(1) });
+  }
   if (e.tela !== 'pedindo') return nada(e);
   if (qual === 'invalido') return com(e, { tela: 'entrada', nomeRecusado: true, canal: 'fechado' }, FECHAR_CANAL);
   return avisar(e, 'semServidor');
@@ -1379,7 +1391,7 @@ function pararDeReligar(e) {
   return com(e, { ...mudancas, religando: 0, palco: null }, ...efeitos);
 }
 
-// O que só o canal do colega servia, e que sai com ele: a lista, as respostas que esperavam por ela, as perguntas e o
+// O que só o canal do colega servia, e que sai com ele: a lista, as respostas que esperavam o feito, as perguntas e o
 // palco. O religar para.
 const SEM_O_CANAL_DO_COLEGA = Object.freeze({
   lista: LISTA_VAZIA,
@@ -1405,10 +1417,10 @@ function deixarDeCuidar(e) {
   );
 }
 
-// Dentro do app, o colega entra de novo sozinho: o que só o canal servia sai, como no deixarDeCuidar, mas sem o aviso,
-// e a página pede outro passe ao app. O canal já está fechado: o voltar nem saiu.
+// Dentro do app, o colega entra de novo sozinho: o que só o canal servia sai, como no deixarDeCuidar, mas sem o aviso
+// (o de antes, se havia, sai também), e a página pede outro passe ao app. O canal já está fechado: o voltar não saiu.
 function reentrar(e) {
-  return pedirOPasse(e, { ...SEM_O_CANAL_DO_COLEGA, reentrando: 'passe', passeRecusado: false });
+  return pedirOPasse(e, { ...SEM_O_CANAL_DO_COLEGA, reentrando: 'passe', passeRecusado: false, semCuidar: false });
 }
 
 // O voltar começa pelo abrir, que dá o bilhete do canal novo, e o prazo da tentativa começa junto.

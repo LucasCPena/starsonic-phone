@@ -2716,7 +2716,7 @@ test('o resultado de cada resposta é dito', () => {
   assert.deepEqual(r.efeitos, []);
   r = rodar(e, cliqueEm('tirar', PEDRO.id), cliqueEm('tirarMesmo', PEDRO.id), lista([EU], [MARIA, BIA]));
   assert.deepEqual(r.efeitos, []);
-  // Com um recusa no meio, nada é dito, mesmo com o feito de outra resposta que não é a dela.
+  // Com um recusa no meio, nada é dito, nem com a lista nova, já sem o pedido: só o feito diz, e ele não vem.
   r = rodar(e, cliqueEm('aceitar', MARIA.id), recusa('aceitar', 'jaRespondido'), lista([EU, PEDRO], [BIA]));
   assert.deepEqual(r.efeitos, []);
   r = rodar(e, cliqueEm('aceitar', MARIA.id), recusa('aceitar', 'cheia'), lista([EU, PEDRO], [BIA]));
@@ -2752,6 +2752,39 @@ test('o segundo clique na mesma resposta não manda de novo', () => {
   // Outra resposta ao mesmo pedido sai: a pessoa mudou de ideia, e o servidor decide qual vale.
   const outra = passo(respondeu, cliqueEm('recusar', MARIA.id));
   assert.deepEqual(outra.efeitos, [mandar({ tipo: 'recusar', pedido: MARIA.id })]);
+});
+
+test('a resposta que o limite ignorou sai de novo no mesmo clique', () => {
+  const respondeu = rodar(
+    colegaComLista(),
+    cliqueEm('aceitar', MARIA.id),
+    cliqueEm('tirar', PEDRO.id),
+    cliqueEm('tirarMesmo', PEDRO.id),
+  ).estado;
+  // O servidor responde na ordem: o erro do limite é da resposta mais antiga, que não espera mais o feito.
+  const r = passo(respondeu, LIMITE);
+  const n = respondeu.avisos + 1;
+  assert.deepEqual(r.estado.avisoCurto, { n, tipo: 'servidor' });
+  assert.deepEqual(r.efeitos, [tempoDoAviso(n), dizer('O servidor de reuniões não respondeu')]);
+  assert.deepEqual(r.estado.respondendo, [{ de: 'tirar', id: PEDRO.id, nome: 'Pedro Nunes' }]);
+  // O mesmo clique manda de novo.
+  assert.deepEqual(passo(r.estado, cliqueEm('aceitar', MARIA.id)).efeitos, [
+    mandar({ tipo: 'aceitar', pedido: MARIA.id }),
+  ]);
+  // O segundo erro é o do tirar, e o Tirar também manda de novo.
+  const s = passo(r.estado, LIMITE);
+  assert.deepEqual(s.estado.respondendo, []);
+  const tirou = rodar(s.estado, cliqueEm('tirar', PEDRO.id), cliqueEm('tirarMesmo', PEDRO.id));
+  assert.deepEqual(tirou.efeitos, [mandar({ tipo: 'tirar', participante: PEDRO.id })]);
+  // Sem resposta esperando, o erro não faz nada, como hoje; com quem é de fora também.
+  semMudar(colegaComLista(), LIMITE);
+  semMudar(s.estado, LIMITE);
+  semMudar(naReuniao(), LIMITE);
+  // A tela que espera a senha vem antes: o erro é dela, e a resposta continua esperando.
+  const comTela = rodar(colegaComLista(), cliqueEm('recusar', BIA.id), { tipo: 'telaCapturada', ok: true }).estado;
+  const t = passo(comTela, LIMITE);
+  assert.deepEqual(t.efeitos, [PARAR_CAPTURA]);
+  assert.deepEqual(t.estado.respondendo, comTela.respondendo);
 });
 
 test('as respostas que esperavam saem com o canal que cai', () => {
@@ -3074,6 +3107,41 @@ test('a chave recusada e o link que deixou de valer, no religar do colega, são 
   const semLink = rodar(colegaComLista(), canalFechou(1006), tempo('religar:1'), abrirFalhou(3, 404));
   assert.deepEqual(semLink.efeitos, [dizer(SEM_CUIDAR)]);
   assert.equal(semLink.estado.semCuidar, true);
+});
+
+// O link que deixou de valer no religar guarda a chave: a ligação que cai depois volta com ela.
+const LINK_DO_RELIGAR = [
+  canalFechou(1006),
+  tempo('religar:1'),
+  abriu(3),
+  CANAL_ABRIU,
+  mensagem({ tipo: 'linkInvalido' }),
+];
+const VOLTA_DA_LIGACAO = [SEM_CONEXAO, tempo('reconectar:2'), abriu(4), CANAL_ABRIU, voltou(VOLTA_2)];
+
+test('o deixou de cuidar acaba com o voltou: o canal é de novo o da pessoa', () => {
+  const sem = rodar(colegaComLista(), ...LINK_DO_RELIGAR).estado;
+  assert.equal(sem.semCuidar, true);
+  const r = rodar(sem, ...VOLTA_DA_LIGACAO);
+  assert.deepEqual(r.efeitos, [SENHA, camera(true)]);
+  assert.equal(r.estado.semCuidar, false);
+  assert.equal(r.estado.canal, 'aberto');
+});
+
+test('dentro do app, o deixou de cuidar acaba também na entrada de novo', () => {
+  const r = rodar(
+    noAppComPartida(),
+    ...LINK_DO_RELIGAR,
+    ...VOLTA_DA_LIGACAO,
+    mensagem({ tipo: 'senha', senha: 'senha-2' }),
+    ligacao('principal', 'confirmada'),
+    canalFechou(1006),
+    tempo('religar:3'),
+    comPartida(abriu(5), 'partida-2'),
+  );
+  assert.equal(r.estado.reentrando, 'passe');
+  assert.equal(r.estado.semCuidar, false);
+  assert.equal(r.efeitos.some((x) => x.tipo === 'dizer'), false);
 });
 
 test('o deixou de cuidar acaba com a saída da reunião', () => {
