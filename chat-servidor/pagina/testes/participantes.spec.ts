@@ -628,6 +628,35 @@ test.describe('sem o canal', () => {
     expect(respostas(canal)).toEqual([]);
   });
 
+  test('sem o canal, o Encerrar da pergunta desliga, e volta com ele', async ({ page }) => {
+    const rede = await RedeFalsa.instalar(page, MARCADA);
+    const canal = await entrarComoColega(page, rede);
+    const lista = { participantes: CINCO, pedidos: [pedidoDe(MARIA)] };
+    mandarLista(canal, lista);
+    await oBotao(page).click();
+    await encerrar(page).click();
+    await expect(dialogo(page)).toBeVisible();
+    const sim = dialogo(page).getByRole('button', { name: 'Encerrar para todos' });
+    const voltar = dialogo(page).getByRole('button', { name: 'Voltar' });
+    await expect(sim).toBeEnabled();
+    // O canal cai com a pergunta aberta: o Encerrar para todos dela desliga, e o Voltar não.
+    await canal.fechar(1006);
+    await expect(sim).toBeDisabled();
+    await expect(voltar).toBeEnabled();
+    await expect(dialogo(page)).toBeVisible();
+    // O canal volta: o botão liga de novo, e o encerrar sai pelo canal novo.
+    await page.clock.runFor(2_000);
+    const volta = await rede.canalNumero(2);
+    await expect.poll(() => volta.tipos()).toEqual(['voltar']);
+    volta.mandar({ tipo: 'voltou', volta: 'volta-2' });
+    mandarLista(volta, lista);
+    await expect(sim).toBeEnabled();
+    await sim.click();
+    await expect.poll(() => respostas(volta)).toEqual([{ tipo: 'encerrar' }]);
+    expect(respostas(canal)).toEqual([]);
+    await expect(page.locator('.aviso-curto')).toBeHidden();
+  });
+
   test('o chat reiniciou, no navegador: o aviso no lugar do cartão e no painel', async ({ page }) => {
     const rede = await RedeFalsa.instalar(page, MARCADA);
     rede.responder(

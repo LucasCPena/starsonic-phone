@@ -5,10 +5,10 @@
 // com o id da linha no data-id) chegam ao cérebro pelo ouvinte do pagina.js; o aoClique leva o que não é um clique (o
 // Esc e o Voltar do aparelho). O nome de uma pessoa entra sempre como texto, e nada daqui vai ao console.
 //
-// Sem o canal, com a página tentando voltar (o religar, ou a entrada de novo dentro do app), as respostas ficam
-// desligadas, e a linha do alto diz que os pedidos voltam. Quem deixou de cuidar da reunião vê o aviso no lugar das
-// listas e do pé. Antes de a primeira lista chegar, a parte de quem está na reunião não diz zero: ela fica escondida, e
-// o Encerrar para todos, desligado.
+// Sem o canal, com a página tentando voltar (o religar, ou a entrada de novo dentro do app), as respostas (também a da
+// pergunta do Encerrar para todos) ficam desligadas, e a linha do alto diz que os pedidos voltam. Quem deixou de cuidar
+// da reunião vê o aviso no lugar das listas e do pé. Antes de a primeira lista chegar, a parte de quem está na reunião
+// não diz zero: ela fica escondida, e o Encerrar para todos, desligado.
 import { AVISO_SEM_CUIDAR, fraseDoEncerrar, nomeNaLista } from './colega.js';
 import { podeResponder } from './estado.js';
 
@@ -43,6 +43,7 @@ export function criarParticipantes({ raiz, fundo, relogio, aoClique }) {
   const encerrar = um('[data-botao="encerrar"]');
   const dialogo = raiz.ownerDocument.getElementById(encerrar.getAttribute('aria-controls'));
   const frases = dialogo.querySelector('.encerrar-frases');
+  const encerrarMesmo = dialogo.querySelector('[data-botao="encerrarMesmo"]');
   const aoLado = window.matchMedia(AO_LADO);
 
   let aberto = false;
@@ -286,6 +287,8 @@ export function criarParticipantes({ raiz, fundo, relogio, aoClique }) {
     semCuidar.hidden = !(doColega && e.semCuidar);
     pe.hidden = doColega && e.semCuidar;
     encerrar.disabled = desligadas || e.lista.participantes.length === 0;
+    // O Encerrar para todos da pergunta é uma resposta também; o Voltar dela, não.
+    encerrarMesmo.disabled = desligadas;
     desenharAsListas(e.lista, e.tirando, desligadas);
     cheia.hidden = !e.cheiaAoAceitar;
     desenharOEncerrar(e, doColega && e.encerrando);

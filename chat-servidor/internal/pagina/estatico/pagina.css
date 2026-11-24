@@ -2360,7 +2360,8 @@ button.quadro:focus-visible .pilula {
 .pedido-botao:disabled,
 .gente-botao:disabled,
 .gente-tirar:disabled,
-.gente-encerrar:disabled {
+.gente-encerrar:disabled,
+.encerrar-botao:disabled {
   opacity: 0.5;
   filter: none;
   cursor: default;
