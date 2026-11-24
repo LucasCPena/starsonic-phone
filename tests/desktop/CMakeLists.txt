@@ -62,6 +62,7 @@ target_sources(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src/WindowF
   ${STARSONIC_DIR}/../windows/app/src/NetworkLoop.cpp
   ${STARSONIC_DIR}/../windows/app/src/UpdateChannel.cpp
   ${STARSONIC_DIR}/../windows/app/src/ChatFiles.cpp
+  ${STARSONIC_DIR}/../windows/app/src/WebPermissions.cpp
   ${STARSONIC_DIR}/../windows/app/src/FrameBuffer.cpp
   ${STARSONIC_DIR}/../windows/app/src/Bunzip.cpp
   ${STARSONIC_DIR}/../windows/app/src/FrameRouter.cpp
@@ -96,7 +97,6 @@ if(WIN32)
     ${WINDOWS_APP_SRC}/DiagLog.cpp
     ${WINDOWS_APP_SRC}/SingleInstance.cpp
     ${WINDOWS_APP_SRC}/ShellState.cpp
-    ${WINDOWS_APP_SRC}/WebPermissions.cpp
     ${WINDOWS_APP_SRC}/Autostart.cpp
     ${WINDOWS_APP_SRC}/Diagnostics.cpp
     ${WINDOWS_APP_SRC}/ChatSave.cpp)

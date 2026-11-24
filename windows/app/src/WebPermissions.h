@@ -6,6 +6,11 @@
 //   vez de seguir o --autoplay-policy, negar deixaria o toque mudo.
 // Todo o resto e negado.
 //
+// O quadro da reuniao (spec 7.7): a pagina de uma reuniao do chat abre num iframe da janela principal. Quem decide o que
+// o quadro ganha e o endereco do DOCUMENTO do quadro, nunca a origem que o WebView2 diz no pedido (com um iframe ela
+// nao e garantida): so o quadro de uma reuniao, na janela principal, ganha a camera, o microfone e a reproducao
+// automatica, e so ele captura a tela. A pagina do app nunca ganha a camera.
+//
 // C++ portatil: so o texto da URL.
 #include <string>
 
@@ -13,11 +18,23 @@ namespace starsonic {
 
 extern const char kAppOrigin[];   // "https://app.starsonic.local"
 
-enum class WebPermission { Microphone, Autoplay, Other };
+enum class WebPermission { Microphone, Camera, Autoplay, Other };
+// Qual WebView2 pergunta: o da janela principal ou o do aviso de ligacao.
+enum class WebWindow { Main, Notice };
 
 // A URL e do app: a origem exata seguida de "/" (nunca https://app.starsonic.local.outro.com).
 bool IsAppUrl(const std::string& url);
 
 bool AllowWebPermission(WebPermission kind, const std::string& url);
+
+// O endereco de uma reuniao: exatamente kChatOrigin (ChatFiles.h) + "/r/" + 10 caracteres do alfabeto dos codigos.
+bool IsMeetingUrl(const std::string& url);
+// Um quadro so navega dentro do app ou, na janela principal, para uma reuniao.
+bool AllowFrameNavigation(WebWindow window, const std::string& url);
+// O que um quadro pede: so o quadro de uma reuniao, na janela principal, e so a camera, o microfone e a reproducao
+// automatica. frameUrl e o endereco do documento do quadro ("" quando nao se sabe).
+bool AllowFramePermission(WebWindow window, WebPermission kind, const std::string& frameUrl);
+// A captura de tela: so o quadro de uma reuniao, na janela principal.
+bool AllowFrameScreenCapture(WebWindow window, const std::string& frameUrl);
 
 }  // namespace starsonic
