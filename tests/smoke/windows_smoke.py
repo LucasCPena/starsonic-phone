@@ -95,10 +95,13 @@ ambiente do instalador). Confere "Conectado · 127.0.0.1" (a conta e a senha que
 Contatos; captura ensaio-conectado.png e ensaio-contatos.png; fecha com --sair. O registrador falso é de quem chama
 (--controle: a porta de controle dele).
 
-Grava <capturas>/resultado.json (o que foi visto) e imprime o diagnostico.log no fim. Código 0 = passou.
+Grava <capturas>/resultado-<modo>.json (o modo: fumaca, ensaio ou reuniao; o que foi visto) e imprime o
+diagnostico.log no fim. Código 0 = passou.
 
 Uso: python tests/smoke/windows_smoke.py --exe <pasta>\\StarsonicPhone.exe --capturas capturas-windows
                                          --chat <pasta>\\starsonic-chat.exe
+     python tests/smoke/windows_smoke.py --reuniao --exe <pasta>\\StarsonicPhone.exe --chat <pasta>\\starsonic-chat.exe
+                                         --capturas capturas-windows\\webview2-atual   (só o item 13)
      python tests/smoke/windows_smoke.py --ensaio --exe <pasta>\\StarsonicPhone.exe --controle 5070
                                          --contato "Ana Ensaio" --capturas capturas-windows
 Precisa do Playwright para Python (tests/smoke/requirements-windows.txt); o Chromium dele não é usado.
@@ -969,12 +972,9 @@ def main_window(win, pid, timeout=30):
     return hwnd
 
 
-def run_smoke(args, result):
-    from playwright.sync_api import sync_playwright
-
-    win = Win32()
-    exe = pathlib.Path(args.exe).resolve()
-    # O item 13 precisa do programa do chat da fumaça: sem ele, a fumaça falha logo, antes de abrir qualquer coisa.
+def meeting_inputs(args, exe):
+    """O programa do chat do --chat, conferido com a interface instalada ao lado do exe. O item 13 precisa dele: sem
+    ele, a fumaça falha logo, antes de abrir qualquer coisa."""
     if not args.chat:
         raise SmokeFailure("falta o --chat: o programa do chat da fumaca")
     chat = pathlib.Path(args.chat)
@@ -982,6 +982,15 @@ def run_smoke(args, result):
         raise SmokeFailure("o programa do chat da fumaca nao existe: %s" % chat)
     if not (exe.parent / "ui" / "index.html").is_file():
         raise SmokeFailure("a interface nao foi instalada: falta %s" % (exe.parent / "ui" / "index.html"))
+    return chat
+
+
+def run_smoke(args, result):
+    from playwright.sync_api import sync_playwright
+
+    win = Win32()
+    exe = pathlib.Path(args.exe).resolve()
+    chat = meeting_inputs(args, exe)
     data_dir = pathlib.Path(tempfile.mkdtemp(prefix="starsonic-fumaca-"))
     result["dados"] = str(data_dir)
     capturas = pathlib.Path(args.capturas)
@@ -2601,6 +2610,30 @@ def quit_with_file_dialog_open(win, exe, app, hwnd, page, browser, data_dir, rec
         problems.append("o --sair com a janela de importar aberta nao fechou sozinho: %s" % info)
 
 
+def run_meeting_only(args, result):
+    """--reuniao: só o item 13 (a reunião dentro da janela do app), como na fumaça inteira. O job windows o roda de novo
+    depois de atualizar o WebView2 da máquina."""
+    from playwright.sync_api import sync_playwright
+    from reuniao_fumaca import run_meeting
+
+    win = Win32()
+    exe = pathlib.Path(args.exe).resolve()
+    chat = meeting_inputs(args, exe)
+    capturas = pathlib.Path(args.capturas)
+    problems = []
+    try:
+        wait_app_gone(exe)
+        with sync_playwright() as pw:
+            # reuniao_fumaca.py recebe este módulo: um import daria uma segunda cópia dele, com outra SmokeFailure.
+            run_meeting(sys.modules[__name__], pw, win, exe, capturas, result, problems, chat)
+        if problems:
+            raise SmokeFailure("; ".join(problems))
+        log("OK: a pagina da reuniao abriu no quadro da janela do app, a camera, o microfone, o alto-falante e a "
+            "tela chegaram a ela pela regra do app, e as recusas aconteceram")
+    finally:
+        undo_browser_policy(result)
+
+
 def run_rehearsal(args, result):
     from playwright.sync_api import sync_playwright
 
@@ -2652,6 +2685,7 @@ def main(argv):
     parser.add_argument("--python", default=sys.executable, help="o Python que roda o registrador falso")
     parser.add_argument("--chat", default="", help="o programa do chat da fumaca (starsonic-chat.exe), para o item 13")
     parser.add_argument("--ensaio", action="store_true", help="o ensaio da atualizacao da rc.7 (app ja aberto)")
+    parser.add_argument("--reuniao", action="store_true", help="so o item 13: a reuniao dentro da janela do app")
     parser.add_argument("--contato", default="Ana Ensaio", help="no ensaio: o contato que veio da rc.7")
     parser.add_argument("--registros-antes", type=int, default=0,
                         help="no ensaio: quantos REGISTER do ramal o registrador aceitou antes do app novo (os da rc.7)")
@@ -2662,10 +2696,10 @@ def main(argv):
         except AttributeError:
             pass
     pathlib.Path(args.capturas).mkdir(parents=True, exist_ok=True)
-    result = {"modo": "ensaio" if args.ensaio else "fumaca"}
+    result = {"modo": "ensaio" if args.ensaio else "reuniao" if args.reuniao else "fumaca"}
     code = 0
     try:
-        (run_rehearsal if args.ensaio else run_smoke)(args, result)
+        {"ensaio": run_rehearsal, "reuniao": run_meeting_only, "fumaca": run_smoke}[result["modo"]](args, result)
         result["ok"] = True
     except Exception as error:   # noqa: BLE001 - qualquer falha reprova o teste com a mensagem
         result["ok"] = False

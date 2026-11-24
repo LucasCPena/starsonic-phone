@@ -408,13 +408,29 @@ jobs:
           python -m pip install --disable-pip-version-check --no-input -r tests\smoke\requirements-windows.txt
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
-      # O WebView2 da máquina do GitHub é de anos atrás (o 131, do fim de 2024), e o dos PCs de quem usa o app é o de
-      # hoje: antes da fumaça, o mesmo bootstrapper Evergreen da Microsoft que o instalador do app roda num PC sem o
-      # WebView2 (o do deps.lock, já em work\webview2-bootstrapper desde o "Gerar o instalador") atualiza o da máquina.
-      # O passo mostra a versão de antes e a de depois, e reprova se a de depois for mais velha que o SDK com que o app é
-      # compilado (o código de saída do bootstrapper só aparece: numa máquina já atualizada ele pode não ser 0). Assim,
-      # um WebView2 novo da Microsoft pode deixar a fumaça vermelha sozinho: é o alarme que se quer. A fumaça não espera
-      # por este passo: se ele falhar, ela roda no WebView2 da máquina, e o resultado dela diz qual versão rodou.
+      - name: Baixar o servidor do chat da fumaça
+        id: chat-fumaca
+        if: ${{ !cancelled() && steps.installer-teste.outcome == 'success' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: chat-fumaca-windows
+          path: ${{ runner.temp }}/chat-fumaca
+
+      # Leva uns 2 minutos, e a reunião dentro da janela do app (item 13) mais alguns: o limite só corta uma página presa.
+      - name: Fumaça do app novo instalado (CDP, ligações no registrador falso)
+        if: ${{ !cancelled() && steps.fumaca-deps.outcome == 'success' && steps.installer-teste.outcome == 'success' && steps.chat-fumaca.outcome == 'success' }}
+        timeout-minutes: 20
+        run: .\tests\smoke\Test-InstalledApp.ps1 -Setup "dist-teste\StarsonicPhone-$($env:STARSONIC_VERSION)-setup.exe" -Capturas capturas-windows -Chat "$env:RUNNER_TEMP\chat-fumaca\starsonic-chat.exe"
+
+      # As duas fases da fumaça. O WebView2 da máquina do GitHub é de anos atrás (o 131, do fim de 2024), e o dos PCs de
+      # quem usa o app é o de hoje. Por isso a fumaça inteira roda primeiro no WebView2 da máquina (o passo acima), e só
+      # depois este passo o atualiza, com o mesmo bootstrapper Evergreen da Microsoft que o instalador do app roda num PC
+      # sem o WebView2 (o do deps.lock, já em work\webview2-bootstrapper desde o "Gerar o instalador"), e o item 13 roda
+      # de novo no de hoje (o passo seguinte). Assim uma rodada só separa o que o código mudou do que um WebView2 novo
+      # muda; os itens 1 a 12 ficam no WebView2 da máquina. O passo mostra a versão de antes e a de depois, e reprova se
+      # a de depois for mais velha que o SDK com que o app é compilado (o código de saída do bootstrapper só aparece:
+      # numa máquina já atualizada ele pode não ser 0). Um WebView2 novo da Microsoft pode deixar o item 13 vermelho
+      # sozinho: é o alarme que se quer.
       - name: Atualizar o WebView2 da máquina de teste
         id: webview2-atual
         if: ${{ !cancelled() && steps.installer.outcome == 'success' }}
@@ -446,19 +462,10 @@ jobs:
             exit 1
           }
 
-      - name: Baixar o servidor do chat da fumaça
-        id: chat-fumaca
-        if: ${{ !cancelled() && steps.installer-teste.outcome == 'success' }}
-        uses: actions/download-artifact@v4
-        with:
-          name: chat-fumaca-windows
-          path: ${{ runner.temp }}/chat-fumaca
-
-      # Leva uns 2 minutos, e a reunião dentro da janela do app (item 13) mais alguns: o limite só corta uma página presa.
-      - name: Fumaça do app novo instalado (CDP, ligações no registrador falso)
-        if: ${{ !cancelled() && steps.fumaca-deps.outcome == 'success' && steps.installer-teste.outcome == 'success' && steps.chat-fumaca.outcome == 'success' }}
-        timeout-minutes: 20
-        run: .\tests\smoke\Test-InstalledApp.ps1 -Setup "dist-teste\StarsonicPhone-$($env:STARSONIC_VERSION)-setup.exe" -Capturas capturas-windows -Chat "$env:RUNNER_TEMP\chat-fumaca\starsonic-chat.exe"
+      - name: A reunião no WebView2 de hoje (o item 13 da fumaça)
+        if: ${{ !cancelled() && steps.fumaca-deps.outcome == 'success' && steps.installer-teste.outcome == 'success' && steps.chat-fumaca.outcome == 'success' && steps.webview2-atual.outcome == 'success' }}
+        timeout-minutes: 10
+        run: .\tests\smoke\Test-InstalledApp.ps1 -Setup "dist-teste\StarsonicPhone-$($env:STARSONIC_VERSION)-setup.exe" -Capturas capturas-windows\webview2-atual -Chat "$env:RUNNER_TEMP\chat-fumaca\starsonic-chat.exe" -SoAReuniao
 
       - name: Teste do instalador
         if: ${{ !cancelled() && steps.installer.outcome == 'success' }}
