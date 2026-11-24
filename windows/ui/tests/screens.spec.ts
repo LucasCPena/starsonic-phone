@@ -654,8 +654,8 @@ test.describe('ponte e janela', () => {
     expect(await page.evaluate(() => document.fonts.check('700 16px "Plus Jakarta Sans"'))).toBe(true);
 
     // Nenhum endereço de rede nos arquivos que a página lê, além dos links que o openExternal abre no
-    // navegador, (0.2.0) do servidor do chat (o ENDERECO_DO_CHAT e o CSP da página) e dos nomes de espaço do SVG
-    // (identificadores, não pedidos).
+    // navegador, (0.2.0) do servidor do chat (o ENDERECO_DO_CHAT e o CSP da página; (0.5.0) também o frame-src) e dos
+    // nomes de espaço do SVG (identificadores, não pedidos). O endereço para no `;`, o separador do CSP.
     const permitidos = new Set([
       'https://starsonic.com.br',
       'https://wa.me/551150603000',
@@ -676,7 +676,7 @@ test.describe('ponte e janela', () => {
     };
     visitar(DIST);
     expect(arquivos.map((a) => a.slice(DIST.length)).sort()).toEqual(expect.arrayContaining(['app.css', 'app.js', 'index.html']));
-    const encontrados = arquivos.flatMap((a) => readFileSync(a, 'utf8').match(/https?:\/\/[^\s"'`)<>\\]*/g) ?? []);
+    const encontrados = arquivos.flatMap((a) => readFileSync(a, 'utf8').match(/https?:\/\/[^\s"'`)<>\\;]*/g) ?? []);
     expect(encontrados.filter((u) => !permitidos.has(u))).toEqual([]);
     const html = readFileSync(join(DIST, 'index.html'), 'utf8');
     expect(html).not.toMatch(/(src|href)=["']?(https?:)?\/\//);
