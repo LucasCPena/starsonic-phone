@@ -1025,9 +1025,10 @@ A página de uma reunião do chat abre num `iframe` da janela principal. A regra
 ### Para o executável: o que a janela principal deixa
 
 As regras ficam no `WebPermissions.h`, e quem decide o que um quadro ganha é o endereço do **documento que ele mostra**
-(o `FrameAddress`, pelas navegações do quadro: o da navegação cujo conteúdo carregou, ou que acabou bem, fora as que
-ficam no mesmo documento; nada numa página de erro), nunca o de uma navegação que só começou, nem a origem que o
-WebView2 diz no pedido (num pedido de um quadro, ela vem como a da página de cima, a do app). O endereço de uma reunião é
+(o `FrameAddress`, pelas navegações do quadro: o da navegação cujo conteúdo carregou; nada numa página de erro, e nada
+depois de uma navegação que acabou bem sem o evento do conteúdo, fora as que ficam no mesmo documento: sem ele, não se
+sabe qual documento o quadro mostra), nunca o de uma navegação que só começou, nem a origem que o WebView2 diz no
+pedido (num pedido de um quadro, ela vem como a da página de cima, a do app). O endereço de uma reunião é
 exatamente `https://chat.starcloud-starsonic.com.br:8443/r/` seguido de um código de 10 caracteres do alfabeto
 `abcdefghjkmnpqrstvwxyz23456789`, sem mais nada (nem barra no fim, nem consulta, nem fragmento).
 
@@ -1051,12 +1052,14 @@ host, como nas outras linhas):
 |---|---|---|
 | a navegação de um quadro, no nível da janela (`FrameNavigationStarting`) | cancela se a regra não deixa | `navegacao bloqueada: <endereço>`; deixada e fora do app: `navegacao do quadro permitida: <endereço>`; o cancelamento que o WebView2 recusa: `navegacao nao cancelada: <HRESULT em hexadecimal>` |
 | a navegação de um quadro, no quadro (`NavigationStarting` do quadro) | guarda o endereço dessa navegação (pelo id dela) e cancela de novo se a regra não deixa | só o cancelamento recusado: `navegacao nao cancelada: <HRESULT em hexadecimal>` |
-| o conteúdo de uma navegação do quadro que começa a carregar (`ContentLoading` do quadro), ou a navegação que acaba bem sem ele (`NavigationCompleted` do quadro) | o quadro passa a mostrar esse documento (numa página de erro, nenhum) | um documento fora da regra: `quadro fora da regra: <endereço>` |
+| o conteúdo de uma navegação do quadro que começa a carregar (`ContentLoading` do quadro) | o quadro passa a mostrar esse documento (numa página de erro, nenhum) | um documento fora da regra: `quadro fora da regra: <endereço>` |
+| a navegação do quadro que acaba (`NavigationCompleted` do quadro) | nunca dá um documento: a que acabou bem sem o `ContentLoading`, fora a que fica no mesmo documento (só o fragmento muda), deixa o quadro sem nenhum; a que falhou não muda nada | o quadro que mostrava um documento e ficou sem nenhum: `quadro sem o evento do conteudo` |
 | um quadro que não carregou (`FrameNavigationCompleted` sem sucesso) | — | `o quadro nao carregou (erro <n>)`, com o `COREWEBVIEW2_WEB_ERROR_STATUS` |
-| a permissão pedida por um quadro (`PermissionRequested` do quadro) | responde pela regra do quadro e marca como tratada (o evento da janela não vem) | `permissao permitida (quadro): <n> <endereço do pedido>` ou `permissao negada (quadro): <n> <endereço do pedido>` |
+| a permissão pedida por um quadro (`PermissionRequested` do quadro) | responde pela regra do quadro e marca como tratada (o evento da janela não vem) | `permissao permitida (quadro): <n> <documento do quadro>` ou `permissao negada (quadro): <n> <documento do quadro>`: o endereço do documento que o quadro mostra, que decidiu (a origem do pedido é a do app e não diz nada do quadro), ou `(sem documento)` quando ele não mostra nenhum |
 | a permissão pedida pela página do app (`PermissionRequested` da janela) | a regra de sempre | a recusa: `permissao negada: <n> <endereço do pedido>` |
 | a captura de tela pedida por um quadro (`ScreenCaptureStarting` do quadro) | cancela se a regra não deixa, e marca como tratada | `captura de tela permitida (quadro)` ou `captura de tela cancelada (quadro)` |
 | a captura de tela que chega ao nível da janela (`ScreenCaptureStarting` da janela) | cancela sempre | `captura de tela cancelada` |
+| uma mensagem que não vem da página do app (`WebMessageReceived` da janela) | ignora, como sempre | `mensagem ignorada de <endereço>`, agora só com o esquema e o host, como as outras (antes, até 160 caracteres do endereço: o de um quadro de reunião leva o código dela) |
 
 O perfil do WebView2 (a pasta `…\Starsonic Phone\WebView2`, a mesma em todas as aberturas) não guarda nada disso:
 toda resposta a um quadro, permitida ou negada, e toda recusa à página do app valem só para aquele pedido, e o próximo
@@ -1066,8 +1069,13 @@ Um WebView2 antigo, sem uma das interfaces, deixa uma linha (`WebView2 sem os qu
 `WebView2 sem a navegacao do quadro (ICoreWebView2Frame2)`, `WebView2 sem as permissoes do quadro
 (ICoreWebView2Frame3)`, `WebView2 sem a captura de tela do quadro (ICoreWebView2Frame6)`, `WebView2 sem o aviso da
 captura de tela (ICoreWebView2_27)` ou `WebView2 sem a resposta fora do perfil
-(ICoreWebView2PermissionRequestedEventArgs3)`) e fica no lado fechado: sem o evento do quadro, o quadro não ganha
-nada, e uma resposta que ficaria guardada no perfil é uma recusa.
+(ICoreWebView2PermissionRequestedEventArgs3)`). Uma resposta que ficaria guardada no perfil é uma recusa. Mas o lado
+fechado não vale em dois casos:
+
+- **sem o `ICoreWebView2_27`** (um runtime anterior ao 131), o app não cancela nenhuma captura de tela, nem a da
+  página do app: quem decide é a janela de escolha da tela do próprio WebView2;
+- **sem o evento de permissão do quadro** (`ICoreWebView2Frame3`), o pedido de um quadro chega à janela com a origem do
+  app, e a regra da janela deixa passar o microfone e a reprodução automática.
 
 ## O modo iPhone (etapa 2)
 
