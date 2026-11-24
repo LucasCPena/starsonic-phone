@@ -44,6 +44,9 @@ TEST_CASE("the meeting address is the chat origin, /r/ and a ten-character code,
     CHECK_FALSE(IsMeetingUrl("https://outro.com/https://chat.starcloud-starsonic.com.br:8443/r/k7q49xwpht"));
     CHECK_FALSE(IsMeetingUrl("https://app.starsonic.local/r/k7q49xwpht"));
     CHECK_FALSE(IsMeetingUrl(" " + kMeeting));
+    // Dois bytes fora do alfabeto que o texto dele nao mostra: o NUL (o terminador do texto) e um fora do ASCII.
+    CHECK_FALSE(IsMeetingUrl(kChat + std::string("/r/k7q49\0xwph", 13)));
+    CHECK_FALSE(IsMeetingUrl(kChat + std::string("/r/k7q49\xe9xwph", 13)));
 }
 
 TEST_CASE("a frame navigates only inside the app, or to a meeting in the main window") {
@@ -139,11 +142,20 @@ TEST_CASE("an error page and an unknown navigation show nothing") {
     CHECK(other.Shown() == "");
 }
 
-TEST_CASE("a navigation that ends well without the content event is adopted") {
+TEST_CASE("a navigation that ends well without the content event shows nothing") {
     FrameAddress frame;
     frame.Start(5, kMeeting);
     frame.End(5, true);
-    CHECK(frame.Shown() == kMeeting);
+    CHECK(frame.Shown() == "");
+}
+
+TEST_CASE("an older navigation that ends after another loaded does not bring its address back") {
+    FrameAddress frame;
+    frame.Start(1, kMeeting);
+    frame.Start(2, kOther);
+    frame.Commit(2, false);
+    frame.End(1, true);
+    CHECK(frame.Shown() != kMeeting);
 }
 
 TEST_CASE("a navigation inside the same document changes nothing") {
@@ -152,4 +164,11 @@ TEST_CASE("a navigation inside the same document changes nothing") {
     frame.Start(6, kMeeting + "#a");
     frame.End(6, true);
     CHECK(frame.Shown() == kMeeting);
+}
+
+TEST_CASE("an unknown navigation over a shown meeting shows nothing") {
+    FrameAddress frame = ShowingMeeting();
+    REQUIRE(frame.Shown() == kMeeting);
+    frame.Commit(9, false);
+    CHECK(frame.Shown() == "");
 }

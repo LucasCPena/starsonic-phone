@@ -276,8 +276,12 @@ void WebViewHost::Configure() {
         &token);
 
     // (0.5.0) Os quadros (WebPermissions.h): cada um sabe o endereco do documento que mostra (FrameAddress, pelas
-    // navegacoes dele) e responde com ele aos seus pedidos, antes do evento da janela (Handled). Sem os eventos do
-    // quadro, o quadro nao ganha nada: o pedido chega a janela, que so deixa o da pagina do app.
+    // navegacoes dele) e responde com ele aos seus pedidos, antes do evento da janela (Handled). Num WebView2 antigo,
+    // sem uma das interfaces, isso nao fica todo no lado fechado, em dois casos:
+    // - sem o ICoreWebView2_27 (um runtime anterior ao 131), o app nao cancela nenhuma captura de tela, nem a da pagina
+    //   do app: quem decide e a janela de escolha do proprio WebView2;
+    // - sem o evento de permissao do quadro (ICoreWebView2Frame3), o pedido de um quadro chega a janela com a origem do
+    //   app, e a regra da janela deixa passar o microfone e a reproducao automatica.
     ComPtr<ICoreWebView2_4> webview4;
     if (SUCCEEDED(webview_.As(&webview4))) {
         webview4->add_FrameCreated(
@@ -340,15 +344,17 @@ void WebViewHost::Configure() {
                             &frameToken);
                         frame2->add_NavigationCompleted(
                             Callback<ICoreWebView2FrameNavigationCompletedEventHandler>(
-                                [address, outsideRule](ICoreWebView2Frame*,
-                                                       ICoreWebView2NavigationCompletedEventArgs* event) -> HRESULT {
+                                [this, address](ICoreWebView2Frame*, ICoreWebView2NavigationCompletedEventArgs* event)
+                                    -> HRESULT {
                                     UINT64 navigation = 0;
                                     BOOL success = FALSE;
                                     if (FAILED(event->get_NavigationId(&navigation))) return S_OK;
                                     event->get_IsSuccess(&success);
-                                    const std::string before = address->Shown();
+                                    const bool showed = !address->Shown().empty();
                                     address->End(navigation, success != FALSE);
-                                    if (address->Shown() != before) outsideRule();
+                                    // O End nunca da um documento: uma navegacao que acabou bem sem o ContentLoading
+                                    // deixa o quadro sem nenhum (ele nao ganha nada ate o proximo conteudo).
+                                    if (showed && address->Shown().empty()) Log("quadro sem o evento do conteudo");
                                     return S_OK;
                                 })
                                 .Get(),
@@ -362,11 +368,8 @@ void WebViewHost::Configure() {
                             Callback<ICoreWebView2FramePermissionRequestedEventHandler>(
                                 [this, address](ICoreWebView2Frame*, ICoreWebView2PermissionRequestedEventArgs2* event)
                                     -> HRESULT {
-                                    LPWSTR uri = nullptr;
                                     COREWEBVIEW2_PERMISSION_KIND kind = COREWEBVIEW2_PERMISSION_KIND_UNKNOWN_PERMISSION;
-                                    event->get_Uri(&uri);
                                     event->get_PermissionKind(&kind);
-                                    const std::string url = TakeString(uri);
                                     bool allowed =
                                         AllowFramePermission(options_.window, PermissionOf(kind), address->Shown());
                                     // Uma resposta que ficaria no perfil, nao: fica no lado fechado.
@@ -377,9 +380,13 @@ void WebViewHost::Configure() {
                                     event->put_State(allowed ? COREWEBVIEW2_PERMISSION_STATE_ALLOW
                                                              : COREWEBVIEW2_PERMISSION_STATE_DENY);
                                     event->put_Handled(TRUE);   // o evento da janela nao vem
+                                    // A linha leva o documento do quadro, que decidiu: a origem do pedido e a da
+                                    // pagina de cima (a do app) e nao diz nada do quadro.
+                                    const std::string& shown = address->Shown();
                                     Log(std::string(allowed ? "permissao permitida (quadro): "
                                                             : "permissao negada (quadro): ") +
-                                        std::to_string(static_cast<int>(kind)) + " " + RedactUrl(url));
+                                        std::to_string(static_cast<int>(kind)) + " " +
+                                        (shown.empty() ? std::string("(sem documento)") : RedactUrl(shown)));
                                     return S_OK;
                                 })
                                 .Get(),
@@ -486,7 +493,8 @@ void WebViewHost::Configure() {
                 args->get_Source(&source);
                 const std::string from = TakeString(source);
                 if (!IsAppUrl(from)) {
-                    Log("mensagem ignorada de " + Short(from));
+                    // So o esquema e o servidor: o endereco de um quadro de reuniao leva o codigo dela.
+                    Log("mensagem ignorada de " + RedactUrl(from));
                     return S_OK;
                 }
                 LPWSTR json = nullptr;

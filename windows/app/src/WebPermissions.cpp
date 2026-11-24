@@ -76,10 +76,11 @@ void FrameAddress::Commit(uint64_t navigation, bool errorPage) {
 void FrameAddress::End(uint64_t navigation, bool success) {
     const auto found = navigations_.find(navigation);
     if (found == navigations_.end()) return;
-    // Sem o ContentLoading (o WebView2 nem sempre o manda), a navegacao que deu certo tambem mostra o documento dela,
-    // fora a que fica no mesmo documento (so o fragmento muda).
+    // Sem o ContentLoading, nao se sabe qual documento o quadro mostra: uma navegacao mais velha pode acabar depois de
+    // outra ter carregado. Por isso o End nunca da um documento; fora a que fica no mesmo documento (so o fragmento
+    // muda), a navegacao que deu certo sem ele deixa o quadro sem nenhum. A que falhou nao muda nada.
     if (success && !found->second.committed && WithoutFragment(found->second.url) != WithoutFragment(shown_)) {
-        shown_ = found->second.url;
+        shown_.clear();
     }
     navigations_.erase(found);
 }

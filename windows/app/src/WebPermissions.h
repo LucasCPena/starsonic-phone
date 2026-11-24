@@ -49,8 +49,9 @@ public:
     // ContentLoading: o quadro passou a mostrar o documento dessa navegacao ("" numa pagina de erro ou num id que nao
     // comecou aqui).
     void Commit(uint64_t navigation, bool errorPage);
-    // NavigationCompleted: a navegacao acabou e o id e esquecido. Uma que deu certo sem o ContentLoading tambem vale,
-    // a nao ser que seja dentro do mesmo documento (o mesmo endereco, fora o fragmento).
+    // NavigationCompleted: a navegacao acabou e o id e esquecido. Nunca da um documento: uma que deu certo sem o
+    // ContentLoading deixa o quadro sem nenhum (""), a nao ser que seja dentro do mesmo documento (o mesmo endereco,
+    // fora o fragmento); uma que falhou sem ele nao muda nada.
     void End(uint64_t navigation, bool success);
     // "" antes do primeiro documento, numa pagina de erro e num documento desconhecido.
     const std::string& Shown() const;
