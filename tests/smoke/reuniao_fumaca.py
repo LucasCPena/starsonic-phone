@@ -28,12 +28,10 @@ ALLOW = "; ".join("%s %s" % (feature, CHAT_ORIGIN)
                   for feature in ("camera", "microphone", "display-capture", "autoplay", "speaker-selection"))
 
 FAKE_DEVICES = "--use-fake-device-for-media-stream"
-# A tabela "Os argumentos do WebView2 na fumaça" do plano.
+# A única tentativa da tela que capturou no WebView2 de verdade (a prova de 24/11/2026); as outras saíram.
 CAPTURE_ARGUMENTS = {
     None: "",
     "pedaco": "--auto-select-desktop-capture-source=Entire",
-    "inteiro": '--auto-select-desktop-capture-source="Entire screen"',
-    "falsa": "--use-fake-ui-for-media-stream",
 }
 LNA_ARGUMENT = "--enable-features=LocalNetworkAccessChecks,msWebViewAllowLocalNetworkAccessChecks"
 
@@ -299,13 +297,16 @@ HREF_SCRIPT = "() => location.href"
 def probe_left_meeting(page, origin: str, code: str, pump) -> dict:
     """Com o quadro da reunião aberto (open_meeting): manda esse quadro para o endereço da reunião com mais coisa
     (?x=1), espera 3 s e lê o location.href do documento que ele mostra. {"navegou", "camera", "tela"}: com o
-    navegou, a câmera (só o vídeo) e a tela pedidas por esse documento; sem ele (o quadro continuou na reunião), None."""
+    navegou, a câmera (só o vídeo) e a tela pedidas por esse documento; sem ele (o quadro continuou na reunião), None.
+    Se o documento do quadro não se alcança, {"erro": "sem o quadro"} (o portão conta como não visto)."""
     meeting = origin + "/r/" + code
     page.evaluate(LEAVE_SCRIPT, [FRAME_ID, meeting + "?x=1"])
     pump(LEFT_WAIT_MS)
     frame = page.locator("#" + FRAME_ID).element_handle().content_frame()
+    if frame is None:
+        return {"erro": "sem o quadro"}
     try:
-        href = frame.evaluate(HREF_SCRIPT) if frame is not None else None
+        href = frame.evaluate(HREF_SCRIPT)
     except Exception:   # noqa: BLE001 - um documento que não deixa ler (uma página de erro) não é a reunião
         href = None
     if href == meeting:
@@ -395,12 +396,12 @@ def problems_of(record: dict) -> list[str]:
         if not str(answer.get("erro", "")).startswith("NotAllowedError"):
             problems.append("a pagina do app pediu %s e nao levou um NotAllowedError: %s" % (name, answer))
     refused = _part(refusals, "recusados")
-    # O "consulta" fica registrado e não é julgado (a regra final de uma navegação recusada vem na rodada seguinte).
-    for name in ("administracao", "de_fora"):
+    for name in ("administracao", "consulta", "de_fora"):
         if refused.get(name) is not False:
             problems.append("um quadro recusado carregou (ou nao foi visto): %s" % name)
     left = _part(refusals, "saiu")
     needed_lines = list(NEEDED_LINES)
+    left_lines = []
     if not isinstance(left.get("navegou"), bool):
         problems.append("nao se sabe se o quadro que deixa a reuniao navegou: %s" % (refusals.get("saiu"),))
     elif left["navegou"]:
@@ -409,7 +410,7 @@ def problems_of(record: dict) -> list[str]:
             if not str(answer.get("erro", "")).startswith("NotAllowedError"):
                 problems.append("o quadro fora da reuniao pediu %s e nao levou um NotAllowedError: %s"
                                 % (name, left.get(what)))
-        needed_lines += LEFT_MEETING_LINES
+        left_lines = LEFT_MEETING_LINES
     leaked = record.get("vazou")
     if leaked is None or leaked:
         problems.append("o diagnostico vazou (ou nao foi conferido): %s" % leaked)
@@ -423,9 +424,13 @@ def problems_of(record: dict) -> list[str]:
     for attempt in attempts if isinstance(attempts, list) else []:
         if isinstance(attempt, dict):
             lines += _list(attempt, "diagnostico")
-    for needed, by_start in needed_lines:
-        if not any(line.startswith(needed) if by_start else line == needed for line in lines):
-            problems.append("falta no diagnostico: " + needed)
+    # As linhas do quadro que deixou a reunião, só no diagnóstico da abertura das recusas: a linha de outra abertura
+    # não responde por esta.
+    refusal_lines = _list(refusals, "diagnostico")
+    for wanted, where in ((needed_lines, lines), (left_lines, refusal_lines)):
+        for needed, by_start in wanted:
+            if not any(line.startswith(needed) if by_start else line == needed for line in where):
+                problems.append("falta no diagnostico: " + needed)
     return problems
 
 
@@ -615,7 +620,7 @@ class _Item:
             response.read()
             status = response.status
         except (OSError, http.client.HTTPException) as error:
-            raise smoke.SmokeFailure("o pedido https pelo nome do chat falhou: %s: %s" % (type(error).__name__, error))
+            raise smoke.SmokeFailure("o pedido https pelo nome do chat falhou: %s" % type(error).__name__)
         finally:
             connection.close()
         if status != 200 or self.front.connections <= before:
@@ -638,7 +643,8 @@ class _Item:
         self.say("a empresa, o computador, a pessoa e a reuniao estao no chat de teste")
 
     def run_main(self):
-        """4. A abertura principal: o quadro, a entrada, a mídia, o alto-falante, a captura e, por último, a tela."""
+        """4. A abertura principal: o quadro, a entrada, a mídia, o alto-falante, a captura e, por último, a tela (a
+        única tentativa que capturou no WebView2 de verdade)."""
         main, screen = self.record["principal"], self.record["tela"]
         attempt = {"captura": "pedaco"}
         screen["tentativas"].append(attempt)
@@ -667,27 +673,8 @@ class _Item:
         if _captured(attempt.get("resultado")):
             screen["ok"] = "pedaco"
 
-    def run_screen_attempts(self):
-        """5. As outras tentativas da tela, só se a anterior não capturou (e a principal teve o quadro)."""
-        screen = self.record["tela"]
-        for capture in ("inteiro", "falsa"):
-            if screen["ok"] or self.record["principal"].get("quadro") is not True:
-                return
-            attempt = {"captura": capture}
-            screen["tentativas"].append(attempt)
-
-            def body(page, pump, attempt=attempt):
-                frame, _ = self.open_frame(page, pump, attempt)
-                attempt["resultado"] = self.clean(probe_screen(frame, pump)) if frame is not None else {
-                    "erro": "sem o quadro"}
-                self.say("tela (%s): %s" % (attempt["captura"], attempt["resultado"]))
-
-            self.launch("tela " + capture, attempt, capture, False, body)
-            if _captured(attempt.get("resultado")):
-                screen["ok"] = capture
-
     def run_local_network(self):
-        """6. A proteção Local Network Access ligada: o quadro e as mensagens, só para registrar."""
+        """5. A proteção Local Network Access ligada: o quadro e as mensagens, só para registrar."""
         part = self.record["lna"]
 
         def body(page, pump):
@@ -698,7 +685,7 @@ class _Item:
         self.launch("lna", part, "pedaco", True, body, console=True)
 
     def run_refusals(self):
-        """7. Por último: o que a página do app pede e não leva, os três quadros que não entram e o quadro que
+        """6. Por último: o que a página do app pede e não leva, os três quadros que não entram e o quadro que
         deixa a reunião."""
         part = self.record["recusas"]
 
@@ -721,7 +708,7 @@ class _Item:
         self.launch("recusas", part, "pedaco", False, body)
 
     def find_leaks(self):
-        """8. O que vazou para os diagnósticos (no texto cru), pelo rótulo."""
+        """7. O que vazou para os diagnósticos (no texto cru), pelo rótulo."""
         found = []
         for label, values in (("codigo", [self.code]), ("passe", self.passes), ("chave", [self.key]),
                               ("pessoa", [PERSON]), ("empresa", [COMPANY]), ("assunto", [SUBJECT])):
@@ -731,7 +718,7 @@ class _Item:
         self.say("vazou: %s" % found)
 
     def undo(self):
-        """9. Tudo de volta, cada passo no try dele; o desfeito confere o hosts e a lista do Windows."""
+        """8. Tudo de volta, cada passo no try dele; o desfeito confere o hosts e a lista do Windows."""
         smoke = self.smoke
         steps = [("o app", self.close)]
         if getattr(self, "hosts_written", False):
@@ -776,7 +763,6 @@ def run_meeting(smoke, pw, win, exe, capturas, result, problems, chat_binary) ->
             item.check_name()
             item.prepare()
             item.run_main()
-            item.run_screen_attempts()
             item.run_local_network()
             item.run_refusals()
             item.find_leaks()

@@ -24,8 +24,10 @@ class ArgumentsTest(unittest.TestCase):
         fake = base + " --use-fake-device-for-media-stream"
         self.assertEqual(reuniao_fumaca.meeting_arguments(base), fake)
         self.assertEqual(reuniao_fumaca.meeting_arguments(base, "pedaco"), fake + " --auto-select-desktop-capture-source=Entire")
-        self.assertEqual(reuniao_fumaca.meeting_arguments(base, "inteiro"), fake + ' --auto-select-desktop-capture-source="Entire screen"')
-        self.assertEqual(reuniao_fumaca.meeting_arguments(base, "falsa"), fake + " --use-fake-ui-for-media-stream")
+        # So a tentativa que capturou na prova no WebView2 de verdade ficou; as outras saíram.
+        for gone in ("inteiro", "falsa"):
+            with self.assertRaises(KeyError):
+                reuniao_fumaca.meeting_arguments(base, gone)
         self.assertEqual(reuniao_fumaca.meeting_arguments(base, "pedaco", lna=True),
                          fake + " --auto-select-desktop-capture-source=Entire"
                          " --enable-features=LocalNetworkAccessChecks,msWebViewAllowLocalNetworkAccessChecks")
@@ -44,8 +46,19 @@ NEEDED = [LINES[0], "permissao permitida (quadro): 2 ", LINES[2], LINES[3], LINE
           "permissao negada (quadro): 2 ", LINES[7]]
 
 
+def left_meeting():
+    """O record de um quadro que deixou a reunião: ele navegou, não ganhou a câmera nem a tela, e as duas linhas de
+    recusa dele estão no diagnóstico das recusas."""
+    record = complete()
+    refused = {"erro": "NotAllowedError: Permission denied"}
+    record["recusas"]["saiu"] = {"navegou": True, "camera": dict(refused), "tela": dict(refused)}
+    record["recusas"]["diagnostico"] = list(LINES[2:])
+    return record
+
+
 def complete():
-    """O record de uma prova que passa (o exemplo do plano)."""
+    """O record de uma prova que passa: o da rodada que passou no WebView2 de verdade (o quadro que deixa a reunião
+    não navegou: o bloqueio valeu, e nenhuma linha de recusa do quadro foi preciso)."""
     return {"endereco": "privado", "webview2": "Edg/154.0.0.0",
             "principal": {"argumentos": "", "mensagens": ["pronta", "estado:entrada"], "microfone": True, "quadro": True,
                           "entrada": {"nome": "Ana Souza", "largura": 1280, "imagem": "ligada", "semAcesso": False,
@@ -60,9 +73,8 @@ def complete():
                         "do_app": {"camera": {"erro": "NotAllowedError: Permission denied"},
                                    "tela": {"erro": "NotAllowedError: Permission denied"}},
                         "recusados": {"administracao": False, "consulta": False, "de_fora": False},
-                        "saiu": {"navegou": True, "camera": {"erro": "NotAllowedError: Permission denied"},
-                                 "tela": {"erro": "NotAllowedError: Permission denied"}},
-                        "csp": [], "diagnostico": list(LINES[2:5]) + list(LINES[6:])},
+                        "saiu": {"navegou": False, "camera": None, "tela": None},
+                        "csp": [], "diagnostico": list(LINES[2:5])},
             "vazou": [],
             "desfeito": {"hosts": True, "certificado": True}}
 
@@ -122,10 +134,9 @@ class VerdictTest(unittest.TestCase):
             (("recusas", "do_app", "camera"), {"faixas": ["video:live"]}, "pagina do app"),
             (("recusas", "do_app", "tela"), {"faixa": "live", "superficie": "monitor"}, "pagina do app"),
             (("recusas", "recusados", "administracao"), True, "administracao"),
+            (("recusas", "recusados", "consulta"), True, "consulta"),
             (("recusas", "recusados", "de_fora"), True, "de_fora"),
             (("recusas", "saiu"), None, "deixa a reuniao"),
-            (("recusas", "saiu", "camera"), {"faixas": ["video:live"]}, "fora da reuniao"),
-            (("recusas", "saiu", "tela"), {"faixa": "live", "superficie": "monitor"}, "fora da reuniao"),
             (("vazou",), ["k7q49xwpht"], "vazou"),
             (("desfeito", "hosts"), False, "hosts"),
             (("desfeito", "certificado"), False, "certificado"),
@@ -134,7 +145,15 @@ class VerdictTest(unittest.TestCase):
             problems = reuniao_fumaca.problems_of(changed(path, value))
             self.assertEqual(len(problems), 1, (path, problems))
             self.assertIn(word, problems[0], path)
-        for line, needed in zip(LINES, NEEDED):
+        for path, value, word in [(("recusas", "saiu", "camera"), {"faixas": ["video:live"]}, "fora da reuniao"),
+                                  (("recusas", "saiu", "tela"), {"faixa": "live", "superficie": "monitor"},
+                                   "fora da reuniao")]:
+            record = left_meeting()
+            record["recusas"]["saiu"][path[-1]] = value
+            problems = reuniao_fumaca.problems_of(record)
+            self.assertEqual(len(problems), 1, (path, problems))
+            self.assertIn(word, problems[0], path)
+        for line, needed in zip(LINES[:6], NEEDED[:6]):
             record = complete()
             for part in (record["principal"], record["recusas"]):
                 part["diagnostico"] = [l for l in part["diagnostico"] if l != line]
@@ -151,16 +170,25 @@ class VerdictTest(unittest.TestCase):
         record["tela"]["tentativas"][0]["diagnostico"] = ["captura de tela permitida (quadro)"]
         self.assertEqual(reuniao_fumaca.problems_of(record), [])
 
-    def test_a_refused_address_that_loads_does_not_fail_by_itself(self):
-        record = complete()
-        record["recusas"]["recusados"]["consulta"] = True
-        self.assertEqual(reuniao_fumaca.problems_of(record), [])
-
     def test_a_frame_held_in_the_meeting_needs_no_refusal_lines(self):
         record = complete()
-        record["recusas"]["saiu"] = {"navegou": False, "camera": None, "tela": None}
-        record["recusas"]["diagnostico"] = list(LINES[2:5])
+        self.assertEqual(record["recusas"]["saiu"], {"navegou": False, "camera": None, "tela": None})
+        self.assertEqual([l for l in record["recusas"]["diagnostico"] if "(quadro)" in l], [])
         self.assertEqual(reuniao_fumaca.problems_of(record), [])
+
+    def test_a_frame_that_left_the_meeting_needs_both_refusals(self):
+        self.assertEqual(reuniao_fumaca.problems_of(left_meeting()), [])
+        for line, needed in ((LINES[6], NEEDED[6]), (LINES[7], NEEDED[7])):
+            record = left_meeting()
+            record["recusas"]["diagnostico"] = [l for l in record["recusas"]["diagnostico"] if l != line]
+            self.assertEqual(reuniao_fumaca.problems_of(record), ["falta no diagnostico: " + needed])
+
+    def test_the_refusal_lines_of_the_frame_are_only_read_in_the_refusals_launch(self):
+        record = left_meeting()
+        record["principal"]["diagnostico"] += list(LINES[6:])
+        record["recusas"]["diagnostico"] = list(LINES[2:5])
+        self.assertEqual(reuniao_fumaca.problems_of(record),
+                         ["falta no diagnostico: " + NEEDED[6], "falta no diagnostico: " + NEEDED[7]])
 
     def test_the_local_network_run_never_fails_the_proof(self):
         record = complete()
@@ -172,6 +200,33 @@ class VerdictTest(unittest.TestCase):
             problems = reuniao_fumaca.problems_of(record)
             self.assertIsInstance(problems, list)
             self.assertNotEqual(problems, [], record)
+
+
+class _Handle:
+    def content_frame(self):
+        return None
+
+
+class _Locator:
+    def element_handle(self):
+        return _Handle()
+
+
+class _PageWithoutFrame:
+    """Uma página sem o documento do quadro da reunião (content_frame() dá None)."""
+
+    def evaluate(self, *_):
+        return None
+
+    def locator(self, _):
+        return _Locator()
+
+
+class LeftMeetingProbeTest(unittest.TestCase):
+    def test_a_frame_that_cannot_be_reached_is_reported_as_not_seen(self):
+        answer = reuniao_fumaca.probe_left_meeting(_PageWithoutFrame(), reuniao_local.CHAT_ORIGIN, "k7q49xwpht",
+                                                   lambda ms: None)
+        self.assertEqual(answer, {"erro": "sem o quadro"})
 
 
 def _csp_meta():
