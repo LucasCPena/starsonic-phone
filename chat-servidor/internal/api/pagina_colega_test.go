@@ -846,6 +846,40 @@ func semRecusa(t *testing.T, pagina *websocket.Conn) {
 	aPaginaTipo(t, pagina, "tela")
 }
 
+// listaEFeito lê as duas mensagens que uma resposta que deu certo traz, em qualquer ordem, e devolve a lista.
+func listaEFeito(t *testing.T, conn *websocket.Conn, de, id string) map[string]any {
+	t.Helper()
+	var lista map[string]any
+	feito := false
+	for i := 0; i < 2; i++ {
+		m := aPagina(t, conn)
+		switch m["tipo"] {
+		case "participantes":
+			lista = m
+		case "feito":
+			feito = len(m) == 3 && m["de"] == de && m["id"] == id
+		}
+	}
+	if lista == nil || !feito {
+		t.Fatalf("queria a lista e o feito de %s %s", de, id)
+	}
+	return lista
+}
+
+func TestCanalDeColega_Feito(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	pagina, carlos, _ := c.carlosNaReuniao(t, r.Codigo)
+	_, pedido := pedeAMaria(t, c, r.Codigo, pagina)
+
+	daPagina(t, pagina, map[string]any{"tipo": "aceitar", "pedido": pedido})
+	soOCarlos(t, listaEFeito(t, pagina, "aceitar", pedido), carlos)
+	// A segunda resposta ao mesmo pedido falha, e a que falha não tem feito.
+	daPagina(t, pagina, map[string]any{"tipo": "recusar", "pedido": pedido})
+	recusaDoCanal(t, pagina, "recusar", "jaRespondido")
+	semRecusa(t, pagina)
+}
+
 func TestCanalDeColega_Aceitar(t *testing.T) {
 	c := novaCenaR(t)
 	r := c.marcada(t, c.kAna)
@@ -854,7 +888,7 @@ func TestCanalDeColega_Aceitar(t *testing.T) {
 
 	daPagina(t, pagina, map[string]any{"tipo": "aceitar", "pedido": pedido})
 	aPaginaTipo(t, maria, "aceito")
-	soOCarlos(t, aPaginaTipo(t, pagina, "participantes"), carlos)
+	soOCarlos(t, listaEFeito(t, pagina, "aceitar", pedido), carlos)
 	semRecusa(t, pagina)
 }
 
@@ -867,7 +901,7 @@ func TestCanalDeColega_Recusar(t *testing.T) {
 	daPagina(t, pagina, map[string]any{"tipo": "recusar", "pedido": pedido})
 	soOTipo(t, maria, "recusado")
 	fechouCom1000(t, maria)
-	soOCarlos(t, aPaginaTipo(t, pagina, "participantes"), carlos)
+	soOCarlos(t, listaEFeito(t, pagina, "recusar", pedido), carlos)
 	semRecusa(t, pagina)
 }
 
@@ -878,7 +912,7 @@ func TestCanalDeColega_Tirar(t *testing.T) {
 	maria, pedido := pedeAMaria(t, c, r.Codigo, pagina)
 	daPagina(t, pagina, map[string]any{"tipo": "aceitar", "pedido": pedido})
 	parteMaria, _ := aPaginaTipo(t, maria, "aceito")["participante"].(string)
-	aPaginaTipo(t, pagina, "participantes")
+	listaEFeito(t, pagina, "aceitar", pedido)
 	c.entrou(t, r.Codigo, parteMaria)
 	if ps, _ := aPaginaTipo(t, pagina, "participantes")["participantes"].([]any); len(ps) != 2 {
 		t.Fatalf("a lista tem %v; queria o Carlos e a Maria", ps)
@@ -887,7 +921,7 @@ func TestCanalDeColega_Tirar(t *testing.T) {
 	daPagina(t, pagina, map[string]any{"tipo": "tirar", "participante": parteMaria})
 	soOTipo(t, maria, "tirado")
 	fechouCom1000(t, maria)
-	soOCarlos(t, aPaginaTipo(t, pagina, "participantes"), carlos)
+	soOCarlos(t, listaEFeito(t, pagina, "tirar", parteMaria), carlos)
 	semRecusa(t, pagina)
 	if cs := c.a.Video.Comandos(); len(cs) != 1 || cs[0] != "tirar "+c.sala(t, r.Codigo)+" "+parteMaria {
 		t.Fatalf("o agente recebeu %q", cs)
@@ -901,7 +935,7 @@ func TestCanalDeColega_Encerrar(t *testing.T) {
 	maria, pedido := pedeAMaria(t, c, r.Codigo, pagina)
 	daPagina(t, pagina, map[string]any{"tipo": "aceitar", "pedido": pedido})
 	parteMaria, _ := aPaginaTipo(t, maria, "aceito")["participante"].(string)
-	aPaginaTipo(t, pagina, "participantes")
+	listaEFeito(t, pagina, "aceitar", pedido)
 	c.entrou(t, r.Codigo, parteMaria)
 	aPaginaTipo(t, pagina, "participantes")
 
@@ -922,7 +956,7 @@ func TestCanalDeColega_PrimeiraResposta(t *testing.T) {
 		maria, pedido := pedeAMaria(t, c, r.Codigo, pagina)
 		daPagina(t, pagina, map[string]any{"tipo": "aceitar", "pedido": pedido})
 		aPaginaTipo(t, maria, "aceito")
-		aPaginaTipo(t, pagina, "participantes")
+		listaEFeito(t, pagina, "aceitar", pedido)
 
 		resp := c.a.Pedir(c.kCarlos, "POST", "/api/v1/reunioes/"+r.Codigo+"/recusar", map[string]string{"pedido": pedido})
 		esperarErro(t, resp, http.StatusConflict, "jaRespondido")
@@ -1149,5 +1183,5 @@ func TestCanalDeColega_DepoisDoVoltar(t *testing.T) {
 	maria, pedido := pedeAMaria(t, c, r.Codigo, nova)
 	daPagina(t, nova, map[string]any{"tipo": "aceitar", "pedido": pedido})
 	aPaginaTipo(t, maria, "aceito")
-	soOCarlos(t, aPaginaTipo(t, nova, "participantes"), carlos)
+	soOCarlos(t, listaEFeito(t, nova, "aceitar", pedido), carlos)
 }

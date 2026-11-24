@@ -802,6 +802,14 @@ type mensagemRecusa struct {
 	Motivo string `json:"motivo"` // jaRespondido, naoEncontrado, cheia, foraDaReuniao ou servidorVideo
 }
 
+// mensagemFeito confirma, só ao canal que respondeu, a resposta (o aceitar, o recusar ou o tirar) que deu certo: de é o
+// tipo da resposta e id, o do pedido ou o do participante. O encerrar que dá certo não tem feito: o encerrada é o fim.
+type mensagemFeito struct {
+	Tipo string `json:"tipo"`
+	De   string `json:"de"`
+	ID   string `json:"id"`
+}
+
 // idDaMensagem é o campo da mensagem, quando ele é um texto com a forma de um id do gerente.
 func idDaMensagem(dados []byte, campo string) (string, bool) {
 	var campos map[string]json.RawMessage
@@ -818,7 +826,8 @@ func idDaMensagem(dados []byte, campo string) (string, bool) {
 // erro invalido, e o canal fica. A pessoa e o computador do participante são lidos de novo a cada resposta, como as
 // rotas do app fazem a cada pedido: a pessoa que saiu da empresa, ou o computador desligado do chat, recebe o erro
 // invalido, e o canal fecha. As regras são as do gerente, pela pessoa: o colega tem de estar na reunião. O que dá
-// certo não tem resposta (a página vê o participantes novo, ou o encerrada); o que falha recebe o recusa. Nada disso
+// certo é confirmado com o feito (o aceitar, o recusar e o tirar) além do participantes novo, ou termina no encerrada;
+// o que falha recebe o recusa. Nada disso
 // vai ao log, a não ser o código de uma falha do servidor de vídeo.
 func (s *servidor) respostaDoColega(c *canalPagina, st *estadoDaPagina, tipo string, dados []byte) {
 	pessoa, computador, ok := s.gerente.ColegaDoPedido(st.pedido)
@@ -856,6 +865,8 @@ func (s *servidor) respostaDoColega(c *canalPagina, st *estadoDaPagina, tipo str
 	}
 	if err != nil {
 		c.Mandar(mensagemRecusa{Tipo: "recusa", De: tipo, Motivo: motivoDaRecusa(err)})
+	} else if tipo != "encerrar" {
+		c.Mandar(mensagemFeito{Tipo: "feito", De: tipo, ID: id})
 	}
 }
 

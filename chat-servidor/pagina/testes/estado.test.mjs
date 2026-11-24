@@ -2693,24 +2693,64 @@ test('o encerrar sem o canal mostra o aviso do servidor, e o diálogo fecha', ()
   semCuidarNaoFazNada(semCuidar, clique('encerrar'), clique('encerrarMesmo'));
 });
 
+const feito = (de, id) => mensagem({ tipo: 'feito', de, id });
+
 test('o resultado de cada resposta é dito', () => {
   const e = colegaComLista();
-  let r = rodar(e, cliqueEm('aceitar', MARIA.id), lista([EU, PEDRO, MARIA_NA_REUNIAO], [BIA]));
+  let r = rodar(e, cliqueEm('aceitar', MARIA.id), feito('aceitar', MARIA.id));
   assert.deepEqual(r.efeitos, [dizer('O pedido de Maria Lima foi aceito')]);
   // Uma vez só.
-  assert.deepEqual(passo(r.estado, lista([EU, PEDRO], [])).efeitos, []);
-  // A lista que ainda tem o pedido não diz nada; a que o tira, diz.
-  r = rodar(e, cliqueEm('recusar', BIA.id), lista([EU], [MARIA, BIA]));
-  assert.deepEqual(r.efeitos, []);
-  r = passo(r.estado, lista([EU], [MARIA]));
+  assert.deepEqual(passo(r.estado, feito('aceitar', MARIA.id)).efeitos, []);
+  r = rodar(e, cliqueEm('recusar', BIA.id), feito('recusar', BIA.id));
   assert.deepEqual(r.efeitos, [dizer('O pedido de Bia Ramos foi recusado')]);
-  r = rodar(e, cliqueEm('tirar', PEDRO.id), cliqueEm('tirarMesmo', PEDRO.id), lista([EU], [MARIA, BIA]));
+  r = rodar(e, cliqueEm('tirar', PEDRO.id), cliqueEm('tirarMesmo', PEDRO.id), feito('tirar', PEDRO.id));
   assert.deepEqual(r.efeitos, [dizer('Pedro Nunes saiu da reunião')]);
-  // Com um recusa no meio, nada é dito.
+  // A lista, com o pedido fora ou dentro, não diz o resultado: só o feito diz.
+  r = rodar(e, cliqueEm('recusar', BIA.id), lista([EU, PEDRO], [MARIA]));
+  assert.deepEqual(r.efeitos, []);
+  r = rodar(e, cliqueEm('tirar', PEDRO.id), cliqueEm('tirarMesmo', PEDRO.id), lista([EU], [MARIA, BIA]));
+  assert.deepEqual(r.efeitos, []);
+  // Com um recusa no meio, nada é dito, mesmo com o feito de outra resposta que não é a dela.
   r = rodar(e, cliqueEm('aceitar', MARIA.id), recusa('aceitar', 'jaRespondido'), lista([EU, PEDRO], [BIA]));
   assert.deepEqual(r.efeitos, []);
   r = rodar(e, cliqueEm('aceitar', MARIA.id), recusa('aceitar', 'cheia'), lista([EU, PEDRO], [BIA]));
   assert.deepEqual(r.efeitos, []);
+});
+
+test('o resultado de uma resposta é dito quando o servidor a confirma', () => {
+  const respondeu = passo(colegaComLista(), cliqueEm('aceitar', MARIA.id));
+  assert.deepEqual(respondeu.efeitos, [mandar({ tipo: 'aceitar', pedido: MARIA.id })]);
+  // A lista nova, sem o pedido, não diz nada sozinha: outro colega pode ter respondido antes.
+  const semMaria = passo(respondeu.estado, lista([EU, PEDRO, MARIA_NA_REUNIAO], [BIA]));
+  assert.deepEqual(semMaria.efeitos, []);
+  assert.deepEqual(semMaria.estado.respondendo, [{ de: 'aceitar', id: MARIA.id, nome: 'Maria Lima' }]);
+  // O feito diz, antes ou depois da lista.
+  for (const antes of [respondeu.estado, semMaria.estado]) {
+    const r = passo(antes, feito('aceitar', MARIA.id));
+    assert.deepEqual(r.efeitos, [dizer('O pedido de Maria Lima foi aceito')]);
+    assert.deepEqual(r.estado.respondendo, []);
+  }
+  // A recusa (outro colega respondeu antes) não diz nada, mesmo com a lista já sem o pedido.
+  const perdeu = passo(semMaria.estado, recusa('aceitar', 'jaRespondido'));
+  assert.deepEqual(perdeu.efeitos, []);
+  assert.deepEqual(perdeu.estado.respondendo, []);
+  // O feito de outra resposta, de outro pedido, ou sem resposta esperando, fica de fora.
+  semMudar(respondeu.estado, feito('recusar', MARIA.id));
+  semMudar(respondeu.estado, feito('aceitar', BIA.id));
+  semMudar(colegaComLista(), feito('aceitar', MARIA.id));
+});
+
+test('o segundo clique na mesma resposta não manda de novo', () => {
+  const respondeu = passo(colegaComLista(), cliqueEm('aceitar', MARIA.id)).estado;
+  semMudar(respondeu, cliqueEm('aceitar', MARIA.id));
+  // Outra resposta ao mesmo pedido sai: a pessoa mudou de ideia, e o servidor decide qual vale.
+  const outra = passo(respondeu, cliqueEm('recusar', MARIA.id));
+  assert.deepEqual(outra.efeitos, [mandar({ tipo: 'recusar', pedido: MARIA.id })]);
+});
+
+test('as respostas que esperavam saem com o canal que cai', () => {
+  const r = rodar(colegaComLista(), cliqueEm('aceitar', MARIA.id), canalFechou(1006));
+  assert.deepEqual(r.estado.respondendo, []);
 });
 
 test('o pedido que chega é dito', () => {
@@ -2731,10 +2771,11 @@ test('o que um passo diz sai junto', () => {
   assert.deepEqual(passo(e, lista([EU], [MARIA, BIA])).efeitos, [
     dizer('Maria Lima quer entrar. Bia Ramos quer entrar'),
   ]);
-  // O resultado de uma resposta e um pedido novo: o resultado antes.
+  // O resultado de uma resposta vem no feito, num passo à parte da lista com o pedido novo.
   const ROBERTO = { id: 'a000000000000003', nome: 'Roberto Alves' };
   const r = rodar(colegaComLista(), cliqueEm('aceitar', MARIA.id), lista([EU, PEDRO, MARIA_NA_REUNIAO], [BIA, ROBERTO]));
-  assert.deepEqual(r.efeitos, [dizer('O pedido de Maria Lima foi aceito. Roberto Alves quer entrar')]);
+  assert.deepEqual(r.efeitos, [dizer('Roberto Alves quer entrar')]);
+  assert.deepEqual(passo(r.estado, feito('aceitar', MARIA.id)).efeitos, [dizer('O pedido de Maria Lima foi aceito')]);
 });
 
 test('quem é de fora ignora o que é do colega', () => {

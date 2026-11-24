@@ -320,7 +320,9 @@ test('o leitor de tela', async ({ page }) => {
   await expect(anuncio(page)).toHaveText('Maria Lima quer entrar');
   await botao(page, 'Aceitar').click();
   await expect.poll(() => respostas(canal)).toHaveLength(1);
+  // A lista nova, sem o pedido, não diz o resultado: quem diz é o feito, que o servidor manda.
   mandarLista(canal, { participantes: [carlos, { id: 'b000000000000003', nome: 'Maria Lima', deFora: true }] });
+  canal.mandar({ tipo: 'feito', de: 'aceitar', id: MARIA.quem });
   await expect(anuncio(page)).toHaveText('O pedido de Maria Lima foi aceito');
 });
 

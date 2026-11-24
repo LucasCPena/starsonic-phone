@@ -68,8 +68,8 @@
 // pedir, sem a espera. O voltar depois de uma queda é o de hoje, sem corpo. O passe ou a chave que não vale (o 401
 // passe) leva à entrada de quem é de fora, e a página nunca tenta de novo como colega. Na reunião, o colega recebe a
 // lista inteira (quem está nela e quem espera) a cada mudança, e responde pelo canal: aceitar, recusar, tirar e
-// encerrar. O que deu certo não tem resposta: a lista nova (ou o encerrada) diz, e o leitor de tela ouve o resultado
-// (o efeito dizer). A resposta que não pode sair (o canal no religar) é como a recusa servidorVideo: o aviso curto do
+// encerrar. O que deu certo é confirmado pelo feito (ou pelo encerrada, que é o fim), e o leitor de tela ouve o
+// resultado (o efeito dizer). A resposta que não pode sair (o canal no religar) é como a recusa servidorVideo: o aviso curto do
 // servidor. A lista, o painel e as perguntas seguem a regra da tela da reunião, como o chat. Quem é de fora nunca tem
 // nada disso. A chave do colega e o passe não vão ao console, como a chave de volta.
 //
@@ -308,7 +308,7 @@ export function inicial() {
     peloNavegador: false,
     // Na reunião, só para o colega: a lista ({participantes, pedidos}), o painel Participantes aberto, o id de quem
     // tem a pergunta "Tirar <Nome>?" à vista, a pergunta do Encerrar para todos à vista, a reunião cheia no último
-    // aceitar, e as respostas da página que esperam a lista nova ({de, id, nome}), para o leitor de tela.
+    // aceitar, e as respostas da página que esperam o feito ({de, id, nome}), para o leitor de tela.
     lista: LISTA_VAZIA,
     gente: false,
     tirando: null,
@@ -620,7 +620,8 @@ function canalAbriu(e) {
 // chave, ele volta: na próxima tentativa da volta, ou por trás, com a ligação no ar (o religar).
 function canalFechou(e, codigo) {
   if (e.canal === 'fechado') return nada(e); // o que a página fechou
-  const f = { ...e, canal: 'fechado' };
+  // As respostas que esperavam o feito não o recebem mais por este canal.
+  const f = { ...e, canal: 'fechado', respondendo: e.respondendo.length > 0 ? Object.freeze([]) : e.respondendo };
   if (naEspera(e)) {
     if (codigo === 1011 && e.reabrindo < MAX_REABRIR) {
       return com(f, { reabrindo: e.reabrindo + 1 }, esperar(REABRIR_MS, 'reabrir'));
@@ -692,6 +693,8 @@ function mensagem(e, m, agora) {
       return lista(e, m);
     case 'recusa':
       return recusa(e, m);
+    case 'feito':
+      return feito(e, m);
     case 'pausa':
       return pausaDoCanal(e, m);
     default:
@@ -1030,31 +1033,34 @@ function abrirOChat(e) {
 const colegaNaReuniao = (e) => e.colega !== null && naReuniaoOuEntrando(e);
 // As respostas mandam pelo canal da pessoa, na tela da reunião.
 const podeResponder = (e) => e.colega !== null && podeEscrever(e);
-// Quem a resposta procura na lista: o pedido, no aceitar e no recusar; o participante, no tirar.
-const daResposta = (l, de) => (de === 'tirar' ? l.participantes : l.pedidos);
-
-// A lista inteira chegou (a mensagem participantes): ela toma o lugar da anterior. A resposta da página cujo pedido
-// (ou participante) saiu da lista deu certo, e o leitor de tela ouve o resultado; o pedido que a lista anterior não
-// tinha, ele ouve que chegou. Tudo o que a lista diz sai num dizer só, os textos na ordem: a região que o leitor de
-// tela ouve guarda um texto de cada vez, e dois dizer no mesmo passo deixariam só o último. A pergunta do Tirar de
+// A lista inteira chegou (a mensagem participantes): ela toma o lugar da anterior. Ela não diz o resultado das respostas
+// da página: o pedido que sai dela pode ter sido respondido por outro colega, e quem diz que a resposta deu certo é o
+// feito. O pedido que a lista anterior não tinha, o leitor de tela ouve que chegou. Tudo o que a lista diz sai num
+// dizer só, os textos na ordem: a região que o leitor de tela ouve guarda um texto de cada vez, e dois dizer no mesmo
+// passo deixariam só o último. A pergunta do Tirar de
 // quem já saiu se desfaz, e a reunião cheia do último aceitar sai.
 function lista(e, m) {
   if (!colegaNaReuniao(e)) return nada(e);
   const nova = lerLista(m);
   if (nova === null) return nada(e);
   const ditos = [];
-  const respondendo = e.respondendo.filter((r) => {
-    if (daResposta(nova, r.de).some((x) => x.id === r.id)) return true;
-    ditos.push(ditoDaResposta(r.de, r.nome));
-    return false;
-  });
   for (const p of nova.pedidos) {
     // O que o leitor de tela ouve quando um pedido chega é o título do cartão dele sozinho: "<Nome> quer entrar".
     if (!e.lista.pedidos.some((x) => x.id === p.id)) ditos.push(tituloDoCartao([p]));
   }
   const tirando = nova.participantes.some((x) => x.id === e.tirando) ? e.tirando : null;
   const efeitos = ditos.length > 0 ? [dizer(ditos.join('. '))] : [];
-  return com(e, { lista: nova, respondendo, tirando, cheiaAoAceitar: false }, ...efeitos);
+  return com(e, { lista: nova, tirando, cheiaAoAceitar: false }, ...efeitos);
+}
+
+// O servidor confirma que uma resposta da página deu certo (o feito, com o de e o id): o leitor de tela ouve o
+// resultado, e a resposta não espera mais. O feito sem a resposta esperando (o de outro tipo, de outro pedido, ou de um
+// canal que já caiu) não diz nada.
+function feito(e, { de, id }) {
+  if (!colegaNaReuniao(e)) return nada(e);
+  const r = e.respondendo.find((x) => x.de === de && x.id === id);
+  if (!r) return nada(e);
+  return com(e, { respondendo: e.respondendo.filter((x) => x !== r) }, dizer(ditoDaResposta(de, r.nome)));
 }
 
 // Uma resposta da página não deu certo (o recusa, com o de e o motivo): ela não espera mais a lista, e o resultado
@@ -1085,11 +1091,13 @@ function avisoDoServidor(e, mudancas) {
   );
 }
 
-// Uma resposta sai pelo canal e espera a lista nova: {de, id, nome}. Responder de novo tira a reunião cheia. Sem o
+// Uma resposta sai pelo canal e espera o feito: {de, id, nome}. Responder de novo tira a reunião cheia. A resposta que
+// já espera, com o mesmo de e o mesmo id, não sai de novo (outra resposta ao mesmo pedido sai: o servidor decide). Sem o
 // canal da pessoa (o religar em curso), nada sai: é como a recusa servidorVideo, com o aviso curto do servidor, e a
 // pergunta que a resposta fecharia fecha do mesmo jeito.
 function responder(e, de, id, nome, m, mudancas = {}) {
   if (!podeResponder(e)) return avisoDoServidor(e, mudancas);
+  if (e.respondendo.some((r) => r.de === de && r.id === id)) return com(e, mudancas);
   const respondendo = [...e.respondendo, { de, id, nome }];
   return com(e, { ...mudancas, respondendo, cheiaAoAceitar: false }, mandar(m));
 }

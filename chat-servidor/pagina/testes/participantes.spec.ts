@@ -265,11 +265,15 @@ test('aceitar e recusar no painel', async ({ page }) => {
       { tipo: 'aceitar', pedido: BIA.quem },
       { tipo: 'recusar', pedido: MARIA.quem },
     ]);
-  // A lista nova: a Bia na reunião, e a Maria fora. O leitor de tela ouve os dois resultados.
+  // A lista nova: a Bia na reunião, e a Maria fora.
   mandarLista(canal, { participantes: [...CINCO, { id: 'b000000000000006', nome: 'Bia Ramos', deFora: true }] });
   await expect(pedidos(page)).toHaveCount(0);
   await expect(painel(page).getByRole('heading', { level: 3 })).toHaveText(['NA REUNIÃO · 6']);
-  await expect(anuncio(page)).toHaveText('O pedido de Bia Ramos foi aceito. O pedido de Maria Lima foi recusado');
+  // O leitor de tela ouve cada resultado quando o servidor o confirma (o feito), um de cada vez.
+  canal.mandar({ tipo: 'feito', de: 'aceitar', id: BIA.quem });
+  await expect(anuncio(page)).toHaveText('O pedido de Bia Ramos foi aceito');
+  canal.mandar({ tipo: 'feito', de: 'recusar', id: MARIA.quem });
+  await expect(anuncio(page)).toHaveText('O pedido de Maria Lima foi recusado');
 });
 
 test('o Ver os pedidos', async ({ page }) => {
@@ -313,6 +317,7 @@ test('o Tirar em dois cliques', async ({ page }) => {
   // A lista nova sem o Pedro: a linha sai, o leitor de tela ouve, e o foco fica no painel.
   mandarLista(canal, { participantes: [JULIA, ANA, CARLOS, ROBERTO], pedidos: [pedidoDe(MARIA)] });
   await expect(pessoa(page, 'Pedro Nunes')).toHaveCount(0);
+  canal.mandar({ tipo: 'feito', de: 'tirar', id: PEDRO.id });
   await expect(anuncio(page)).toHaveText('Pedro Nunes saiu da reunião');
   await expect
     .poll(() => page.evaluate(() => document.querySelector('.gente')?.contains(document.activeElement)))
@@ -435,6 +440,7 @@ test('o participante sem nome é Participante', async ({ page }) => {
   await botao(page, 'Tirar').click();
   await expect.poll(() => respostas(canal)).toEqual([{ tipo: 'tirar', participante: SEM_NOME.id }]);
   mandarLista(canal, { participantes: [JULIA], pedidos: [{ id: 'a000000000000008', nome: '' }] });
+  canal.mandar({ tipo: 'feito', de: 'tirar', id: SEM_NOME.id });
   await expect(anuncio(page)).toHaveText('Participante saiu da reunião');
   // O cartão do pedido, com o painel fechado.
   await page.keyboard.press('Escape');
