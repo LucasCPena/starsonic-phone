@@ -1077,10 +1077,13 @@ fechado não vale em dois casos:
 - **sem o evento de permissão do quadro** (`ICoreWebView2Frame3`), o pedido de um quadro chega à janela com a origem do
   app, e a regra da janela deixa passar o microfone e a reprodução automática.
 
-E num WebView2 de hoje (visto no `158`, na prova de 24/11/2026), o microfone de um quadro não chega a nenhum evento do
-app: o pedido de um quadro leva a origem do app, e o WebView2 o responde pela permissão do microfone que o app guarda
-no perfil para essa origem. O que segura o microfone é o `allow` do `iframe` (só a origem do chat) e o bloqueio da
-navegação do quadro; a câmera e a captura de tela continuam passando pela regra.
+E num WebView2 de hoje (visto no `158`, na prova de 24/11/2026), o microfone de um quadro funcionou sem deixar nenhuma
+linha no diagnóstico: a regra do quadro não foi consultada para ele. A causa não foi mostrada, e duas explicações cabem
+nos fatos: o WebView2 responde pela permissão do microfone que o app guarda no perfil para a própria origem (o pedido
+de um quadro leva a origem do app), sem nenhum evento; ou o pedido chega ao evento da janela, cuja regra deixa o
+microfone da origem do app e não escreve linha quando deixa. Nos dois casos, o que limitaria o microfone a um quadro de
+reunião é o `allow` do `iframe` (só a origem do chat) e o bloqueio da navegação do quadro, e isso não foi testado para
+o microfone. A câmera e a captura de tela continuam passando pela regra.
 
 ## O modo iPhone (etapa 2)
 
