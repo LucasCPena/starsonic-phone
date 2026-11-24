@@ -12,7 +12,7 @@
 // que o abre no navegador padrão, em vez de abrir uma janela. O passe, os nomes e as origens não vão ao console. Na
 // pausa, ela cala o som da reunião (o calar) e, na pausa que chega pelo canal, mostra o cartão dela, um diálogo modal.
 import { iniciais, rotuloDoBotao, tituloDoCartao } from './colega.js';
-import { cabecalho, inicial, nomeValido, paraOApp, podeEscrever, quando, transicao } from './estado.js';
+import { cabecalho, inicial, nomeValido, paraOApp, podeEscrever, podeResponder, quando, transicao } from './estado.js';
 import { contagem as numeroDoBotao, dito, escreveu, falha, nomeDoBotao, numaLinha } from './mensagens.js';
 import { criarPainel } from './painel.js';
 import { criarParticipantes } from './participantes.js';
@@ -67,6 +67,7 @@ export function iniciar(raiz, servicos) {
   const botaoParticipantes = um('[data-botao="participantes"]');
   const numeroDeParticipantes = botaoParticipantes.querySelector('.contagem');
   const cartaoDoPedido = um('.pedido');
+  const avisoSemCuidar = um('.sem-cuidar');
   const raizDaGente = um('.gente');
   // A frase do aviso curto do servidor de vídeo que não respondeu é o título do aviso semServidor.
   const servidorNaoRespondeu = um('[data-aviso="semServidor"] h1').textContent;
@@ -431,7 +432,8 @@ export function iniciar(raiz, servicos) {
 
   // O que é só do colega na reunião: o botão Participantes (apertado com o painel aberto, e o número de quem espera), o
   // painel e o cartão do pedido. O cartão sai com o painel aberto, que mostra os pedidos, e embaixo do cartão da
-  // conexão caída.
+  // conexão caída. Quem deixou de cuidar da reunião tem, no lugar dele e com a mesma regra, o aviso; sem o canal, com a
+  // página tentando voltar, o Aceitar e o Recusar ficam desligados (o Ver os pedidos, não: ele só abre o painel).
   function desenharOColega(e) {
     gente.desenhar(e);
     const doColega = e.colega !== null && e.tela === 'reuniao';
@@ -445,7 +447,9 @@ export function iniciar(raiz, servicos) {
     if (n > 0) botaoParticipantes.setAttribute('aria-label', rotuloDoBotao(pedidos));
     else botaoParticipantes.removeAttribute('aria-label');
 
-    cartaoDoPedido.hidden = n === 0 || e.gente || e.reconectando > 0;
+    const atras = e.gente || e.reconectando > 0;
+    avisoSemCuidar.hidden = !(doColega && e.semCuidar) || atras;
+    cartaoDoPedido.hidden = n === 0 || atras;
     if (cartaoDoPedido.hidden) return;
     // Com um pedido, o Recusar e o Aceitar dele; com mais, o Ver os pedidos.
     const so = n === 1;
@@ -454,6 +458,7 @@ export function iniciar(raiz, servicos) {
     cartaoDoPedido.querySelector('.pedido-cheia').hidden = !e.cheiaAoAceitar;
     for (const b of cartaoDoPedido.querySelectorAll('[data-botao="recusar"], [data-botao="aceitar"]')) {
       b.hidden = !so;
+      b.disabled = !podeResponder(e);
       b.dataset.id = pedidos[0].id;
     }
     cartaoDoPedido.querySelector('[data-botao="verPedidos"]').hidden = so;

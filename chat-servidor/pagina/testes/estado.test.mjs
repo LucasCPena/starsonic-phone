@@ -2605,6 +2605,11 @@ test('o Encerrar pergunta', () => {
   assert.equal(s.estado.encerrando, false);
 });
 
+test('o Encerrar para todos não abre a pergunta antes de a lista chegar', () => {
+  semMudar(colegaNaReuniao(), cliqueEm('encerrar'));
+  assert.equal(passo(colegaComLista(), cliqueEm('encerrar')).estado.encerrando, true);
+});
+
 test('a recusa cheia aparece, e a jaRespondido não', () => {
   const e = colegaComLista();
   // A frase aparece no cartão e no painel, e o leitor de tela a ouve.

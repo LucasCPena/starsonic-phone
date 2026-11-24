@@ -249,32 +249,35 @@ test('o servidor de vídeo que não respondeu ao aceitar', async ({ page }) => {
   await expect(aviso(page)).toBeHidden();
 });
 
-test('o Aceitar sem o canal mostra o aviso do servidor', async ({ page }) => {
+test('sem o canal o Aceitar desliga, e a chave recusada mostra o aviso de quem deixou de cuidar', async ({ page }) => {
   const rede = await RedeFalsa.instalar(page, MARCADA);
   const canal = await entrarComoColega(page, rede);
   mandarLista(canal, { pedidos: [pedidoDe(MARIA)] });
   await expect(tituloDoCartao(page)).toHaveText('Maria Lima quer entrar');
-  const semCanal = async () => {
-    await botao(page, 'Aceitar').click();
-    await expect(aviso(page).locator('.aviso-curto-linha')).toHaveText('O servidor de reuniões não respondeu');
-    await expect(anuncio(page)).toHaveText('O servidor de reuniões não respondeu');
-    await page.clock.runFor(5_000);
-    await expect(aviso(page)).toBeHidden();
-  };
-  // O canal cai, e a página tenta religar por trás: o clique não sai, e o aviso do servidor aparece.
+  await expect(botao(page, 'Aceitar')).toBeEnabled();
+  // O canal cai, e a página tenta religar por trás: o Aceitar e o Recusar do cartão ficam desligados, e o aviso curto
+  // do servidor não aparece (a regra do cérebro, de a resposta que não sai mostrar o aviso, fica nos testes dele).
   await canal.fechar(1006);
   await page.clock.runFor(2_000);
   const volta = await rede.canalNumero(2);
   await expect.poll(() => volta.tipos()).toEqual(['voltar']);
-  await semCanal();
-  // A chave recusada no religar: o colega deixa de cuidar da reunião. O canal fecha, o leitor de tela ouve o aviso, e
-  // a lista sai (o cartão do pedido some). O aviso à vista, no lugar do cartão e no painel, é de outra tarefa.
+  await expect(botao(page, 'Aceitar')).toBeDisabled();
+  await expect(botao(page, 'Recusar')).toBeDisabled();
+  await expect(aviso(page)).toBeHidden();
+  // A chave recusada no religar: o colega deixa de cuidar da reunião. O canal fecha, o aviso fica à vista no lugar do
+  // cartão (o título e o texto), o leitor de tela ouve o aviso inteiro, e o cartão do pedido some.
   volta.mandar({ tipo: 'erro', erro: 'invalido' });
   await expect.poll(() => volta.fechadoPelaPagina).not.toBeUndefined();
+  const noLugar = page.getByRole('region', { name: 'Você deixou de cuidar desta reunião' });
+  await expect(noLugar.getByRole('heading', { level: 2, name: 'Você deixou de cuidar desta reunião' })).toBeVisible();
+  await expect(
+    noLugar.getByText('Para aceitar pedidos ou encerrar, saia e abra a reunião de novo pelo app.', { exact: true }),
+  ).toBeVisible();
   await expect(anuncio(page)).toHaveText(
     'Você deixou de cuidar desta reunião. Para aceitar pedidos ou encerrar, saia e abra a reunião de novo pelo app.',
   );
   await expect(cartao(page)).toBeHidden();
+  await expect(aviso(page)).toBeHidden();
   // Nada foi pelos canais.
   expect(respostas(canal)).toEqual([]);
   expect(respostas(volta)).toEqual([]);

@@ -81,7 +81,8 @@
 // semCuidar): o canal dele não volta mais, e sem ele não há como aceitar, recusar, tirar nem encerrar. A lista sai, as
 // perguntas fecham, e o leitor de tela ouve o aviso; a ligação e o painel aberto ficam. O mesmo vale para a chave
 // recusada no religar e para o link que deixou de valer no voltar (a resposta, ou o 404 do abrir). Com o semCuidar, o
-// Encerrar para todos não abre a pergunta. Ele acaba com a saída da tela da reunião, por qualquer fim.
+// Encerrar para todos não abre a pergunta, como antes de a primeira lista chegar. Ele acaba com a saída da tela da
+// reunião, por qualquer fim.
 // Dentro do app, o chat que reiniciou com o colega na reunião e a ligação no ar não é o semCuidar: a página entra de
 // novo sozinha (o reentrando). A lista, as perguntas e o palco saem, sem o aviso; ela pede outro passe ao app, abre
 // com ele, e o canal novo manda o entrar, e não o voltar. Até o aceito, a ligação de antes segue no ar, e o canal novo
@@ -1031,8 +1032,10 @@ function abrirOChat(e) {
 
 // A página do colega na reunião, ou entrando nela: só ela recebe a lista e responde aos pedidos.
 const colegaNaReuniao = (e) => e.colega !== null && naReuniaoOuEntrando(e);
-// As respostas mandam pelo canal da pessoa, na tela da reunião.
-const podeResponder = (e) => e.colega !== null && podeEscrever(e);
+/** O colega pode responder (aceitar, recusar, tirar e encerrar): o canal da pessoa aberto, na tela da reunião. */
+export function podeResponder(estado) {
+  return estado.colega !== null && podeEscrever(estado);
+}
 // A lista inteira chegou (a mensagem participantes): ela toma o lugar da anterior. Ela não diz o resultado das
 // respostas da página: o pedido que sai dela pode ter sido respondido por outro colega, e quem diz que a resposta deu
 // certo é o feito. O pedido que a lista anterior não tinha, o leitor de tela ouve que chegou. Tudo o que a lista diz
@@ -1137,8 +1140,10 @@ function cliqueDoColega(e, botao, id) {
       // O Voltar da pergunta devolve o foco ao Tirar daquela linha.
       return e.tirando !== null ? com(e, { tirando: null }, focar('tirar', e.tirando)) : nada(e);
     case 'encerrar':
-      // Quem deixou de cuidar da reunião não a encerra: a pergunta não abre.
-      return e.encerrando || e.semCuidar ? nada(e) : com(e, { encerrando: true }, focar('naoEncerrar'));
+      // Quem deixou de cuidar da reunião não a encerra, e, antes de a primeira lista chegar, a pergunta não teria
+      // quantas pessoas saem: ela não abre.
+      if (e.encerrando || e.semCuidar || e.lista.participantes.length === 0) return nada(e);
+      return com(e, { encerrando: true }, focar('naoEncerrar'));
     case 'encerrarMesmo':
       // O encerrar não espera resposta na lista: o encerrada é o fim, e a recusa mostra o aviso. Sem o canal, o aviso
       // vem na hora, como o da recusa.

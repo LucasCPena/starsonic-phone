@@ -5,12 +5,13 @@
 // pelo canal falso, como o servidor as manda. Quem é de fora não vê nada disso.
 import { expect, test, type Page } from '@playwright/test';
 import { MARCADA } from '../ligacoes-falsas';
-import { PASSE_QUE_NAO_VALE, RedeFalsa, type Canal } from '../rede-falsa';
+import { CODIGO, COLEGA, PASSE_QUE_NAO_VALE, RedeFalsa, type Canal } from '../rede-falsa';
 import {
   ACEITO,
   BIA,
   MARIA,
   abrirComoColega,
+  abrirNaEntrada,
   area,
   botao,
   caixa,
@@ -20,6 +21,7 @@ import {
   esperadoNoConsole,
   mandarLista,
   subir,
+  titulo,
   vigiar,
   type NaLista,
   type Pessoa,
@@ -559,4 +561,164 @@ test('quem é de fora não vê nada disso', async ({ page }) => {
     );
     expect(dentro).toBe(false);
   }
+});
+
+// ---- Sem o canal: o religar, o colega que deixou de cuidar da reunião e a lista que ainda não chegou. ----
+
+const AVISO =
+  'Você deixou de cuidar desta reunião. Para aceitar pedidos ou encerrar, saia e abra a reunião de novo pelo app.';
+const TITULO_DO_AVISO = 'Você deixou de cuidar desta reunião';
+const TEXTO_DO_AVISO = 'Para aceitar pedidos ou encerrar, saia e abra a reunião de novo pelo app.';
+const PEDIDOS_VOLTAM = 'Os pedidos voltam quando a conexão voltar.';
+const semCanal = (page: Page) => painel(page).getByText(PEDIDOS_VOLTAM, { exact: true });
+
+/** Um 200 do abrir com a partida do servidor do chat (e o colega, quando o abrir o reconhece). */
+const comPartida = (bilhete: string, partida: string, colega?: object) => ({
+  status: 200,
+  corpo: { reuniao: MARCADA, bilhete, partida, ...(colega ? { colega } : {}) },
+});
+
+// O nome do último teste é o de um teste de quem é de fora lá de cima: o describe os separa.
+test.describe('sem o canal', () => {
+  test('sem o canal, os botões do colega desligam, e voltam com ele', async ({ page }) => {
+    const rede = await RedeFalsa.instalar(page, MARCADA);
+    const canal = await entrarComoColega(page, rede);
+    const lista = { participantes: CINCO, pedidos: [pedidoDe(MARIA)] };
+    mandarLista(canal, lista);
+    await oBotao(page).click();
+    await expect(painel(page)).toBeVisible();
+    // A pergunta "Tirar Pedro Nunes?" já aberta: o Tirar dela desliga com os outros, e o Voltar dela não.
+    await botao(page, 'Tirar Pedro Nunes da reunião').click();
+    const doPainel = () => [
+      pedidos(page).getByRole('button', { name: 'Recusar' }),
+      pedidos(page).getByRole('button', { name: 'Aceitar' }),
+      botao(page, 'Tirar Ana Souza da reunião'),
+      pessoa(page, 'Pedro Nunes').getByRole('button', { name: 'Tirar', exact: true }),
+      encerrar(page),
+    ];
+    const doCartao = () => [botao(page, 'Recusar'), botao(page, 'Aceitar')];
+    for (const b of doPainel()) await expect(b).toBeEnabled();
+    await expect(semCanal(page)).toBeHidden();
+
+    // O canal cai, e a página tenta religar por trás.
+    await canal.fechar(1006);
+    for (const b of doPainel()) await expect(b).toBeDisabled();
+    await expect(pessoa(page, 'Pedro Nunes').getByRole('button', { name: 'Voltar' })).toBeEnabled();
+    await expect(semCanal(page)).toBeVisible();
+    // A linha fica acima das listas.
+    expect((await caixa(semCanal(page))).y).toBeLessThan((await caixa(pedidos(page).first())).y);
+    // Com o painel fechado, o cartão do pedido também.
+    await botao(page, 'Fechar os participantes').click();
+    await expect(cartao(page)).toBeVisible();
+    for (const b of doCartao()) await expect(b).toBeDisabled();
+
+    // O canal volta: os botões ligam, e a linha some.
+    await page.clock.runFor(2_000);
+    const volta = await rede.canalNumero(2);
+    await expect.poll(() => volta.tipos()).toEqual(['voltar']);
+    volta.mandar({ tipo: 'voltou', volta: 'volta-2' });
+    mandarLista(volta, lista);
+    for (const b of doCartao()) await expect(b).toBeEnabled();
+    await oBotao(page).click();
+    for (const b of doPainel()) await expect(b).toBeEnabled();
+    await expect(semCanal(page)).toBeHidden();
+    // O Aceitar manda pelo canal novo, e nada foi pelo que caiu.
+    await pedidos(page).getByRole('button', { name: 'Aceitar' }).click();
+    await expect.poll(() => respostas(volta)).toEqual([{ tipo: 'aceitar', pedido: MARIA.quem }]);
+    expect(respostas(canal)).toEqual([]);
+  });
+
+  test('o chat reiniciou, no navegador: o aviso no lugar do cartão e no painel', async ({ page }) => {
+    const rede = await RedeFalsa.instalar(page, MARCADA);
+    rede.responder(
+      comPartida('bilhete-1', 'partida-1', COLEGA),
+      comPartida('bilhete-2', 'partida-1', { nome: COLEGA.nome, valeAte: COLEGA.valeAte }),
+      comPartida('bilhete-3', 'partida-2'),
+    );
+    const canal = await entrarComoColega(page, rede);
+    mandarLista(canal, { participantes: CINCO, pedidos: [pedidoDe(MARIA)] });
+    await expect(cartao(page).locator('.pedido-titulo')).toHaveText('Maria Lima quer entrar');
+    const lugar = await caixa(cartao(page));
+
+    // O canal cai, e o abrir do voltar diz outra partida: o chat reiniciou.
+    await canal.fechar(1006);
+    await page.clock.runFor(2_000);
+    await expect.poll(() => rede.abrires.length).toBe(3);
+    const aviso = page.getByRole('region', { name: TITULO_DO_AVISO });
+    await expect(aviso.getByRole('heading', { level: 2, name: TITULO_DO_AVISO, exact: true })).toBeVisible();
+    await expect(aviso.getByText(TEXTO_DO_AVISO, { exact: true })).toBeVisible();
+    await expect(aviso.getByRole('button')).toHaveCount(0);
+    await expect(cartao(page)).toBeHidden();
+    // No lugar do cartão, com as cores dele.
+    const a = await caixa(aviso);
+    expect([a.x, a.y, a.width]).toEqual([lugar.x, lugar.y, lugar.width]);
+    expect(await estilo(page, '.sem-cuidar', 'border-top-color')).toBe('rgb(0, 194, 203)');
+    expect(await estilo(page, '.sem-cuidar', 'background-color')).toBe('rgb(17, 24, 48)');
+    // O botão Participantes fica, sem número; o leitor de tela ouve o aviso inteiro.
+    await expect(oBotao(page)).toBeVisible();
+    await expect(oBotao(page).locator('.contagem')).toBeHidden();
+    await expect(oBotao(page)).not.toHaveAttribute('aria-label');
+    await expect(anuncio(page)).toHaveText(AVISO);
+    // O canal não volta mais: nenhum canal novo.
+    await page.clock.runFor(5_000);
+    expect(rede.canais).toHaveLength(1);
+
+    // No painel, o aviso inteiro, no lugar das listas e do Encerrar para todos.
+    await oBotao(page).click();
+    await expect(painel(page).getByText(AVISO, { exact: true })).toBeVisible();
+    await expect(painel(page).getByRole('heading', { level: 3 })).toHaveCount(0);
+    await expect(pedidos(page)).toHaveCount(0);
+    await expect(pessoas(page)).toHaveCount(0);
+    await expect(encerrar(page)).toBeHidden();
+    await expect(painel(page).getByText('Todos saem da reunião na hora.', { exact: true })).toBeHidden();
+    await expect(semCanal(page)).toBeHidden();
+    await expect(aviso).toBeHidden();
+
+    // O Sair leva ao fim de sempre, sem o aviso.
+    await botao(page, 'Sair').click();
+    await expect(titulo(page, 'Você saiu da reunião')).toBeVisible();
+    await expect(page.getByRole('region', { name: TITULO_DO_AVISO })).toHaveCount(0);
+    await expect(page.getByText(TEXTO_DO_AVISO, { exact: true })).toBeHidden();
+    await expect(painel(page)).toHaveCount(0);
+  });
+
+  test('antes de a lista chegar, o painel não diz zero', async ({ page }) => {
+    const canal = await colegaNaReuniao(page);
+    await oBotao(page).click();
+    await expect(painel(page)).toBeVisible();
+    await expect(painel(page).getByRole('heading', { level: 3 })).toHaveCount(0);
+    await expect(painel(page).getByText(/NA REUNIÃO/)).toBeHidden();
+    await expect(encerrar(page)).toBeDisabled();
+    await expect(semCanal(page)).toBeHidden();
+    // A lista de uma pessoa: a parte aparece, com o número, e o botão liga.
+    mandarLista(canal, { participantes: [JULIA] });
+    await expect(painel(page).getByRole('heading', { level: 3 })).toHaveText(['NA REUNIÃO · 1']);
+    await expect(encerrar(page)).toBeEnabled();
+  });
+
+  test('quem é de fora não vê nada disso', async ({ page }) => {
+    // Quem é de fora na reunião, como no naReuniao, com a partida no abrir do carregar.
+    const rede = await RedeFalsa.instalar(page, MARCADA);
+    rede.responder(comPartida('bilhete-1', 'partida-1'));
+    await abrirNaEntrada(page, `/r/${CODIGO}`);
+    rede.aoPedir = (c) => c.mandar(ACEITO);
+    await page.getByLabel('Seu nome').fill('Maria Lima');
+    await botao(page, 'Pedir para entrar').click();
+    await subir(page, () => controles(page).isVisible());
+    const canal = await rede.canalNumero(1);
+    // O canal cai, e o abrir do voltar diz outra partida.
+    const abertos = rede.abrires.length;
+    rede.responder(comPartida('bilhete-9', 'partida-2'));
+    await canal.fechar(1006);
+    await page.clock.runFor(2_000);
+    await expect.poll(() => rede.abrires.length).toBe(abertos + 1);
+    await page.clock.runFor(5_000);
+    await expect(controles(page)).toBeVisible();
+    // Os textos estão na página escondidos, para todos: para quem é de fora, nenhum aparece, nem para o leitor de tela.
+    await expect(page.getByRole('region', { name: TITULO_DO_AVISO })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: TITULO_DO_AVISO })).toHaveCount(0);
+    for (const t of [TEXTO_DO_AVISO, PEDIDOS_VOLTAM]) await expect(page.getByText(t, { exact: true })).toBeHidden();
+    await expect(page.locator('.gente-sem-cuidar')).toBeHidden();
+    await expect(anuncio(page)).not.toHaveText(AVISO);
+  });
 });

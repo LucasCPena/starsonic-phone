@@ -1667,9 +1667,11 @@ button.quadro:focus-visible .pilula {
 }
 
 /* ---- O cartão do pedido (só do colega): 400 px, ou a largura da área dos quadros menos 32 px, a 28 px do alto e a
-   40 px da direita dela. Com a janela estreita ou o dedo (a regra do painel do chat), a largura dela menos 24 px. ---- */
+   40 px da direita dela. Com a janela estreita ou o dedo (a regra do painel do chat), a largura dela menos 24 px. O
+   aviso de quem deixou de cuidar da reunião fica no lugar dele, com as mesmas medidas e cores, e sem botões. ---- */
 
-.pedido {
+.pedido,
+.sem-cuidar {
   position: absolute;
   z-index: 3;
   top: 28px;
@@ -1687,7 +1689,8 @@ button.quadro:focus-visible .pilula {
 }
 
 @media not all and (min-width: 900px) and (pointer: fine) {
-  .pedido {
+  .pedido,
+  .sem-cuidar {
     top: 12px;
     right: 12px;
     width: calc(100% - 24px);
@@ -1701,7 +1704,8 @@ button.quadro:focus-visible .pilula {
 }
 
 /* O título vem do nome que a pessoa digitou: uma palavra comprida quebra em qualquer lugar. */
-.pedido-titulo {
+.pedido-titulo,
+.sem-cuidar-titulo {
   font-size: 16px;
   line-height: 1.3;
   font-weight: 800;
@@ -1709,12 +1713,14 @@ button.quadro:focus-visible .pilula {
 }
 
 .pedido-texto,
-.pedido-cheia {
+.pedido-cheia,
+.sem-cuidar-texto {
   font-size: 13px;
   line-height: 1.45;
 }
 
-.pedido-texto {
+.pedido-texto,
+.sem-cuidar-texto {
   color: var(--topo-rotulo);
 }
 
@@ -1753,6 +1759,11 @@ button.quadro:focus-visible .pilula {
 .pedido-aceitar {
   background: var(--ciano);
   color: var(--sobre-ciano);
+}
+
+/* O aviso tem só os textos: o espaço entre eles é o do cartão. */
+.sem-cuidar {
+  gap: 4px;
 }
 
 /* ---- O chat da reunião: o painel (painel.js). Ao lado dos quadros no PC (data-modo="lado"), e cobrindo a tela onde o
@@ -2007,7 +2018,8 @@ button.quadro:focus-visible .pilula {
   border-top: 1px solid var(--reuniao-borda);
 }
 
-.painel-sem-canal {
+.painel-sem-canal,
+.gente-sem-canal {
   font-size: 12.5px;
   color: var(--topo-rotulo);
 }
@@ -2225,6 +2237,13 @@ button.quadro:focus-visible .pilula {
   color: var(--branco);
 }
 
+/* O aviso de quem deixou de cuidar, no lugar das listas, com a letra do texto do cartão do pedido. */
+.gente-sem-cuidar {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--topo-rotulo);
+}
+
 /* A reunião cheia, embaixo de quem espera, com a cor do cartão do pedido. */
 .gente-cheia {
   font-size: 13px;
@@ -2335,6 +2354,21 @@ button.quadro:focus-visible .pilula {
   .gente-tirar:hover {
     background: var(--reuniao-botao);
   }
+}
+
+/* Sem o canal, as respostas do colega ficam desligadas, apagadas como as do chat, e sem o realce do mouse. */
+.pedido-botao:disabled,
+.gente-botao:disabled,
+.gente-tirar:disabled,
+.gente-encerrar:disabled {
+  opacity: 0.5;
+  filter: none;
+  cursor: default;
+}
+
+.gente-tirar:disabled,
+.gente-encerrar:disabled {
+  background: transparent;
 }
 
 .gente-pe-frase {

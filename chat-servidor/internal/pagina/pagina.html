@@ -439,6 +439,12 @@ Participantes. O título entra pelo pagina.js, como texto. -->
 <button type="button" class="pedido-botao pedido-aceitar" data-botao="verPedidos" hidden>Ver os pedidos</button>
 </div>
 </section>
+<!-- O aviso do colega que deixou de cuidar da reunião, no lugar do cartão do pedido e com as medidas dele, sem botões:
+o canal dele não volta mais. São as duas frases do aviso aprovado (o AVISO_SEM_CUIDAR do colega.js). -->
+<section class="sem-cuidar" aria-labelledby="sem-cuidar-titulo" hidden>
+<h2 id="sem-cuidar-titulo" class="sem-cuidar-titulo">Você deixou de cuidar desta reunião</h2>
+<p class="sem-cuidar-texto">Para aceitar pedidos ou encerrar, saia e abra a reunião de novo pelo app.</p>
+</section>
 <p class="gire" hidden>
 <svg class="icone icone-16" aria-hidden="true"><use href="#i-girar"></use></svg>
 <span>Gire o celular para ver a tela maior.</span>
@@ -502,7 +508,9 @@ ficam num <div>, e não num <form>: a CSP da página tem form-action 'none'. -->
 </aside>
 <!-- O painel Participantes, só do colega, no lugar do chat e com a mesma regra (o data-modo, que o participantes.js
 põe): quem espera para entrar, quem está na reunião e o Encerrar para todos. As linhas de cada parte nascem no
-participantes.js, com os nomes como texto; sem ninguém esperando, a primeira parte fica escondida. -->
+participantes.js, com os nomes como texto; sem ninguém esperando, a primeira parte fica escondida, e, antes da
+primeira lista, a segunda também. Sem o canal, a linha do alto diz que os pedidos voltam; e, para quem deixou de cuidar
+da reunião, o aviso inteiro (que o participantes.js põe, do colega.js) fica no lugar das listas e do pé. -->
 <aside class="gente" aria-label="Participantes" hidden>
 <div class="painel-alto">
 <div class="painel-titulos">
@@ -514,12 +522,14 @@ participantes.js, com os nomes como texto; sem ninguém esperando, a primeira pa
 </button>
 </div>
 <div class="gente-lista">
+<p class="gente-sem-canal" hidden>Os pedidos voltam quando a conexão voltar.</p>
+<p class="gente-sem-cuidar" hidden></p>
 <section class="gente-parte gente-esperando" aria-labelledby="gente-esperando" hidden>
 <h3 id="gente-esperando" class="gente-rotulo"></h3>
 <ul class="gente-pedidos"></ul>
 <p class="gente-cheia" hidden>A reunião está cheia: ninguém mais entra agora.</p>
 </section>
-<section class="gente-parte" aria-labelledby="gente-dentro">
+<section class="gente-parte gente-dentro" aria-labelledby="gente-dentro" hidden>
 <h3 id="gente-dentro" class="gente-rotulo"></h3>
 <ul class="gente-pessoas"></ul>
 </section>

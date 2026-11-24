@@ -4,7 +4,13 @@
 // quadros no PC, e cobrindo a tela onde o ponteiro é o dedo ou a janela é estreita. Os cliques nos botões (o data-botao,
 // com o id da linha no data-id) chegam ao cérebro pelo ouvinte do pagina.js; o aoClique leva o que não é um clique (o
 // Esc e o Voltar do aparelho). O nome de uma pessoa entra sempre como texto, e nada daqui vai ao console.
-import { fraseDoEncerrar, nomeNaLista } from './colega.js';
+//
+// Sem o canal, com a página tentando voltar (o religar, ou a entrada de novo dentro do app), as respostas ficam
+// desligadas, e a linha do alto diz que os pedidos voltam. Quem deixou de cuidar da reunião vê o aviso no lugar das
+// listas e do pé. Antes de a primeira lista chegar, a parte de quem está na reunião não diz zero: ela fica escondida, e
+// o Encerrar para todos, desligado.
+import { AVISO_SEM_CUIDAR, fraseDoEncerrar, nomeNaLista } from './colega.js';
+import { podeResponder } from './estado.js';
 
 /** O painel ao lado é do PC: a janela de 900 px ou mais, com ponteiro de mouse (a regra do painel do chat). */
 const AO_LADO = '(min-width: 900px) and (pointer: fine)';
@@ -28,7 +34,11 @@ export function criarParticipantes({ raiz, fundo, relogio, aoClique }) {
   const rotuloDeQuemEspera = um('#gente-esperando');
   const listaDePedidos = um('.gente-pedidos');
   const cheia = um('.gente-cheia');
+  const semCanal = um('.gente-sem-canal');
+  const semCuidar = um('.gente-sem-cuidar');
+  const dentro = um('.gente-dentro');
   const rotuloDeQuemEsta = um('#gente-dentro');
+  const pe = um('.gente-pe');
   const listaDePessoas = um('.gente-pessoas');
   const encerrar = um('[data-botao="encerrar"]');
   const dialogo = raiz.ownerDocument.getElementById(encerrar.getAttribute('aria-controls'));
@@ -36,7 +46,7 @@ export function criarParticipantes({ raiz, fundo, relogio, aoClique }) {
   const aoLado = window.matchMedia(AO_LADO);
 
   let aberto = false;
-  let desenhada = null; // a lista e a pergunta do último desenho: {lista, tirando}
+  let desenhada = null; // a lista, a pergunta e o canal do último desenho: {lista, tirando, desligadas}
   const linhas = { pedidos: new Map(), pessoas: new Map() }; // o id → {li, chave}
   let ids = 0; // o número dos ids dos nomes, para o aria-describedby
 
@@ -101,6 +111,9 @@ export function criarParticipantes({ raiz, fundo, relogio, aoClique }) {
     arrumar();
     if (aberto && raiz.dataset.modo === 'cobre' && !raiz.contains(document.activeElement)) titulo.focus();
   });
+
+  // O aviso inteiro, letra por letra, é o que o leitor de tela também ouve: ele vem do colega.js, sempre como texto.
+  semCuidar.textContent = AVISO_SEM_CUIDAR;
 
   // ---- As linhas. ----
 
@@ -186,13 +199,22 @@ export function criarParticipantes({ raiz, fundo, relogio, aoClique }) {
     }
   }
 
-  function desenharAsListas(lista, tirando) {
-    if (desenhada?.lista === lista && desenhada.tirando === tirando) return;
-    desenhada = { lista, tirando };
+  // As respostas de cada linha (o Aceitar, o Recusar, o Tirar e o Tirar da pergunta) ficam desligadas sem o canal. O
+  // Voltar da pergunta não é uma resposta: fica ligado.
+  function desligarAsRespostas(desligadas) {
+    for (const b of raiz.querySelectorAll('.gente-lista button[data-botao]')) {
+      if (b.dataset.botao !== 'naoTirar') b.disabled = desligadas;
+    }
+  }
+
+  function desenharAsListas(lista, tirando, desligadas) {
+    if (desenhada?.lista === lista && desenhada.tirando === tirando && desenhada.desligadas === desligadas) return;
+    desenhada = { lista, tirando, desligadas };
     const { pedidos, participantes } = lista;
     esperando.hidden = pedidos.length === 0;
     rotuloDeQuemEspera.textContent = `ESPERANDO PARA ENTRAR · ${pedidos.length}`;
     acertarAsLinhas(listaDePedidos, linhas.pedidos, pedidos, (p) => p.nome, linhaDoPedido);
+    dentro.hidden = participantes.length === 0;
     rotuloDeQuemEsta.textContent = `NA REUNIÃO · ${participantes.length}`;
     acertarAsLinhas(
       listaDePessoas,
@@ -201,6 +223,7 @@ export function criarParticipantes({ raiz, fundo, relogio, aoClique }) {
       (p) => JSON.stringify([p.nome, p.voce, p.deFora, p.tela, p.id === tirando]),
       (li, p) => linhaDaPessoa(li, p, p.id === tirando),
     );
+    desligarAsRespostas(desligadas);
   }
 
   // ---- O Encerrar para todos. ----
@@ -257,7 +280,13 @@ export function criarParticipantes({ raiz, fundo, relogio, aoClique }) {
       aberto = abrir;
       arrumar();
     }
-    desenharAsListas(e.lista, e.tirando);
+    // Sem o canal, com a página tentando voltar; quem deixou de cuidar tem o aviso, e não a linha.
+    const desligadas = doColega && !podeResponder(e);
+    semCanal.hidden = !desligadas || e.semCuidar;
+    semCuidar.hidden = !(doColega && e.semCuidar);
+    pe.hidden = doColega && e.semCuidar;
+    encerrar.disabled = desligadas || e.lista.participantes.length === 0;
+    desenharAsListas(e.lista, e.tirando, desligadas);
     cheia.hidden = !e.cheiaAoAceitar;
     desenharOEncerrar(e, doColega && e.encerrando);
     if (tinhaOFoco && aberto && !raiz.contains(document.activeElement) && !dialogo.open) focar();
