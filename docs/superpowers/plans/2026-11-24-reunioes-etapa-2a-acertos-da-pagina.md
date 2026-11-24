@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-23-starsonic-phone-reunioes-etapa-2a-design.md`: o item 3 da seção 12.1 com a nota de 24/11 (aprovada pelo responsável às 08:24), a seção 7.5 com a nota de 24/11, as seções 7.3, 7.8 e 7.9, e a seção 17. O protocolo é o `docs/chat-protocolo.md`, seções 9 a 12. A lista de onde este plano saiu é a seção 4 do `reunioes-etapa-2-entrega-2-entradas.md` (no Project; a cópia de trabalho fica em `work/projeto/`, fora do git).
 
-**O método:** o mesmo da entrega 1 e da prova (um agente novo por tarefa, um revisor de fora a cada uma, e a revisão geral no fim), se o responsável confirmar este plano.
+**O método:** o mesmo da entrega 1 e da prova: um agente novo constrói cada tarefa, e outro a revisa antes da próxima; no fim, uma revisão de tudo (superpowers:subagent-driven-development). O responsável aprovou o plano, as quatro escolhas que aparecem na tela e este método em 24/11/2026, às 14:47 ("segue").
 
 ## Global Constraints
 
@@ -387,7 +387,7 @@ test('o deixou de cuidar acaba com a saída da reunião', () => {
 - **O `abriu` desse abrir:** com o colega reconhecido (o `reconhecido`), a chave do colega nova, a partida nova e o canal abrindo; sem ele, o `deixarDeCuidar`.
 - **O canal que abre** manda o `entrar`, e não o `voltar`. O canal fica `'voltando'` (ainda não é o da pessoa: nem o aviso da câmera nem o chat saem por ele), e o `reentrando`, `'entrando'`.
 - **O `aceito`** nesse canal: o canal passa a `'aberto'`, o acesso e a chave de volta são os novos, o `reentrando` volta a `null`, e a ligação é trocada **pela volta de hoje**: as duas ligações descem (o `desligarAsDuas`, que também para a tela compartilhada), o `reconectando` vai a 1 e a espera de 2 s (`'reconectar:<vez>'`) leva à senha nova e ao `ligar`. O microfone e a câmera ficam como estavam; a tela compartilhada não volta sozinha. A senha que veio no `aceito` não é usada.
-- **Tudo o que falha antes do `aceito` é o `deixarDeCuidar`,** com a ligação de antes no ar: o passe que não chega em 15 s; o abrir que falha (a rede, o `429`, o `404`); o segundo `401` seguido (o primeiro pede outro passe, com o `passeRecusado`, como na entrada); o canal que fecha; o prazo de 10 s; e o `cheia`, o `servidorCheio`, o `semServidor`, o `linkInvalido` e o `erro` em resposta ao `entrar`. O canal aberto para a entrada de novo fecha antes do aviso.
+- **Tudo o que falha antes do `aceito` é o `deixarDeCuidar`,** que passa a zerar também o `reentrando`, o `esperandoPasse` e o `passe`, com a ligação de antes no ar: o passe que não chega em 15 s; o abrir que falha (a rede, o `429`, o `404`); o segundo `401` seguido (o primeiro pede outro passe, com o `passeRecusado`, como na entrada); o canal que fecha; o prazo de 10 s; e o `cheia`, o `servidorCheio`, o `semServidor`, o `linkInvalido` e o `erro` em resposta ao `entrar`. O canal aberto para a entrada de novo fecha antes do aviso.
 - **A pessoa que sai, ou a ligação que cai, no meio disso:** o `reentrando` volta a `null` e o passe esperado é esquecido (o `esperandoPasse` falso), para o prazo dele não levar ninguém à entrada de quem é de fora. A regra fica no `soNaReuniao`.
 
 - [ ] **Step 1: Os testes, que falham.**
