@@ -1,7 +1,7 @@
 # Starsonic Phone — reuniões com link — etapa 2a: as reuniões no app do PC — especificação de design
 
 - **Data:** 23/11/2026
-- **Status:** aprovada pelo responsável em 23/11/2026, às 10:54 ("segue"), depois de lida por um revisor de fora, que voltou com cinco perguntas, respondidas aqui (as escolhas 16 a 20 da seção 15). O caminho e as telas tinham sido aprovados antes, no chat (as decisões abaixo). **A entrega 1 (o servidor do chat e a página, seção 13) foi construída em 23/11,** na branch `reunioes-etapa-2`, para a `0.2.0-rc.7` do chat (quem publica é o responsável). O plano é o `docs/superpowers/plans/2026-11-23-reunioes-etapa-2a-servidor-e-pagina.md`. O que a construção decidiu e esta spec não dizia está nas notas datadas das seções 7.2, 7.5, 7.9 e 14, e na seção 17. A entrega 2 (o app `0.5.0`) tem um plano próprio, depois.
+- **Status:** aprovada pelo responsável em 23/11/2026, às 10:54 ("segue"), depois de lida por um revisor de fora, que voltou com cinco perguntas, respondidas aqui (as escolhas 16 a 20 da seção 15). O caminho e as telas tinham sido aprovados antes, no chat (as decisões abaixo). **A entrega 1 (o servidor do chat e a página, seção 13) foi construída em 23/11,** na branch `reunioes-etapa-2`, para a `0.2.0-rc.7` do chat (quem publica é o responsável). O plano é o `docs/superpowers/plans/2026-11-23-reunioes-etapa-2a-servidor-e-pagina.md`. O que a construção decidiu e esta spec não dizia está nas notas datadas das seções 7.2, 7.5, 7.9 e 14, e na seção 17. A entrega 2 (o app `0.5.0`) tem um plano próprio, depois. **Em 24/11/2026, às 08:24, o responsável respondeu "pode seguir" à entrega 1:** a branch fica como está, e a entrega 2 segue nela; as quatro escolhas que lhe foram mostradas (os itens 1, 2, 3 e 6 da seção 17) ficam confirmadas; e o que a página faz quando o chat reinicia com um colega na reunião fica como a nota de 24/11 do item 3 da seção 12.1 diz.
 - **Telas:** o quadro "Starsonic Phone — reuniões", telas 1 a 14, aprovado em 23/11, às 10:13. As telas 6 a 10 são da página da reunião; as outras, do app.
 - **Versões alvo:**
   - o app do Windows `0.5.0`;
@@ -183,7 +183,7 @@ O responsável escolheu o 1, e pediu que o navegador também funcione para o col
 - **A chave do colega** deixa a página abrir de novo sem outro passe (o segundo abrir, o "Entrar de novo", uma volta que a chave de volta não resolve):
   - 32 bytes aleatórios, só na memória do servidor e só na memória da página;
   - vale 12 horas, e só enquanto a reunião vale, a pessoa está ativa na mesma empresa e o computador continua ligado ao chat. Cada uso confere tudo de novo;
-  - depois de o servidor do chat reiniciar, ela não vale mais: a página pede outro passe ao app, ou, no navegador, diz para abrir de novo pelo app.
+  - depois de o servidor do chat reiniciar, ela não vale mais: a página pede outro passe ao app, ou, no navegador, diz para abrir de novo pelo app (o item 3 da seção 12.1, com a nota de 24/11, diz o que acontece com quem já está na reunião).
 - **O bilhete de um abrir com o passe ou a chave** abre um **canal de colega**, preso à reunião, à pessoa e ao computador do passe.
 
 ### 7.3 O canal do colega
@@ -241,6 +241,7 @@ Mensagens `postMessage`, sempre um objeto com `"starsonic": 1` e o `tipo`. A pá
 - **Sem o `pronta` em 15 s,** o app mostra "A reunião não abriu", com "Tentar de novo" e "Fechar".
 - **Sem o `fim` em 2 s depois do `sair`,** o app fecha a vista assim mesmo.
 - **Os aparelhos:** a página procura cada nome entre os aparelhos do navegador. Sem achar, usa o padrão do sistema.
+- **Nota de 24/11 (antes do plano da entrega 2): um nome de aparelho que não serve nunca joga o passe fora.** A entrega 1 construiu a regra mais dura: com os `aparelhos` faltando, ou com um nome que não é texto ou que passa de 200 caracteres, a página ignora a mensagem inteira, também o `passe`, e 15 s depois a pessoa vira "de fora" por causa do nome de um aparelho. Passa a valer, no `passe` e no `aparelhos`: um nome que não serve conta como um nome que falta (o padrão do sistema para aquele aparelho), e os `aparelhos` que faltam ou não são um objeto contam como `{}`. O `passe` só é recusado pelo que é dele (o formato do passe). O app continua mandando sempre os `aparelhos`. É uma escolha de quem constrói, e o plano da entrega 2 a leva para a página antes de existir código do app.
 - **Nota de 23/11 (a construção): o app repete a pausa e o bloqueio quando a pessoa entra.** A página só obedece ao `pausar` e ao `bloqueio` com a pessoa na reunião (a `fase` `naReuniao`) ou, no caso do `pausar`, entrando nela; fora disso, eles não fazem nada, e nada fica guardado. Por isso o app manda de novo o `pausar` (enquanto a pausa da 7.8 dura) e o `bloqueio` com o `ligado` verdadeiro (enquanto a sessão do Windows está bloqueada) a cada `estado` em que a `fase` passa a `naReuniao`. Sem isso, uma ligação ou um bloqueio que começou antes do "Entrar" deixaria a reunião ouvindo e vendo a pessoa. No navegador vale o mesmo (7.9): o app manda o `pausada` verdadeiro assim que um evento da seção 11 do protocolo mostra que o computador entrou numa reunião pelo navegador com uma pausa em curso, sem esperar a repetição dos 10 s. O plano da entrega 2 leva esta regra, com um teste.
 
 ### 7.6 A interface do app
@@ -376,6 +377,10 @@ O leitor de tela ouve o pedido que chega ("<Nome> quer entrar") e o resultado de
 1. **O servidor do chat antigo com o app novo:** a aba funciona (marcar, listar, cancelar), mas o passe não existe, e o servidor responde `404`. O app lê a lista de novo: se a reunião continua nela, diz "O servidor do chat precisa ser atualizado…"; se sumiu, "Este link não vale mais".
 2. **O passe vence antes de a página carregar** (um PC lento): a página recebe `401 passe` e diz `pronta` de novo, uma vez; o app manda outro passe.
 3. **O servidor do chat reinicia com a pessoa na reunião:** vale o que o protocolo já diz (seção 9). A chave do colega deixa de valer: no app, a página pede outro passe sozinha; no navegador, ela diz para abrir de novo pelo app.
+   - **Nota de 24/11 (aprovada pelo responsável às 08:24): o que acontece com o colega que já está na reunião.** A reunião continua no servidor de vídeo: todos continuam se ouvindo e se vendo. Mas o chat esqueceu quem está nela, e as chaves dos colegas deixaram de valer. Na entrega 1, a página do colega ficava com a lista parada, e cada clique respondia "O servidor de reuniões não respondeu": ninguém lhe dizia que era preciso sair e entrar de novo, e quem pedia para entrar esperava sem ninguém poder aceitar. Passa a valer:
+     - **Dentro do app, a página entra de novo sozinha:** ela pede outro passe ao app (o `pronta`), abre um canal de colega novo, entra como um participante novo e troca a ligação com o servidor de vídeo pela dele. Para os outros, a pessoa some e volta em alguns segundos. O app não pergunta nada.
+     - **No navegador, não há app para mandar outro passe.** A pessoa continua na reunião, mas deixa de cuidar dela: a página limpa a lista e os pedidos, que ela não tem mais como manter, e mostra o aviso "Você deixou de cuidar desta reunião. Para aceitar pedidos ou encerrar, saia e abra a reunião de novo pelo app."
+     - **Fica com o plano da entrega 2,** que escreve os passos e os testes: como a página percebe que o chat reiniciou (e não que a rede falhou); os botões do colega desligados sempre que a página não pode responder; a tentativa de voltar mais devagar quando a falha é da rede; e o limite de tentativas do servidor logo depois de um reinício, quando um escritório inteiro entra de novo pelo mesmo endereço. São escolhas de quem constrói: a volta com o microfone e a câmera como estavam, e a tela compartilhada que não volta sozinha (como na pausa).
 4. **O chat cai com a pessoa na reunião:** a reunião continua no servidor de vídeo, e a página volta sozinha pelo `voltar`, como hoje.
 5. **A página trava ou não carrega dentro do app:** "A reunião não abriu", e o "Telefone" continua funcionando.
 6. **A câmera ocupada por outro programa:** a página entra só com o que tem, como hoje.
@@ -472,7 +477,9 @@ O responsável aprovou as telas e a ordem. Estas escolhas são do desenho, e ele
 
 ## 17. O que a construção da entrega 1 decidiu (23/11)
 
-O que muda o que a pessoa vê ou ouve e esta spec não dizia. São escolhas de quem construiu, para o responsável confirmar ao ler:
+O que muda o que a pessoa vê ou ouve e esta spec não dizia. São escolhas de quem construiu, para o responsável confirmar ao ler.
+
+**Em 24/11/2026, às 08:24, o responsável respondeu "pode seguir"** à entrega 1, que lhe mostrou, com as telas construídas, os itens 1, 2, 3 e 6: esses quatro ficam confirmados. Os itens 4 e 5 são regras entre o app, a página e o servidor: seguem como escolhas da construção, e o plano da entrega 2 traz cada uma com um teste.
 
 1. **O servidor de vídeo que falha numa resposta.** O `recusa` com o `servidorVideo` (um "Aceitar", um "Tirar" ou um "Encerrar para todos" que o servidor de vídeo não deixou acontecer) mostra o aviso curto "O servidor de reuniões não respondeu" (o texto que a página já tinha), por 5 s, e o diz ao leitor de tela. Sem isso, o clique não faria nada à vista. Os outros motivos não mostram nada, porque a lista seguinte diz a verdade (outro colega respondeu antes, ou a pessoa já saiu), menos o `cheia`, que mostra a frase dele.
 2. **O cartão com dois pedidos ou mais** mostra "<Nome> e mais N querem entrar" e o "Ver os pedidos", sem a frase "É de fora da empresa, e espera até um colega responder.". A frase fala de uma pessoa só.
