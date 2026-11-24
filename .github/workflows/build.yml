@@ -408,6 +408,44 @@ jobs:
           python -m pip install --disable-pip-version-check --no-input -r tests\smoke\requirements-windows.txt
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+      # O WebView2 da máquina do GitHub é de anos atrás (o 131, do fim de 2024), e o dos PCs de quem usa o app é o de
+      # hoje: antes da fumaça, o mesmo bootstrapper Evergreen da Microsoft que o instalador do app roda num PC sem o
+      # WebView2 (o do deps.lock, já em work\webview2-bootstrapper desde o "Gerar o instalador") atualiza o da máquina.
+      # O passo mostra a versão de antes e a de depois, e reprova se a de depois for mais velha que o SDK com que o app é
+      # compilado (o código de saída do bootstrapper só aparece: numa máquina já atualizada ele pode não ser 0). Assim,
+      # um WebView2 novo da Microsoft pode deixar a fumaça vermelha sozinho: é o alarme que se quer. A fumaça não espera
+      # por este passo: se ele falhar, ela roda no WebView2 da máquina, e o resultado dela diz qual versão rodou.
+      - name: Atualizar o WebView2 da máquina de teste
+        id: webview2-atual
+        if: ${{ !cancelled() && steps.installer.outcome == 'success' }}
+        timeout-minutes: 10
+        run: |
+          # O "pv" da chave do cliente do WebView2, nos lugares e na ordem do FindWebView2 do installer\StarsonicPhone.nsi.
+          $client = 'Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          function Get-WebView2Version {
+            foreach ($key in "HKLM:\SOFTWARE\WOW6432Node\$client", "HKCU:\Software\$client", "HKLM:\SOFTWARE\$client") {
+              $pv = (Get-ItemProperty -LiteralPath $key -Name pv -ErrorAction SilentlyContinue).pv
+              if ($pv -and $pv -ne '0.0.0.0') { return $pv }
+            }
+            return ''
+          }
+          Write-Host "WebView2 antes: $(Get-WebView2Version)"
+          $setup = Join-Path (Get-Location) 'work\webview2-bootstrapper\MicrosoftEdgeWebview2Setup.exe'
+          $process = Start-Process -FilePath $setup -ArgumentList '/silent', '/install' -PassThru
+          $null = $process.Handle   # sem o handle, o ExitCode do Start-Process pode vir vazio
+          $process.WaitForExit()
+          Write-Host "bootstrapper: codigo $($process.ExitCode)"
+          $after = Get-WebView2Version
+          Write-Host "WebView2 depois: $after"
+          # O terceiro numero e o build: o SDK 1.0.4258.31 pede um runtime x.0.4258.y ou mais novo (o 131 e o 2903).
+          $sdk = (Get-Content -Raw -Path build\deps.lock | ConvertFrom-Json).webview2.version
+          $needed = [int]($sdk.Split('.')[2])
+          $parts = $after.Split('.')
+          if ($parts.Count -lt 4 -or [int]($parts[2]) -lt $needed) {
+            Write-Host "::error::o WebView2 da maquina ($after) e mais velho que o SDK do app ($sdk)"
+            exit 1
+          }
+
       - name: Baixar o servidor do chat da fumaça
         id: chat-fumaca
         if: ${{ !cancelled() && steps.installer-teste.outcome == 'success' }}

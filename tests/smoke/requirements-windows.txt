@@ -1,5 +1,6 @@
 # O Playwright para Python da fumaça do app novo no Windows (tests/smoke/windows_smoke.py): só o cliente do CDP,
 # sem navegador próprio (o WebView2 do app é o navegador). Versões fixas.
+# O ensaio do job ui abre o Chromium do Playwright do Node: esta versão tem de pedir o mesmo build (1.56.0 e 1.56.1).
 playwright==1.56.0
 greenlet==3.2.4
 pyee==13.0.0
