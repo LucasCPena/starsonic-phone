@@ -3,7 +3,9 @@ pixels lógicos, a leitura do registro de ligações e a porta de controle do re
 import pathlib
 import socket
 import sys
+import types
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests" / "smoke"))
@@ -47,6 +49,38 @@ class BrowserArgumentsTest(unittest.TestCase):
         self.assertEqual(environment["STARSONIC_TESTE_DNS_MS"], "2000")
         self.assertIn("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", extra)
 
+
+
+class PolicyWriteTest(unittest.TestCase):
+    def test_a_write_that_fails_midway_is_still_undone(self):
+        # Um winreg de mentira (nenhum registro é tocado): a escrita na segunda vista falha.
+        calls = []
+
+        class Key:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+        def create_key(_root, _path, _reserved, access):
+            calls.append(access)
+            if len(calls) == 2:
+                raise PermissionError("acesso negado")
+            return Key()
+
+        fake = types.SimpleNamespace(HKEY_LOCAL_MACHINE=1, KEY_SET_VALUE=2, REG_SZ=1, CreateKeyEx=create_key,
+                                     SetValueEx=lambda *_: None)
+        with mock.patch.dict(sys.modules, {"winreg": fake}), \
+                mock.patch.object(windows_smoke, "_policy_views", return_value={"64": 256, "32": 512}), \
+                mock.patch.object(windows_smoke, "_policy_state", return_value=(4, None)), \
+                mock.patch.object(windows_smoke, "_POLICY_BEFORE", {}), \
+                mock.patch.object(windows_smoke, "_POLICY_NAME", []):
+            with self.assertRaises(PermissionError):
+                windows_smoke.write_browser_policy("C:\\x\\StarsonicPhone.exe", "--remote-debugging-port=9333")
+            # O nome fica guardado antes da primeira escrita: o undo restaura e confere as duas vistas.
+            self.assertEqual(windows_smoke._POLICY_NAME, ["StarsonicPhone.exe"])
+            self.assertEqual(windows_smoke._POLICY_BEFORE, {"64": (4, None), "32": (4, None)})
 
 
 class WorkAreaTest(unittest.TestCase):

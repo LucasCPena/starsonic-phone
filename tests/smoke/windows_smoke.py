@@ -281,12 +281,14 @@ def write_browser_policy(exe, arguments):
     for label, view in views.items():
         if label not in _POLICY_BEFORE:
             _POLICY_BEFORE[label] = _policy_state(view, name)
+    # O nome antes da primeira escrita: uma escrita que falha no meio (a segunda vista, um PermissionError) ainda é
+    # desfeita e conferida pelo undo_browser_policy.
+    if name not in _POLICY_NAME:
+        _POLICY_NAME.append(name)
     for view in views.values():
         with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, WEBVIEW2_POLICY_KEY, 0,
                                 winreg.KEY_SET_VALUE | view) as key:
             winreg.SetValueEx(key, name, 0, winreg.REG_SZ, arguments)
-    if name not in _POLICY_NAME:
-        _POLICY_NAME.append(name)
 
 
 def undo_browser_policy(result):

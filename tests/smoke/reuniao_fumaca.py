@@ -198,7 +198,7 @@ WEB_MESSAGE_SCRIPT = """() => {
 
 
 def meeting_arguments(base: str, capture: str | None = None, lna: bool = False) -> str:
-    """O valor da WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS de uma abertura do item 13."""
+    """Os argumentos do WebView2 de uma abertura do item 13 (o App do smoke os põe na política da máquina)."""
     parts = [base, FAKE_DEVICES, CAPTURE_ARGUMENTS[capture]]
     if lna:
         parts.append(LNA_ARGUMENT)
@@ -566,9 +566,10 @@ class _Item:
         try:
             try:
                 self.say("abertura %s: %s" % (which, part["argumentos"]))
-                # Os argumentos da variável só valem para um WebView2 que ainda não está aberto.
+                # Os argumentos da política só valem para um WebView2 que ainda não está aberto.
                 if not smoke.wait_for(lambda: smoke.webview_processes() == 0, WEBVIEW_GONE_SECONDS, interval=1):
                     raise smoke.SmokeFailure("o WebView2 da abertura anterior nao saiu")
+                # O App tira os argumentos dessa chave e os escreve na política da máquina, nunca no ambiente.
                 self.current["app"] = smoke.App(self.exe, data_dir,
                                                 {"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS": part["argumentos"]})
                 browser = self.current["browser"] = smoke.connect(self.pw)
