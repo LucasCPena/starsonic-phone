@@ -37,23 +37,32 @@ LNA_ARGUMENT = "--enable-features=LocalNetworkAccessChecks,msWebViewAllowLocalNe
 
 FRAME_ID = "reuniao-da-fumaca"
 REFUSED_ID = "recusado-da-fumaca"
+BLANK_ID = "vazio-da-fumaca"
 SCREEN_BUTTON_ID = "sonda-da-tela"
 REFUSED_WAIT_MS = 3000
 LEFT_WAIT_MS = 3000
 
 # O começo de cada linha do diagnostico.log ("AAAA-MM-DD HH:MM:SS.mmm ") e as linhas das regras do quadro.
 LOG_TIME = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} ")
-LOG_PREFIXES = ("permissao ", "captura de tela", "navegacao ", "o quadro nao carregou", "quadro fora da regra")
-# As linhas que o portão procura em todos os diagnósticos juntos: (a linha, procurada pelo começo).
-NEEDED_LINES = [
-    ("navegacao do quadro permitida: https://chat.starcloud-starsonic.com.br", False),
-    ("permissao permitida (quadro): 2 ", True),
-    ("permissao negada: 2 https://app.starsonic.local", False),
-    ("navegacao bloqueada: https://chat.starcloud-starsonic.com.br", False),
-    ("captura de tela cancelada", False),
-    ("captura de tela permitida (quadro)", False),
+LOG_PREFIXES = ("permissao ", "captura de tela", "navegacao ", "o quadro nao carregou", "quadro fora da regra",
+                "mensagem ignorada", "quadro sem o evento do conteudo")
+# As linhas que o portão procura, cada uma inteira e no diagnóstico da abertura que tem de escrevê-la: a linha de outra
+# abertura não responde por esta. A principal: o quadro da reunião navegou, ganhou a câmera e a tela, e a página do
+# app pediu a câmera depois dele e não levou.
+MAIN_LINES = [
+    "navegacao do quadro permitida: https://chat.starcloud-starsonic.com.br",
+    "permissao permitida (quadro): 2 https://chat.starcloud-starsonic.com.br",
+    "captura de tela permitida (quadro)",
+    "permissao negada: 2 https://app.starsonic.local",
 ]
-# As que faltam só quando o quadro deixou a reunião (o "saiu" com o navegou): ele pediu e não levou.
+# A das recusas: a câmera e a tela da página do app, e os quadros do chat que não entram.
+REFUSAL_LINES = [
+    "permissao negada: 2 https://app.starsonic.local",
+    "navegacao bloqueada: https://chat.starcloud-starsonic.com.br",
+    "captura de tela cancelada",
+]
+# As que faltam só quando o quadro deixou a reunião (o "saiu" com o navegou), na abertura das recusas: ele pediu e não
+# levou. (a linha, procurada pelo começo)
 LEFT_MEETING_LINES = [
     ("permissao negada (quadro): 2 ", True),
     ("captura de tela cancelada (quadro)", False),
@@ -170,6 +179,21 @@ REFUSED_SCRIPT = """([id, src]) => {
   frame.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;border:0;z-index:2147483647';
   frame.src = src;
   document.body.append(frame);
+}"""
+
+# Um quadro do próprio app, sem o src (o documento vazio dele), no canto e por cima de tudo, grande o bastante para o
+# botão da sonda da tela receber um clique de verdade.
+BLANK_SCRIPT = """(id) => {
+  const frame = document.createElement('iframe');
+  frame.id = id;
+  frame.title = 'Vazio';
+  frame.style.cssText = 'position:fixed;left:0;top:0;width:120px;height:60px;border:0;z-index:2147483647';
+  document.body.append(frame);
+}"""
+
+# O quadro da reunião manda uma mensagem ao executável (o WebMessageReceived da janela só aceita a da página do app).
+WEB_MESSAGE_SCRIPT = """() => {
+  try { window.chrome && window.chrome.webview && window.chrome.webview.postMessage('fumaca'); } catch (e) {}
 }"""
 
 
@@ -289,6 +313,24 @@ def probe_refused_frames(page, origin: str, code: str, pump) -> dict:
     return loaded
 
 
+def probe_blank_frame(page, pump) -> dict:
+    """Um quadro do app sem endereço pede a câmera (só o vídeo) e a tela: {"camera", "tela"}, como o probe_media e o
+    probe_screen. Se o documento do quadro não se alcança, {"erro": "sem o quadro"}. O quadro sai no fim."""
+    page.evaluate(BLANK_SCRIPT, BLANK_ID)
+    try:
+        frame = page.locator("#" + BLANK_ID).element_handle().content_frame()
+        if frame is None:
+            return {"erro": "sem o quadro"}
+        return {"camera": probe_media(frame, audio=False, video=True), "tela": probe_screen(frame, pump)}
+    finally:
+        page.evaluate(REMOVE_SCRIPT, BLANK_ID)
+
+
+def post_web_message(frame) -> None:
+    """O documento do quadro manda uma mensagem ao executável, se o WebView2 der o chrome.webview a ele."""
+    frame.evaluate(WEB_MESSAGE_SCRIPT)
+
+
 # O quadro da reunião mandado para outro endereço (o src do elemento).
 LEAVE_SCRIPT = "([id, src]) => { document.getElementById(id).src = src; }"
 HREF_SCRIPT = "() => location.href"
@@ -382,6 +424,9 @@ def problems_of(record: dict) -> list[str]:
     media = _part(main, "midia")
     if media.get("faixas") != TRACKS:
         problems.append("a camera e o microfone nao vieram no quadro: %s" % media)
+    after = _part(main, "do_app", "camera")
+    if not str(after.get("erro", "")).startswith("NotAllowedError"):
+        problems.append("a pagina do app pediu a camera depois do quadro e nao levou um NotAllowedError: %s" % after)
     speaker = _part(main, "alto_falante")
     outputs = speaker.get("saidas")
     several = isinstance(outputs, int) and outputs > 1
@@ -399,8 +444,16 @@ def problems_of(record: dict) -> list[str]:
     for name in ("administracao", "consulta", "de_fora"):
         if refused.get(name) is not False:
             problems.append("um quadro recusado carregou (ou nao foi visto): %s" % name)
+    blank = _part(refusals, "vazio")
+    for what, name in (("camera", "a camera"), ("tela", "a tela")):
+        answer = _part(blank, what)
+        if not str(answer.get("erro", "")).startswith("NotAllowedError"):
+            problems.append("o quadro vazio do app pediu %s e nao levou um NotAllowedError: %s"
+                            % (name, blank.get(what, blank)))
+    for part, name in ((main, "principal"), (refusals, "das recusas")):
+        if part.get("fechou") is not True:
+            problems.append("a abertura %s nao fechou com o --sair (%s)" % (name, part.get("fechou")))
     left = _part(refusals, "saiu")
-    needed_lines = list(NEEDED_LINES)
     left_lines = []
     if not isinstance(left.get("navegou"), bool):
         problems.append("nao se sabe se o quadro que deixa a reuniao navegou: %s" % (refusals.get("saiu"),))
@@ -419,18 +472,19 @@ def problems_of(record: dict) -> list[str]:
         problems.append("o hosts nao voltou ao que era")
     if undone.get("certificado") is not True:
         problems.append("o certificado da fumaca ficou na lista do Windows")
-    lines = _list(main, "diagnostico") + _list(refusals, "diagnostico")
+    # A tentativa da tela é da abertura principal: as linhas dela (uma parte das da principal) contam lá.
+    main_lines = _list(main, "diagnostico")
     attempts = screen.get("tentativas")
     for attempt in attempts if isinstance(attempts, list) else []:
         if isinstance(attempt, dict):
-            lines += _list(attempt, "diagnostico")
-    # As linhas do quadro que deixou a reunião, só no diagnóstico da abertura das recusas: a linha de outra abertura
-    # não responde por esta.
+            main_lines += _list(attempt, "diagnostico")
     refusal_lines = _list(refusals, "diagnostico")
-    for wanted, where in ((needed_lines, lines), (left_lines, refusal_lines)):
-        for needed, by_start in wanted:
+    wanted = [("principal", [(line, False) for line in MAIN_LINES], main_lines),
+              ("das recusas", [(line, False) for line in REFUSAL_LINES] + left_lines, refusal_lines)]
+    for name, needed_lines, where in wanted:
+        for needed, by_start in needed_lines:
             if not any(line.startswith(needed) if by_start else line == needed for line in where):
-                problems.append("falta no diagnostico: " + needed)
+                problems.append("falta no diagnostico da abertura %s: %s" % (name, needed))
     return problems
 
 
@@ -643,8 +697,9 @@ class _Item:
         self.say("a empresa, o computador, a pessoa e a reuniao estao no chat de teste")
 
     def run_main(self):
-        """4. A abertura principal: o quadro, a entrada, a mídia, o alto-falante, a captura e, por último, a tela (a
-        única tentativa que capturou no WebView2 de verdade)."""
+        """4. A abertura principal: o quadro, a entrada, a mídia, a câmera pedida depois pela página do app, a mensagem
+        do quadro ao executável, o alto-falante, a captura e, por último, a tela (a única tentativa que capturou no
+        WebView2 de verdade)."""
         main, screen = self.record["principal"], self.record["tela"]
         attempt = {"captura": "pedaco"}
         screen["tentativas"].append(attempt)
@@ -661,6 +716,11 @@ class _Item:
             main.update({"mensagens": said["mensagens"], "microfone": said["microfone"], "csp": said["csp"]})
             main["midia"] = self.clean(probe_media(frame))
             self.say("camera e microfone: %s" % main["midia"])
+            # A página do app pede a câmera depois de o quadro tê-la ganho: a dele não vale para ela.
+            main["do_app"] = {"camera": self.clean(probe_media(page, audio=False, video=True))}
+            self.say("a pagina do app pediu a camera depois do quadro: %s" % main["do_app"])
+            # O vazou julga o diagnóstico: a linha "mensagem ignorada", se vier, fica no record.
+            post_web_message(frame)
             main["alto_falante"] = self.clean(probe_speaker(frame))
             self.say("alto-falante: %s" % main["alto_falante"])
             self.smoke.screenshot(page, self.capturas, SCREENSHOT, self.result)
@@ -685,8 +745,8 @@ class _Item:
         self.launch("lna", part, "pedaco", True, body, console=True)
 
     def run_refusals(self):
-        """6. Por último: o que a página do app pede e não leva, os três quadros que não entram e o quadro que
-        deixa a reunião."""
+        """6. Por último: o que a página do app pede e não leva, os três quadros que não entram, o quadro do app sem
+        endereço e o quadro que deixa a reunião."""
         part = self.record["recusas"]
 
         def body(page, pump):
@@ -699,6 +759,9 @@ class _Item:
             part["recusados"] = probe_refused_frames(page, CHAT_ORIGIN, self.code, pump)
             part["csp"] = self.clean(read_messages(page)["csp"])
             self.say("quadros recusados (carregou?): %s; csp %s" % (part["recusados"], part["csp"]))
+            # Um quadro do próprio app, sem endereço: não é uma reunião, e não ganha a câmera nem a tela.
+            part["vazio"] = self.clean(probe_blank_frame(page, pump))
+            self.say("o quadro vazio do app pediu: %s" % part["vazio"])
             # O quadro que deixa a reunião: só um documento de reunião ganha a câmera e a tela.
             frame, _ = self.open_frame(page, pump, part, before)
             part["saiu"] = (self.clean(probe_left_meeting(page, CHAT_ORIGIN, self.code, pump)) if frame is not None

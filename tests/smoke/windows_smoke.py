@@ -72,12 +72,16 @@ Fumaça (padrão), contra o StarsonicPhone.exe instalado do build de teste (STAR
    autoridade feita na hora na lista do Windows (certutil) e o nome do chat no hosts; antes de abrir o app, o nome
    leva só à frente e um pedido https por ele, que só confia nessa autoridade, responde 200 por ela. Em aberturas
    novas do app, cada uma numa pasta de dados nova, a fumaça põe a página da reunião num iframe da página do app:
-   a principal (a entrada do colega, a câmera e o microfone de mentira, o alto-falante, a captura
-   reuniao-entrada.png e a tela, com a captura que escolhe a tela inteira sozinha: a que capturou no WebView2 de
-   verdade), uma com a proteção Local Network Access ligada (só registra) e, por último, as recusas (a câmera e a
-   tela pedidas pela página do app, três quadros que não entram e o quadro da reunião mandado para outro endereço
-   do chat: fora da reunião, a câmera e a tela pedidas por ele não vêm); as linhas das regras do quadro no diagnostico.log fecham a prova. O hosts e a lista do
-   Windows voltam ao que eram. O resultado vai na chave "reuniao", sem o código, o passe nem a chave.
+   a principal (a entrada do colega, a câmera e o microfone de mentira no quadro, a câmera pedida depois dele pela
+   página do app, que não vem, uma mensagem do quadro ao executável, o alto-falante, a captura reuniao-entrada.png
+   e a tela, com a captura que escolhe a tela inteira sozinha: a que capturou no WebView2 de verdade), uma com a
+   proteção Local Network Access ligada (só registra) e, por último, as recusas (a câmera e a tela pedidas pela
+   página do app, três quadros que não entram, um quadro do app sem endereço, que não ganha a câmera nem a tela, e
+   o quadro da reunião mandado para outro endereço do chat: fora da reunião, a câmera e a tela pedidas por ele não
+   vêm). Cada linha das regras do quadro que fecha a prova é procurada inteira no diagnostico.log da abertura que
+   tem de escrevê-la (a de outra abertura não responde por ela), e a principal e a das recusas fecham com o --sair.
+   O hosts e a lista do Windows voltam ao que eram. O resultado vai na chave "reuniao", sem o código, o passe nem a
+   chave.
 Os itens 7 a 11 juntam o que falhou e reprovam no fim (um não esconde o outro); o 13 também, ao fim dele.
 O item 12 fica à parte: junta os problemas dele (um não esconde o outro) e reprova ao fim dele mesmo, antes dos itens
 seguintes (o app já foi fechado e reaberto neles).
