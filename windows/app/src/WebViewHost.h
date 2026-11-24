@@ -10,7 +10,7 @@
 //
 // (0.5.0) O quadro da reuniao (WebPermissions.h): na janela principal (Options.window), um iframe pode navegar para o
 // endereco de uma reuniao do chat, e so esse quadro ganha a camera, o microfone, a reproducao automatica e a captura de
-// tela. Cada quadro guarda o endereco do seu documento (o da ultima navegacao que a regra deixa) e responde com ele aos
+// tela. Cada quadro sabe o endereco do documento que mostra (FrameAddress, pelas navegacoes dele) e responde com ele aos
 // seus pedidos; nenhuma dessas respostas, e nenhuma recusa, fica guardada no perfil. O aviso nao deixa nada disso.
 //
 // As teclas do navegador (Ctrl + P imprimir, F5, Ctrl + F...) ficam desligadas no build de publicacao; no de teste (as

@@ -12,6 +12,8 @@
 // automatica, e so ele captura a tela. A pagina do app nunca ganha a camera.
 //
 // C++ portatil: so o texto da URL.
+#include <cstdint>
+#include <map>
 #include <string>
 
 namespace starsonic {
@@ -36,5 +38,30 @@ bool AllowFrameNavigation(WebWindow window, const std::string& url);
 bool AllowFramePermission(WebWindow window, WebPermission kind, const std::string& frameUrl);
 // A captura de tela: so o quadro de uma reuniao, na janela principal.
 bool AllowFrameScreenCapture(WebWindow window, const std::string& frameUrl);
+
+// O endereco do documento que um quadro mostra, pelas navegacoes dele (os ids de navegacao do WebView2). E ele, e nao o
+// de uma navegacao que so comecou, que decide o que o quadro ganha: uma navegacao cancelada que nao para (o WebView2
+// 131) ou que nunca carrega nao muda o documento, e um quadro que sai da reuniao deixa de ser um quadro de reuniao.
+class FrameAddress {
+public:
+    // NavigationStarting: guarda o endereco dessa navegacao (um redirecionamento repete o id, com o endereco novo).
+    void Start(uint64_t navigation, const std::string& url);
+    // ContentLoading: o quadro passou a mostrar o documento dessa navegacao ("" numa pagina de erro ou num id que nao
+    // comecou aqui).
+    void Commit(uint64_t navigation, bool errorPage);
+    // NavigationCompleted: a navegacao acabou e o id e esquecido. Uma que deu certo sem o ContentLoading tambem vale,
+    // a nao ser que seja dentro do mesmo documento (o mesmo endereco, fora o fragmento).
+    void End(uint64_t navigation, bool success);
+    // "" antes do primeiro documento, numa pagina de erro e num documento desconhecido.
+    const std::string& Shown() const;
+
+private:
+    struct Navigation {
+        std::string url;
+        bool committed = false;
+    };
+    std::map<uint64_t, Navigation> navigations_;
+    std::string shown_;
+};
 
 }  // namespace starsonic

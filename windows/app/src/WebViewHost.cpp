@@ -241,7 +241,8 @@ void WebViewHost::Configure() {
             .Get(),
         &token);
     // (0.5.0) Um quadro (iframe): dentro do app ou, na janela principal, uma reuniao do chat (AllowFrameNavigation). O
-    // cancelamento e so aqui; o NavigationStarting do proprio quadro (FrameCreated, abaixo) so guarda o endereco.
+    // cancelamento e pedido aqui e de novo no NavigationStarting do proprio quadro (FrameCreated, abaixo), que roda
+    // por ultimo: no WebView2 131, o pedido so daqui nao parou o quadro. As linhas sao so daqui, uma por navegacao.
     webview_->add_FrameNavigationStarting(
         Callback<ICoreWebView2NavigationStartingEventHandler>(
             [this](ICoreWebView2*, ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT {
@@ -249,7 +250,8 @@ void WebViewHost::Configure() {
                 args->get_Uri(&uri);
                 const std::string url = TakeString(uri);
                 if (!AllowFrameNavigation(options_.window, url)) {
-                    args->put_Cancel(TRUE);
+                    const HRESULT cancelled = args->put_Cancel(TRUE);
+                    if (FAILED(cancelled)) Log("navegacao nao cancelada: " + Hex(cancelled));
                     Log("navegacao bloqueada: " + RedactUrl(url));
                 } else if (!IsAppUrl(url)) {
                     Log("navegacao do quadro permitida: " + RedactUrl(url));
@@ -273,9 +275,9 @@ void WebViewHost::Configure() {
             .Get(),
         &token);
 
-    // (0.5.0) Os quadros (WebPermissions.h): cada um guarda o endereco do seu documento (o da ultima navegacao que o
-    // AllowFrameNavigation deixa) e responde com ele aos seus pedidos, antes do evento da janela (Handled). Sem o
-    // evento do quadro, o quadro nao ganha nada: o pedido chega a janela, que so deixa o da pagina do app.
+    // (0.5.0) Os quadros (WebPermissions.h): cada um sabe o endereco do documento que mostra (FrameAddress, pelas
+    // navegacoes dele) e responde com ele aos seus pedidos, antes do evento da janela (Handled). Sem os eventos do
+    // quadro, o quadro nao ganha nada: o pedido chega a janela, que so deixa o da pagina do app.
     ComPtr<ICoreWebView2_4> webview4;
     if (SUCCEEDED(webview_.As(&webview4))) {
         webview4->add_FrameCreated(
@@ -283,9 +285,17 @@ void WebViewHost::Configure() {
                 [this](ICoreWebView2*, ICoreWebView2FrameCreatedEventArgs* args) -> HRESULT {
                     ComPtr<ICoreWebView2Frame> frame;
                     if (FAILED(args->get_Frame(&frame)) || !frame) return S_OK;
-                    // O endereco do documento do quadro, dividido entre os tratadores dele ("" ate a primeira
-                    // navegacao deixada).
-                    auto address = std::make_shared<std::string>();
+                    // O endereco do documento que o quadro mostra, dividido entre os tratadores dele ("" ate o
+                    // primeiro documento).
+                    auto address = std::make_shared<FrameAddress>();
+                    // Um documento que a regra nao deixa e que o quadro passou a mostrar: o bloqueio nao valeu. O
+                    // quadro fica sem nada (o Shown nao e uma reuniao); so a linha.
+                    auto outsideRule = [this, address]() {
+                        const std::string& shown = address->Shown();
+                        if (!shown.empty() && !AllowFrameNavigation(options_.window, shown)) {
+                            Log("quadro fora da regra: " + RedactUrl(shown));
+                        }
+                    };
                     EventRegistrationToken frameToken = {};
                     ComPtr<ICoreWebView2Frame2> frame2;
                     if (SUCCEEDED(frame.As(&frame2))) {
@@ -296,7 +306,49 @@ void WebViewHost::Configure() {
                                     LPWSTR uri = nullptr;
                                     event->get_Uri(&uri);
                                     const std::string url = TakeString(uri);
-                                    if (AllowFrameNavigation(options_.window, url)) *address = url;
+                                    UINT64 navigation = 0;
+                                    if (SUCCEEDED(event->get_NavigationId(&navigation))) {
+                                        address->Start(navigation, url);
+                                    }
+                                    // O ultimo a mexer no Cancel decide: este roda depois do FrameNavigationStarting
+                                    // da janela (que escreve a linha).
+                                    if (!AllowFrameNavigation(options_.window, url)) {
+                                        const HRESULT cancelled = event->put_Cancel(TRUE);
+                                        if (FAILED(cancelled)) Log("navegacao nao cancelada: " + Hex(cancelled));
+                                    }
+                                    return S_OK;
+                                })
+                                .Get(),
+                            &frameToken);
+                        frame2->add_ContentLoading(
+                            Callback<ICoreWebView2FrameContentLoadingEventHandler>(
+                                [address, outsideRule](ICoreWebView2Frame*, ICoreWebView2ContentLoadingEventArgs* event)
+                                    -> HRESULT {
+                                    UINT64 navigation = 0;
+                                    BOOL errorPage = TRUE;
+                                    if (FAILED(event->get_NavigationId(&navigation)) ||
+                                        FAILED(event->get_IsErrorPage(&errorPage))) {
+                                        // Sem saber qual documento e: o quadro nao mostra nada conhecido.
+                                        address->Commit(navigation, true);
+                                        return S_OK;
+                                    }
+                                    address->Commit(navigation, errorPage != FALSE);
+                                    outsideRule();
+                                    return S_OK;
+                                })
+                                .Get(),
+                            &frameToken);
+                        frame2->add_NavigationCompleted(
+                            Callback<ICoreWebView2FrameNavigationCompletedEventHandler>(
+                                [address, outsideRule](ICoreWebView2Frame*,
+                                                       ICoreWebView2NavigationCompletedEventArgs* event) -> HRESULT {
+                                    UINT64 navigation = 0;
+                                    BOOL success = FALSE;
+                                    if (FAILED(event->get_NavigationId(&navigation))) return S_OK;
+                                    event->get_IsSuccess(&success);
+                                    const std::string before = address->Shown();
+                                    address->End(navigation, success != FALSE);
+                                    if (address->Shown() != before) outsideRule();
                                     return S_OK;
                                 })
                                 .Get(),
@@ -315,7 +367,8 @@ void WebViewHost::Configure() {
                                     event->get_Uri(&uri);
                                     event->get_PermissionKind(&kind);
                                     const std::string url = TakeString(uri);
-                                    bool allowed = AllowFramePermission(options_.window, PermissionOf(kind), *address);
+                                    bool allowed =
+                                        AllowFramePermission(options_.window, PermissionOf(kind), address->Shown());
                                     // Uma resposta que ficaria no perfil, nao: fica no lado fechado.
                                     if (!KeepOutOfProfile(event)) {
                                         Log(kNoProfileChoice);
@@ -340,7 +393,7 @@ void WebViewHost::Configure() {
                             Callback<ICoreWebView2FrameScreenCaptureStartingEventHandler>(
                                 [this, address](ICoreWebView2Frame*, ICoreWebView2ScreenCaptureStartingEventArgs* event)
                                     -> HRESULT {
-                                    const bool allowed = AllowFrameScreenCapture(options_.window, *address);
+                                    const bool allowed = AllowFrameScreenCapture(options_.window, address->Shown());
                                     event->put_Cancel(allowed ? FALSE : TRUE);
                                     event->put_Handled(TRUE);   // o evento da janela nao vem
                                     Log(allowed ? "captura de tela permitida (quadro)"

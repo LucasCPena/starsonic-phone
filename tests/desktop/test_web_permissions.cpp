@@ -1,6 +1,6 @@
 // As regras do quadro da reuniao no executavel do Windows (windows/app/src/WebPermissions.h, spec 7.7): o endereco de
 // uma reuniao, a navegacao de um quadro, a camera, o microfone e a reproducao automatica de um quadro, e a captura de
-// tela. C++ portatil: roda tambem no Linux.
+// tela; (0.5.0) e o endereco do documento que um quadro mostra (FrameAddress). C++ portatil: roda tambem no Linux.
 #include <string>
 
 #include "WebPermissions.h"
@@ -12,6 +12,16 @@ namespace {
 const std::string kChat = "https://chat.starcloud-starsonic.com.br:8443";
 const std::string kMeeting = kChat + "/r/k7q49xwpht";
 const std::string kApp = "https://app.starsonic.local/index.html";
+const std::string kOther = kChat + "/admin/entrar";
+
+// Um quadro que ja mostra a reuniao (a navegacao 1, carregada e acabada).
+FrameAddress ShowingMeeting() {
+    FrameAddress frame;
+    frame.Start(1, kMeeting);
+    frame.Commit(1, false);
+    frame.End(1, true);
+    return frame;
+}
 }  // namespace
 
 TEST_CASE("the meeting address is the chat origin, /r/ and a ten-character code, and nothing else") {
@@ -74,4 +84,72 @@ TEST_CASE("the app origin never gets the camera") {
     CHECK_FALSE(AllowWebPermission(WebPermission::Camera, kApp));
     CHECK(AllowWebPermission(WebPermission::Microphone, kApp));
     CHECK(AllowWebPermission(WebPermission::Autoplay, kApp));
+}
+
+TEST_CASE("a frame shows nothing before a document loads") {
+    FrameAddress frame;
+    CHECK(frame.Shown() == "");
+    frame.Start(1, kMeeting);
+    CHECK(frame.Shown() == "");
+}
+
+TEST_CASE("the document of a navigation is shown when its content loads") {
+    FrameAddress frame;
+    frame.Start(1, kMeeting);
+    frame.Commit(1, false);
+    CHECK(frame.Shown() == kMeeting);
+    frame.End(1, true);
+    CHECK(frame.Shown() == kMeeting);
+}
+
+TEST_CASE("a navigation that starts and never loads changes nothing") {
+    FrameAddress frame = ShowingMeeting();
+    REQUIRE(frame.Shown() == kMeeting);
+    frame.Start(2, kOther);
+    CHECK(frame.Shown() == kMeeting);
+    frame.End(2, false);
+    CHECK(frame.Shown() == kMeeting);
+}
+
+TEST_CASE("a frame that leaves the meeting stops being a meeting frame") {
+    FrameAddress frame = ShowingMeeting();
+    REQUIRE(frame.Shown() == kMeeting);
+    frame.Start(2, kOther);
+    frame.Commit(2, false);
+    CHECK(frame.Shown() == kOther);
+    CHECK_FALSE(AllowFramePermission(WebWindow::Main, WebPermission::Camera, frame.Shown()));
+    CHECK_FALSE(AllowFrameScreenCapture(WebWindow::Main, frame.Shown()));
+}
+
+TEST_CASE("a redirect counts by its last address") {
+    FrameAddress frame;
+    frame.Start(3, kOther);
+    frame.Start(3, kMeeting);
+    frame.Commit(3, false);
+    CHECK(frame.Shown() == kMeeting);
+}
+
+TEST_CASE("an error page and an unknown navigation show nothing") {
+    FrameAddress frame;
+    frame.Start(4, kMeeting);
+    frame.Commit(4, true);
+    CHECK(frame.Shown() == "");
+    FrameAddress other;
+    other.Commit(9, false);
+    CHECK(other.Shown() == "");
+}
+
+TEST_CASE("a navigation that ends well without the content event is adopted") {
+    FrameAddress frame;
+    frame.Start(5, kMeeting);
+    frame.End(5, true);
+    CHECK(frame.Shown() == kMeeting);
+}
+
+TEST_CASE("a navigation inside the same document changes nothing") {
+    FrameAddress frame = ShowingMeeting();
+    REQUIRE(frame.Shown() == kMeeting);
+    frame.Start(6, kMeeting + "#a");
+    frame.End(6, true);
+    CHECK(frame.Shown() == kMeeting);
 }

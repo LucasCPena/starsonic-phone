@@ -1024,13 +1024,18 @@ A página de uma reunião do chat abre num `iframe` da janela principal. A regra
 
 ### Para o executável: o que a janela principal deixa
 
-As regras ficam no `WebPermissions.h`, e quem decide o que um quadro ganha é o endereço do **documento** do quadro (o da
-última navegação dele que a regra deixou), nunca a origem que o WebView2 diz no pedido. O endereço de uma reunião é
+As regras ficam no `WebPermissions.h`, e quem decide o que um quadro ganha é o endereço do **documento que ele mostra**
+(o `FrameAddress`, pelas navegações do quadro: o da navegação cujo conteúdo carregou, ou que acabou bem, fora as que
+ficam no mesmo documento; nada numa página de erro), nunca o de uma navegação que só começou, nem a origem que o
+WebView2 diz no pedido (num pedido de um quadro, ela vem como a da página de cima, a do app). O endereço de uma reunião é
 exatamente `https://chat.starcloud-starsonic.com.br:8443/r/` seguido de um código de 10 caracteres do alfabeto
 `abcdefghjkmnpqrstvwxyz23456789`, sem mais nada (nem barra no fim, nem consulta, nem fragmento).
 
 - **A navegação:** um quadro navega dentro do app ou, só na janela principal, para o endereço de uma reunião. A
-  navegação da própria janela e as janelas novas continuam bloqueadas, como sempre.
+  navegação da própria janela e as janelas novas continuam bloqueadas, como sempre. O cancelamento de uma navegação de
+  quadro é pedido nos dois eventos, o da janela e o do quadro (que roda por último): no WebView2 131, o pedido só no
+  evento da janela não parou o quadro. Um quadro que mesmo assim passa a mostrar um documento fora da regra fica sem
+  nada (ele não é uma reunião), e deixa a linha `quadro fora da regra: <endereço>`.
 - **As permissões:** só o quadro de uma reunião, na janela principal, ganha a câmera, o microfone e a reprodução
   automática; todo o resto que um quadro pede é negado. O que a página do app pede segue a regra de sempre (o microfone
   e a reprodução automática, só para a origem do app): a página do app nunca ganha a câmera.
@@ -1044,8 +1049,9 @@ host, como nas outras linhas):
 
 | O evento | O que o executável faz | A linha no diagnóstico |
 |---|---|---|
-| a navegação de um quadro, no nível da janela (`FrameNavigationStarting`) | cancela se a regra não deixa | `navegacao bloqueada: <endereço>`; deixada e fora do app: `navegacao do quadro permitida: <endereço>` |
-| a navegação de um quadro, no quadro (`NavigationStarting` do quadro) | guarda o endereço, se a regra deixa; não cancela nada | — |
+| a navegação de um quadro, no nível da janela (`FrameNavigationStarting`) | cancela se a regra não deixa | `navegacao bloqueada: <endereço>`; deixada e fora do app: `navegacao do quadro permitida: <endereço>`; o cancelamento que o WebView2 recusa: `navegacao nao cancelada: <HRESULT em hexadecimal>` |
+| a navegação de um quadro, no quadro (`NavigationStarting` do quadro) | guarda o endereço dessa navegação (pelo id dela) e cancela de novo se a regra não deixa | só o cancelamento recusado: `navegacao nao cancelada: <HRESULT em hexadecimal>` |
+| o conteúdo de uma navegação do quadro que começa a carregar (`ContentLoading` do quadro), ou a navegação que acaba bem sem ele (`NavigationCompleted` do quadro) | o quadro passa a mostrar esse documento (numa página de erro, nenhum) | um documento fora da regra: `quadro fora da regra: <endereço>` |
 | um quadro que não carregou (`FrameNavigationCompleted` sem sucesso) | — | `o quadro nao carregou (erro <n>)`, com o `COREWEBVIEW2_WEB_ERROR_STATUS` |
 | a permissão pedida por um quadro (`PermissionRequested` do quadro) | responde pela regra do quadro e marca como tratada (o evento da janela não vem) | `permissao permitida (quadro): <n> <endereço do pedido>` ou `permissao negada (quadro): <n> <endereço do pedido>` |
 | a permissão pedida pela página do app (`PermissionRequested` da janela) | a regra de sempre | a recusa: `permissao negada: <n> <endereço do pedido>` |
