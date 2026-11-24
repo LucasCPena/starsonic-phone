@@ -1077,6 +1077,11 @@ fechado não vale em dois casos:
 - **sem o evento de permissão do quadro** (`ICoreWebView2Frame3`), o pedido de um quadro chega à janela com a origem do
   app, e a regra da janela deixa passar o microfone e a reprodução automática.
 
+E num WebView2 de hoje (visto no `158`, na prova de 24/11/2026), o microfone de um quadro não chega a nenhum evento do
+app: o pedido de um quadro leva a origem do app, e o WebView2 o responde pela permissão do microfone que o app guarda
+no perfil para essa origem. O que segura o microfone é o `allow` do `iframe` (só a origem do chat) e o bloqueio da
+navegação do quadro; a câmera e a captura de tela continuam passando pela regra.
+
 ## O modo iPhone (etapa 2)
 
 A mesma interface e o mesmo `DesktopApp` no app do iPhone (spec do iPhone, seções 4.1, 6.1 e 8): o hospedeiro em Swift
