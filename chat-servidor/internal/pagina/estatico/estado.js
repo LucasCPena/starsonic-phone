@@ -32,9 +32,10 @@
 // O palco e o aviso da câmera (seção 10 do protocolo). O servidor diz à pessoa aceita onde cada um está no mosaico (a
 // mensagem palco), e o cérebro guarda o último palco que vale, para os quadros. Ele só entra depois do aceito, pelo
 // canal aberto, e sai no aceito, em todo aviso, com um palco que não vale (que prova que ele ficou velho) e quando a
-// página desiste do canal: o canal que fecha sem a chave, e o religar que para (a chave recusada, o linkInvalido ou o
-// 404 do abrir do voltar, a terceira tentativa que falha). Ele fica enquanto a página tenta voltar (a conexão caída e o
-// religar, que voltam para a mesma reunião). Um palco que chega com um aviso na tela (o canal continua aberto) fica
+// página deixa o canal sem ele: o canal que fecha sem a chave, o religar que para (a chave recusada, o linkInvalido ou
+// o 404 do abrir do voltar) e a terceira tentativa do religar que falha (o religar segue, devagar, mas sem o canal
+// nada acerta o palco). Ele fica enquanto a página tenta voltar (a conexão caída e o religar, que voltam para a mesma
+// reunião). Um palco que chega com um aviso na tela (o canal continua aberto) fica
 // guardado de novo, de propósito: ele nunca é desenhado fora da reunião, e o próximo aceito o tira. A página diz ao
 // servidor se a câmera dela está ligada (o {tipo:'camera', ligada}), para o quadro de quem está sem ela: o aviso sai
 // sempre que o canal passa a ser o da pessoa (o aceito, o voltou) e a cada mudança do ligado, e nunca antes do aceito
@@ -111,6 +112,11 @@ export const CONTAGEM_MS = 1000;
  * reunião espera o mesmo.
  */
 export const RECONECTAR_MS = Object.freeze([2000, 4000, 8000]);
+/**
+ * A espera de cada tentativa de religar o canal depois das três primeiras, em ms. O religar não desiste: com a ligação
+ * no ar, ele tenta de novo a cada 30 s.
+ */
+export const RELIGAR_DEVAGAR_MS = 30000;
 /** A espera por um tirado ou um encerrada depois de a ligação terminar sem aviso, antes do saiu, em ms. */
 export const FIM_SEM_AVISO_MS = 2000;
 /** A espera antes de abrir de novo depois do 1011 do canal, em ms. */
@@ -254,7 +260,7 @@ export function inicial() {
     senhaGuardada: null, // a senha que chegou antes da mídia: o ligar espera as duas
     trocandoCamera: false, // o trocarCamera da reunião saiu, e o cameraTrocada ainda não chegou
     chave: null, // a chave de volta do último aceito ou voltou, {participante, volta}: nunca num texto
-    religando: 0, // a tentativa de religar o canal que caiu na reunião com a ligação no ar, de 0 a 3
+    religando: 0, // a tentativa de religar o canal que caiu na reunião com a ligação no ar, de 0 a 4 (a 4 é a devagar)
     esperandoBilhete: false, // o abrir do voltar saiu, e o abriu ainda não chegou
     vez: 0, // a vez das esperas e dos prazos da volta e do religar: cada espera nova ganha a sua
     abertura: 0, // o número do último abrir
@@ -1223,13 +1229,16 @@ function religar(e, mudancas, ...efeitos) {
   return com(e, { ...mudancas, religando: 1, vez }, ...efeitos, espera);
 }
 
-// Uma tentativa de religar falhou: a próxima espera mais, e o canal do voltar que ela abriu fecha. Depois da terceira,
-// a reunião segue sem o canal, como antes da chave; uma queda da ligação, depois, ainda volta com ela.
+// Uma tentativa de religar falhou: a próxima espera mais, e o canal do voltar que ela abriu fecha. O religar não
+// desiste: depois da terceira, a reunião segue sem o canal (e sem o palco, que nada mais acerta), e a página tenta de
+// novo a cada 30 s, a tentativa devagar, que fica no 4, enquanto a ligação está no ar.
 function religarFalhou(e) {
-  if (e.religando >= MAX_RECONECTAR) return pararDeReligar(e);
   const { mudancas, efeitos } = fecharCanalDoVoltar(e);
-  const { vez, espera } = esperaNova(e, 'religar', RECONECTAR_MS[e.religando]);
-  return com(e, { ...mudancas, religando: e.religando + 1, vez }, ...efeitos, espera);
+  const devagar = e.religando >= MAX_RECONECTAR;
+  const { vez, espera } = esperaNova(e, 'religar', devagar ? RELIGAR_DEVAGAR_MS : RECONECTAR_MS[e.religando]);
+  const proxima = Math.min(e.religando + 1, MAX_RECONECTAR + 1);
+  const semPalco = proxima > MAX_RECONECTAR ? { palco: null } : {};
+  return com(e, { ...mudancas, ...semPalco, religando: proxima, vez }, ...efeitos, espera);
 }
 
 // O religar para: o canal do voltar fecha, e a reunião segue sem o canal. O palco sai junto: sem o canal, nada mais o

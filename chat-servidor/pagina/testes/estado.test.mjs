@@ -13,6 +13,7 @@ import {
   PRAZO_VOLTA_MS,
   REABRIR_MS,
   RECONECTAR_MS,
+  RELIGAR_DEVAGAR_MS,
   cabecalho,
   inicial,
   nomeValido,
@@ -890,16 +891,18 @@ test('o religar sem resposta acaba no prazo', () => {
   assert.equal(r.estado.reconectando, 0);
   assert.equal(r.estado.canal, 'fechado');
   assert.deepEqual(r.efeitos, [FECHAR_CANAL, esperar(4000, 'religar:2')]);
-  // Três religares sem resposta: a reunião segue sem o canal, e o abriu que chega depois fica de fora.
-  const desistiu = seguir(r.estado, [
+  // Três religares sem resposta: a reunião segue sem o canal, o religar não desiste (a próxima tentativa espera 30 s),
+  // e o abriu que chega depois fica de fora.
+  const semResposta = seguir(r.estado, [
     [tempo('religar:2'), [abrir(4), prazo(2)]],
     [tempo('prazo:2'), [esperar(8000, 'religar:3')]],
     [tempo('religar:3'), [abrir(5), prazo(3)]],
-    [tempo('prazo:3'), []],
+    [tempo('prazo:3'), [esperar(RELIGAR_DEVAGAR_MS, 'religar:4')]],
   ]);
-  assert.equal(desistiu.tela, 'reuniao');
-  assert.equal(desistiu.principal, 'noAr');
-  semMudar(desistiu, abriu(5));
+  assert.equal(semResposta.tela, 'reuniao');
+  assert.equal(semResposta.principal, 'noAr');
+  assert.equal(semResposta.religando, 4);
+  semMudar(semResposta, abriu(5));
   // O voltou que chega a tempo acaba com o prazo.
   semMudar(passo(parado, voltou(VOLTA_2)).estado, tempo('prazo:1'));
   // A volta das duas que toma o voltar parado tem o prazo dela, e o do religar fica de fora.
@@ -911,7 +914,7 @@ test('o religar sem resposta acaba no prazo', () => {
   assert.deepEqual(r.efeitos, [FECHAR_CANAL, esperar(4000, 'reconectar:3')]);
 });
 
-test('o religar do canal desiste depois de três', () => {
+test('o religar do canal não desiste: depois de três, tenta a cada 30 s', () => {
   // A ligação segue no ar o tempo todo, e a tela não mostra nada.
   const segueNaReuniao = (estado) => {
     assert.equal(estado.tela, 'reuniao');
@@ -919,6 +922,29 @@ test('o religar do canal desiste depois de três', () => {
     assert.equal(estado.principal, 'noAr');
     assert.equal(estado.reconectando, 0);
   };
+  const tres = [canalFechou(1006), tempo('religar:1'), abrirFalhou(3, 0), tempo('religar:2'), abrirFalhou(4, 0)];
+  let r = rodar(naReuniaoComChave(), ...tres, tempo('religar:3'), abrirFalhou(5, 0));
+  // A terceira falha: a próxima tentativa espera 30 s, e o palco sai (sem o canal, nada o acerta).
+  assert.deepEqual(r.efeitos, [esperar(RELIGAR_DEVAGAR_MS, 'religar:4')]);
+  assert.equal(r.estado.religando, 4);
+  assert.equal(r.estado.palco, null);
+  assert.equal(r.estado.tela, 'reuniao');
+  assert.equal(r.estado.principal, 'noAr');
+  // Daí em diante, uma tentativa de cada vez, sempre a 30 s.
+  const voltando = seguir(r.estado, [
+    [tempo('religar:4'), [abrir(6), prazo(4)]],
+    [tempo('religar:4'), []], // a espera repetida, com a tentativa em curso: nunca dois canais
+    [abrirFalhou(6, 503), [esperar(RELIGAR_DEVAGAR_MS, 'religar:5')]],
+    [tempo('religar:5'), [abrir(7), prazo(5)]],
+    [abriu(7), [abrirCanal(7)]],
+    [CANAL_ABRIU, [voltar(VOLTA_1)]],
+  ]);
+  assert.equal(voltando.religando, 4);
+  // O voltou acaba com o religar: o canal é de novo o da pessoa.
+  const deVolta = passo(voltando, voltou(VOLTA_2)).estado;
+  assert.equal(deVolta.religando, 0);
+  assert.equal(deVolta.canal, 'aberto');
+  // A terceira falha com o canal do voltar aberto o fecha, e a reunião segue sem ele.
   const desistiu = seguir(
     naReuniaoComChave(),
     [
@@ -931,24 +957,24 @@ test('o religar do canal desiste depois de três', () => {
       [tempo('religar:3'), [abrir(5), prazo(3)]],
       [abriu(5), [abrirCanal(5)]],
       [CANAL_ABRIU, [voltar(VOLTA_1)]],
-      // A terceira falha: o canal que já mandou o voltar fecha, e a reunião segue sem ele.
-      [LIMITE, [FECHAR_CANAL]],
+      [LIMITE, [FECHAR_CANAL, esperar(RELIGAR_DEVAGAR_MS, 'religar:4')]],
     ],
     segueNaReuniao,
   );
   assert.equal(desistiu.canal, 'fechado');
+  assert.equal(desistiu.religando, 4);
   semMudar(desistiu, tempo('prazo:3'));
   assert.deepEqual(passo(desistiu, { tipo: 'telaCapturada', ok: true }).efeitos, [PARAR_CAPTURA]);
   // Uma falha no meio com o canal do voltar aberto também o fecha, e a próxima tentativa espera mais.
-  const voltando = [canalFechou(1006), tempo('religar:1'), abriu(3), CANAL_ABRIU];
-  const r = rodar(naReuniaoComChave(), ...voltando, LIMITE);
+  const voltandoDeNovo = [canalFechou(1006), tempo('religar:1'), abriu(3), CANAL_ABRIU];
+  r = rodar(naReuniaoComChave(), ...voltandoDeNovo, LIMITE);
   segueNaReuniao(r.estado);
   assert.equal(r.estado.canal, 'fechado');
   assert.deepEqual(r.efeitos, [FECHAR_CANAL, esperar(4000, 'religar:2')]);
-  // A queda da ligação, depois, é a volta das duas: a chave ainda vale.
+  // A queda da ligação, depois, é a volta das duas: a chave ainda vale, e o religar devagar acaba.
   seguir(desistiu, [
-    [SEM_CONEXAO, [...DESLIGAR_AS_DUAS, esperar(2000, 'reconectar:4')]],
-    [tempo('reconectar:4'), [abrir(6), prazo(4)]],
+    [SEM_CONEXAO, [...DESLIGAR_AS_DUAS, esperar(2000, 'reconectar:5')]],
+    [tempo('reconectar:5'), [abrir(6), prazo(5)]],
     [abriu(6), [abrirCanal(6)]],
     [CANAL_ABRIU, [voltar(VOLTA_1)]],
     [voltou(VOLTA_2), [SENHA, camera(true)]],
@@ -1407,19 +1433,20 @@ test('o palco sai quando a página desiste do canal e fica na reunião', () => {
     ],
     tentando,
   );
+  // O religar que para fica em 0; na terceira tentativa que falha ele segue, devagar (o 4), e o palco sai assim mesmo.
   const desistencias = {
-    'o voltar respondido com o erro invalido': passo(voltando, RECUSADA),
-    'o linkInvalido do voltar': passo(voltando, LINK_INVALIDO),
-    'o 404 do abrir do voltar': passo(noReligar, abrirFalhou(3, 404)),
-    'a terceira tentativa que falha': passo(naTerceira, tempo('prazo:3')),
-    'o canal que fecha sem a chave': passo(semChave, canalFechou(1006)),
+    'o voltar respondido com o erro invalido': [passo(voltando, RECUSADA), 0],
+    'o linkInvalido do voltar': [passo(voltando, LINK_INVALIDO), 0],
+    'o 404 do abrir do voltar': [passo(noReligar, abrirFalhou(3, 404)), 0],
+    'a terceira tentativa que falha': [passo(naTerceira, tempo('prazo:3')), 4],
+    'o canal que fecha sem a chave': [passo(semChave, canalFechou(1006)), 0],
   };
-  for (const [caso, r] of Object.entries(desistencias)) {
+  for (const [caso, [r, religando]] of Object.entries(desistencias)) {
     assert.equal(r.estado.tela, 'reuniao', caso);
     assert.equal(r.estado.aviso, null, caso);
     assert.equal(r.estado.principal, 'noAr', caso);
     assert.equal(r.estado.canal, 'fechado', caso);
-    assert.equal(r.estado.religando, 0, caso);
+    assert.equal(r.estado.religando, religando, caso);
     assert.equal(r.estado.palco, null, caso);
     // Um palco que chega depois, num canal que não é o da pessoa, continua de fora.
     semMudar(r.estado, mensagem(PALCO));
