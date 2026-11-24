@@ -99,7 +99,9 @@ test('o abrir sem corpo não manda corpo nem Content-Type', async () => {
 test('o 200 com a partida a repassa no abriu', async () => {
   const resposta = { reuniao: REUNIAO, bilhete: 'bilhete-4', partida: 'partida-1' };
   const { eventos } = await abrirCom(undefined, 200, resposta);
-  assert.deepEqual(eventos, [{ tipo: 'abriu', reuniao: REUNIAO, bilhete: 'bilhete-4', abertura: 4, partida: 'partida-1' }]);
+  assert.deepEqual(eventos, [
+    { tipo: 'abriu', reuniao: REUNIAO, bilhete: 'bilhete-4', abertura: 4, partida: 'partida-1' },
+  ]);
 });
 
 test('o 200 sem a partida, ou com uma que não é texto, não leva a partida no abriu', async () => {
