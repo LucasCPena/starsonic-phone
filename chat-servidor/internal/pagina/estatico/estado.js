@@ -69,9 +69,9 @@
 // passe) leva à entrada de quem é de fora, e a página nunca tenta de novo como colega. Na reunião, o colega recebe a
 // lista inteira (quem está nela e quem espera) a cada mudança, e responde pelo canal: aceitar, recusar, tirar e
 // encerrar. O que deu certo é confirmado pelo feito (ou pelo encerrada, que é o fim), e o leitor de tela ouve o
-// resultado (o efeito dizer). A resposta que não pode sair (o canal no religar) é como a recusa servidorVideo: o aviso curto do
-// servidor. A lista, o painel e as perguntas seguem a regra da tela da reunião, como o chat. Quem é de fora nunca tem
-// nada disso. A chave do colega e o passe não vão ao console, como a chave de volta.
+// resultado (o efeito dizer). A resposta que não pode sair (o canal no religar) é como a recusa servidorVideo: o aviso
+// curto do servidor. A lista, o painel e as perguntas seguem a regra da tela da reunião, como o chat. Quem é de fora
+// nunca tem nada disso. A chave do colega e o passe não vão ao console, como a chave de volta.
 //
 // O chat que reinicia. O servidor do chat esquece quem estava nele quando reinicia, e o abrir diz a partida dele, que
 // muda a cada vez que ele sobe; o cérebro guarda a do último abrir que não foi o de um voltar. O abrir do voltar que
@@ -1033,12 +1033,12 @@ function abrirOChat(e) {
 const colegaNaReuniao = (e) => e.colega !== null && naReuniaoOuEntrando(e);
 // As respostas mandam pelo canal da pessoa, na tela da reunião.
 const podeResponder = (e) => e.colega !== null && podeEscrever(e);
-// A lista inteira chegou (a mensagem participantes): ela toma o lugar da anterior. Ela não diz o resultado das respostas
-// da página: o pedido que sai dela pode ter sido respondido por outro colega, e quem diz que a resposta deu certo é o
-// feito. O pedido que a lista anterior não tinha, o leitor de tela ouve que chegou. Tudo o que a lista diz sai num
-// dizer só, os textos na ordem: a região que o leitor de tela ouve guarda um texto de cada vez, e dois dizer no mesmo
-// passo deixariam só o último. A pergunta do Tirar de
-// quem já saiu se desfaz, e a reunião cheia do último aceitar sai.
+// A lista inteira chegou (a mensagem participantes): ela toma o lugar da anterior. Ela não diz o resultado das
+// respostas da página: o pedido que sai dela pode ter sido respondido por outro colega, e quem diz que a resposta deu
+// certo é o feito. O pedido que a lista anterior não tinha, o leitor de tela ouve que chegou. Tudo o que a lista diz
+// sai num dizer só, os textos na ordem: a região que o leitor de tela ouve guarda um texto de cada vez, e dois dizer no
+// mesmo passo deixariam só o último. A pergunta do Tirar de quem já saiu se desfaz, e a reunião cheia do último aceitar
+// sai.
 function lista(e, m) {
   if (!colegaNaReuniao(e)) return nada(e);
   const nova = lerLista(m);
@@ -1092,8 +1092,8 @@ function avisoDoServidor(e, mudancas) {
 }
 
 // Uma resposta sai pelo canal e espera o feito: {de, id, nome}. Responder de novo tira a reunião cheia. A resposta que
-// já espera, com o mesmo de e o mesmo id, não sai de novo (outra resposta ao mesmo pedido sai: o servidor decide). Sem o
-// canal da pessoa (o religar em curso), nada sai: é como a recusa servidorVideo, com o aviso curto do servidor, e a
+// já espera, com o mesmo de e o mesmo id, não sai de novo (outra resposta ao mesmo pedido sai: o servidor decide). Sem
+// o canal da pessoa (o religar em curso), nada sai: é como a recusa servidorVideo, com o aviso curto do servidor, e a
 // pergunta que a resposta fecharia fecha do mesmo jeito.
 function responder(e, de, id, nome, m, mudancas = {}) {
   if (!podeResponder(e)) return avisoDoServidor(e, mudancas);

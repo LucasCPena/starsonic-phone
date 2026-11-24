@@ -822,13 +822,12 @@ func idDaMensagem(dados []byte, campo string) (string, bool) {
 
 // respostaDoColega trata o aceitar, o recusar (com o pedido), o tirar (com o participante) e o encerrar: as rotas do
 // app com o mesmo nome, pelo canal. Valem só no canal cujo pedido é o de um colega (o ColegaDoPedido), também o que
-// voltou pelo voltar com um bilhete comum; em outro canal, ou com o campo que falta ou não é um id, a resposta é o
-// erro invalido, e o canal fica. A pessoa e o computador do participante são lidos de novo a cada resposta, como as
-// rotas do app fazem a cada pedido: a pessoa que saiu da empresa, ou o computador desligado do chat, recebe o erro
-// invalido, e o canal fecha. As regras são as do gerente, pela pessoa: o colega tem de estar na reunião. O que dá
-// certo é confirmado com o feito (o aceitar, o recusar e o tirar) além do participantes novo, ou termina no encerrada;
-// o que falha recebe o recusa. Nada disso
-// vai ao log, a não ser o código de uma falha do servidor de vídeo.
+// voltou pelo voltar com um bilhete comum; em outro canal, ou com o campo que falta ou não é um id, a resposta é o erro
+// invalido, e o canal fica. A pessoa e o computador do participante são lidos de novo a cada resposta, como as rotas do
+// app fazem a cada pedido: a pessoa que saiu da empresa, ou o computador desligado do chat, recebe o erro invalido, e o
+// canal fecha. As regras são as do gerente, pela pessoa: o colega tem de estar na reunião. O que dá certo é confirmado
+// com o feito (o aceitar, o recusar e o tirar) além do participantes novo, ou termina no encerrada; o que falha recebe
+// o recusa. Nada disso vai ao log, a não ser o código de uma falha do servidor de vídeo.
 func (s *servidor) respostaDoColega(c *canalPagina, st *estadoDaPagina, tipo string, dados []byte) {
 	pessoa, computador, ok := s.gerente.ColegaDoPedido(st.pedido)
 	if !ok {
