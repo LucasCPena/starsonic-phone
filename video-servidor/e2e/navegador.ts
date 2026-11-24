@@ -1065,8 +1065,9 @@ export class Pagina {
   }
 
   /** O console da página não tem segredo nenhum nem erro, e nenhuma violação da CSP aconteceu (o WSS do vídeo, por
-   * exemplo). Uma linha com segredo é só contada: o relatório do CI é público. */
-  async conferirOConsole(): Promise<void> {
+   * exemplo). Uma linha com segredo é só contada: o relatório do CI é público. O erroEsperado tira dos erros os que o
+   * teste espera (o 401 de um abrir que o chat recusa, por exemplo), e só deles. */
+  async conferirOConsole(erroEsperado?: RegExp): Promise<void> {
     const violacoes = await this.alvo.evaluate(
       () => (window as unknown as { violacoesDoTeste: string[] }).violacoesDoTeste,
     );
@@ -1077,7 +1078,9 @@ export class Pagina {
     // O palco leva os nomes, e nada dele vai ao console: uma linha com um nome é só contada, como a com um segredo.
     const comNome = this.console.filter((l) => NOMES.some((n) => l.includes(n))).length;
     expect(comNome, `as linhas do console de ${this.pessoa.letra} com o nome de uma pessoa`).toBe(0);
-    const erros = this.console.filter((l) => /^\[(error|pageerror)\]/.test(l) || /Content.Security.Policy/i.test(l));
+    const erros = this.console
+      .filter((l) => /^\[(error|pageerror)\]/.test(l) || /Content.Security.Policy/i.test(l))
+      .filter((l) => !erroEsperado?.test(l));
     expect(erros, `os erros no console de ${this.pessoa.letra}`).toEqual([]);
   }
 

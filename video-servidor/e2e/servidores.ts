@@ -1,7 +1,9 @@
 // Os servidores do teste vistos pelos testes: os endereços, a página de administração do chat (a reunião de teste e a
 // preparação do ambiente.ts), a API do chat como um computador (o app da Ana, com os eventos do WebSocket dele) e o
-// que os testes anotam para conferir os registros no fim.
-import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+// que os testes anotam para conferir os registros no fim, e o chat que um teste reinicia.
+import { spawn } from 'node:child_process';
+import { appendFileSync, closeSync, existsSync, openSync, readFileSync, writeFileSync } from 'node:fs';
+import { createConnection } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { repetirAte } from './espera';
@@ -415,6 +417,153 @@ export async function computadorDeOutraEmpresa(): Promise<Computador> {
   const { chave, pc } = await ligarComputador(codigo, 'PC-3001', '3001', 'Roberto Alves');
   anotarSegredos({ chave });
   return pc;
+}
+
+// --- O processo do chat, que um teste reinicia -------------------------------------------------------------------
+
+// O pid, o comando e os argumentos do chat no ar: o ambiente.ts o anota depois de subi-lo, o reiniciarOChat troca o
+// pid pelo do chat novo, e a volta do ambiente.ts para o que o arquivo diz. O arquivo é da pasta privada, e nada dele
+// vai às mensagens de erro, ao console ou a um anexo: os argumentos têm a pasta dos dados.
+const PROCESSO_DO_CHAT = join(PRIVADO, 'chat-processo.json');
+
+interface ProcessoDoChat {
+  pid: number;
+  comando: string;
+  args: string[];
+}
+
+/** Anota o processo do chat que acabou de subir. */
+export function anotarOChat(processo: ProcessoDoChat): void {
+  writeFileSync(PROCESSO_DO_CHAT, JSON.stringify(processo), { mode: 0o600 });
+}
+
+function processoAnotado(): ProcessoDoChat {
+  if (!existsSync(PROCESSO_DO_CHAT)) throw new Error('falta o chat-processo.json (o ambiente.ts não rodou)');
+  const p = JSON.parse(readFileSync(PROCESSO_DO_CHAT, 'utf8')) as Partial<ProcessoDoChat>;
+  if (!Number.isInteger(p.pid) || (p.pid as number) <= 1 || typeof p.comando !== 'string' || !Array.isArray(p.args)) {
+    throw new Error('o chat-processo.json não diz um processo do chat');
+  }
+  return p as ProcessoDoChat;
+}
+
+/** O processo ainda está vivo: existe e não é um zumbi (que já saiu, e só espera o pai o recolher). Só no Linux. */
+function vivo(pid: number): boolean {
+  try {
+    // O estado vem depois do nome, que fica entre parênteses e pode ter espaços.
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    return !/^[ZX]/.test(stat.slice(stat.lastIndexOf(')') + 2));
+  } catch {
+    return false;
+  }
+}
+
+/** O processo com o pid é o chat que o arquivo descreve: a linha de comando dele é o comando e os argumentos
+ * anotados. Sem isso, um arquivo velho mandaria o sinal a outro processo. Só no Linux. */
+function eOChat(p: ProcessoDoChat): boolean {
+  if (process.platform !== 'linux') throw new Error('o reinício do chat só sabe conferir o processo no Linux');
+  let linha: string;
+  try {
+    linha = readFileSync(`/proc/${p.pid}/cmdline`, 'utf8');
+  } catch {
+    return false;
+  }
+  const argv = linha.split('\0');
+  if (argv.at(-1) === '') argv.pop();
+  const anotado = [p.comando, ...p.args];
+  return argv.length === anotado.length && argv.every((a, i) => a === anotado[i]);
+}
+
+/** A porta do chat aceita uma conexão. */
+function chatAceita(): Promise<boolean> {
+  const { hostname, port } = new URL(CHAT);
+  return new Promise((ok) => {
+    const s = createConnection({ host: hostname, port: Number(port) });
+    s.once('connect', () => {
+      s.destroy();
+      ok(true);
+    });
+    s.once('error', () => ok(false));
+  });
+}
+
+/** Espera a condição, de 100 em 100 ms, até prazo ms; devolve se ela valeu. */
+async function ate(prazo: number, condicao: () => boolean | Promise<boolean>): Promise<boolean> {
+  try {
+    await repetirAte(prazo, 100, condicao, (v) => v, () => 'sem a condição');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** O sinal ao chat anotado, só depois de conferir que o pid é ele. */
+function sinalAoChat(p: ProcessoDoChat, sinal: NodeJS.Signals): void {
+  if (!eOChat(p)) throw new Error('o processo do chat-processo.json não é o chat anotado (o arquivo está velho?)');
+  process.kill(p.pid, sinal);
+}
+
+/**
+ * Para o chat que o chat-processo.json diz: o SIGTERM e, se ele não sair em prazo ms, o SIGKILL. Um chat que já saiu
+ * não é erro; um pid que é de outro processo é, e nenhum sinal sai. O fim é o processo fora e a porta do chat fechada.
+ */
+export async function pararOChatAnotado(prazo: number): Promise<void> {
+  const p = processoAnotado();
+  if (!vivo(p.pid)) return;
+  sinalAoChat(p, 'SIGTERM');
+  const parou = async () => !vivo(p.pid) && !(await chatAceita());
+  if (await ate(prazo, parou)) return;
+  if (vivo(p.pid)) sinalAoChat(p, 'SIGKILL');
+  if (!(await ate(5_000, parou))) throw new Error('o chat não parou nem com o SIGKILL');
+}
+
+/**
+ * Reinicia o chat: o para (o SIGTERM, e o SIGKILL depois de 10 s) e sobe o mesmo comando, com os mesmos argumentos e
+ * os mesmos dados (a empresa, o computador da Ana e as reuniões marcadas continuam), e a saída acrescentada ao
+ * chat.log. O que o chat guardava na memória some. O chat novo é de outro grupo de processos e não fica preso a este:
+ * ele sobrevive ao processo do Playwright que o subiu (um teste que falha troca o processo), e a volta do ambiente.ts o
+ * para pelo arquivo. A sessão da administração é esquecida: a próxima chamada entra de novo.
+ */
+export async function reiniciarOChat(): Promise<void> {
+  const antigo = processoAnotado();
+  if (!vivo(antigo.pid)) throw new Error('o chat anotado no chat-processo.json não está no ar');
+  await pararOChatAnotado(10_000);
+
+  const log = openSync(REGISTROS.chat, 'a');
+  let erro: Error | undefined;
+  let saiu = false;
+  try {
+    const filho = spawn(antigo.comando, antigo.args, { stdio: ['ignore', log, log], detached: true });
+    filho.on('error', (e) => {
+      erro = e;
+    });
+    filho.on('exit', () => {
+      saiu = true;
+    });
+    filho.unref();
+    if (filho.pid === undefined) throw new Error('o chat novo não subiu');
+    anotarOChat({ ...antigo, pid: filho.pid });
+  } finally {
+    closeSync(log);
+  }
+
+  await repetirAte(
+    30_000,
+    200,
+    async () => {
+      if (erro) throw new Error(`o chat novo não subiu (${(erro as NodeJS.ErrnoException).code ?? 'erro'})`);
+      if (saiu) throw new Error(`o chat novo saiu; veja ${REGISTROS.chat}`);
+      try {
+        const r = await fetch(`${CHAT}/admin/entrar`);
+        return r.status === 200 || `respondeu ${r.status}`;
+      } catch (e) {
+        return (e as Error).message;
+      }
+    },
+    (visto) => visto === true,
+    (visto) => `o chat novo: o /admin/entrar não respondeu 200 em 30 s; o último: ${visto}`,
+  );
+  cookies.clear();
+  sessao = null;
 }
 
 // --- A API do chat como um computador ----------------------------------------------------------------------------------

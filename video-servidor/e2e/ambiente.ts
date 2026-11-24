@@ -17,9 +17,11 @@ import { repetirAte } from './espera';
 import { gerarMidia } from './midia';
 import {
   AGENTE,
+  anotarOChat,
   CHAT,
   ORIGENS_DO_SIP,
   PAGINA,
+  pararOChatAnotado,
   prepararChat,
   PRIVADO,
   RAIZ,
@@ -201,8 +203,20 @@ export default async function ambiente(): Promise<() => Promise<void>> {
   if (configurar.status !== 0) throw new Error(`o configurar --teste falhou: ${configurar.stderr}`);
 
   const servidores: Servidor[] = [];
+  // O chat de agora é o que o chat-processo.json diz: o reiniciarOChat de um teste troca o que o ambiente subiu por
+  // outro, que não é filho deste processo. Ele para primeiro, na vez do chat; o filho daqui que já saiu não é erro.
+  let chatAnotado = false;
   const pararTudo = async () => {
-    for (const s of [...servidores].reverse()) await parar(s, 20_000);
+    let erro: unknown;
+    for (const s of [...servidores].reverse()) {
+      if (s.nome === 'chat' && chatAnotado) {
+        await pararOChatAnotado(20_000).catch((e) => {
+          erro = e;
+        });
+      }
+      await parar(s, 20_000);
+    }
+    if (erro) throw erro;
   };
   try {
     // O FreeSWITCH, com as pastas da unidade do systemd (as que ele escreve juntas, numa pasta que some). O stdbuf
@@ -243,10 +257,13 @@ export default async function ambiente(): Promise<() => Promise<void>> {
     const criar = spawnSync(chat, ['admin-criar', 'teste', '--dados', dados], { input: `${senha}\n${senha}\n`, encoding: 'utf8' });
     if (criar.status !== 0) throw new Error(`o admin-criar falhou: ${criar.stdout}`.replaceAll(senha, '***'));
     process.env.CHAT_ADMIN_SENHA = senha;
-    servidores.push(
-      subir('chat', chat, ['servir', '--teste', '--escutar', '127.0.0.1:4191', '--dados', dados, '--origem', PAGINA],
-        REGISTROS.chat),
-    );
+    const argsDoChat = ['servir', '--teste', '--escutar', '127.0.0.1:4191', '--dados', dados, '--origem', PAGINA];
+    const doChat = subir('chat', chat, argsDoChat, REGISTROS.chat);
+    servidores.push(doChat);
+    if (doChat.filho.pid !== undefined) {
+      anotarOChat({ pid: doChat.filho.pid, comando: chat, args: argsDoChat });
+      chatAnotado = true;
+    }
     await esperarAte('o chat', 30_000, servidores, async () => ok200(await fetch(`${CHAT}/admin/entrar`)));
 
     servidores.push(

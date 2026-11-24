@@ -347,6 +347,9 @@ test.describe.serial('o chat e o sinalizador, com três pessoas na reunião de t
     const [carlos, bia, maria] = asTres();
     await maria.botao('Sair').click();
     await expect(maria.titulo('Você saiu da reunião')).toBeVisible();
+    // O chat só sabe da saída quando o agente a conta, e até lá ainda repassa o chat a C. O palco sem ela, na página
+    // de A, é o chat que já sabe: só ele o manda.
+    await carlos.esperarQuadros(['Você', 'Bia Ramos'], 30_000);
     const antes = canalDeC.recebidos.length;
 
     await escrever(carlos, DEPOIS_DA_SAIDA);
