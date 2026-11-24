@@ -117,8 +117,9 @@
 // reunião: ele desfaz a pausa ali mesmo, e as repetições daquela vez ficam de fora (a página lembra as últimas
 // MAX_VEZES_DESFEITAS). A página dentro do app ignora a pausa do canal, e a de quem é de fora também. O bloqueio da
 // sessão do Windows (o bloqueio do app) desliga só a câmera, e a volta de um não desfaz o outro. Na pausa, o
-// Microfone, a Câmera e o Compartilhar a tela não fazem nada. A pausa que chega com a página entrando fica guardada e
-// vale assim que ela entra; fora da reunião, a pausa não faz nada, e a saída (por qualquer fim) a desfaz.
+// Microfone, a Câmera e o Compartilhar a tela não fazem nada. A pausa e o bloqueio que chegam com a página entrando
+// valem na hora, e a pausa fica guardada até ela entrar; fora da reunião e da entrada nela, a pausa e o bloqueio não
+// fazem nada, e a saída (por qualquer fim) os desfaz.
 
 import { AVISO_SEM_CUIDAR, LISTA_VAZIA, ditoDaResposta, lerLista, tituloDoCartao } from './colega.js';
 import { MAX_MENSAGENS, textoLimpo } from './mensagens.js';
@@ -331,14 +332,16 @@ export function inicial() {
     prontas: 0,
     passeRecusado: false,
     // A pausa: a de agora ({origem: 'app' ou 'canal', vez, mic, cam}, com o microfone e a câmera de antes dela; a vez
-    // é null na do app), a que chegou com a página entrando ({origem, vez}), as últimas vezes desfeitas pelo Voltar
-    // para a reunião, e o bloqueio da sessão do Windows ({cam}, a câmera de antes dele). O cameraDeNovo: a câmera
-    // mudou com uma troca dela no caminho, e outra troca a acerta quando aquela responder.
+    // é null na do app), a que chegou com a página entrando (igual, e já valendo), as últimas vezes desfeitas pelo
+    // Voltar para a reunião, e o bloqueio da sessão do Windows ({cam}, a câmera de antes dele). O cameraDeNovo: a
+    // câmera mudou com uma troca dela no caminho, e outra troca a acerta quando aquela responder. O camDaLigacao: a
+    // câmera na hora do último ligar da principal, que o confirmada dela acerta com a de agora.
     pausa: null,
     pausaPendente: null,
     vezesDesfeitas: Object.freeze([]),
     bloqueio: null,
     cameraDeNovo: false,
+    camDaLigacao: null,
   };
 }
 
@@ -487,10 +490,11 @@ function soNaReuniao(e) {
   // A entrada de novo sozinha também: a saída (a pessoa saiu, a ligação caiu) a interrompe, e o passe que ela esperava
   // é esquecido, para o prazo dele não levar ninguém à entrada de quem é de fora.
   if (f.tela !== 'reuniao' && f.reentrando !== null) f = { ...f, reentrando: null, esperandoPasse: false };
-  // A pausa e o bloqueio são da tela da reunião; a pausa guardada, também da tela entrando. O microfone e a câmera
-  // ficam como a pausa os deixou: a próxima entrada começa com eles desligados.
-  if (f.tela !== 'reuniao' && (f.pausa !== null || f.bloqueio !== null)) f = { ...f, pausa: null, bloqueio: null };
-  if (f.tela !== 'reuniao' && f.tela !== 'entrando' && f.pausaPendente !== null) f = { ...f, pausaPendente: null };
+  // A pausa (também a guardada) e o bloqueio são da tela da reunião e da tela entrando. O microfone e a câmera ficam
+  // como a pausa os deixou: a próxima entrada começa com eles desligados.
+  if (!naTelaDaPausa(f) && (f.pausa !== null || f.pausaPendente !== null || f.bloqueio !== null)) {
+    f = { ...f, pausa: null, pausaPendente: null, bloqueio: null };
+  }
   return f;
 }
 
@@ -818,8 +822,12 @@ export function paraOApp(estado) {
 
 // ---- A pausa ----
 
-// O som da reunião está calado: a pausa vale.
-const calado = (e) => e.pausa !== null;
+// A pausa e o bloqueio valem na tela da reunião e na tela entrando.
+const naTelaDaPausa = (e) => e.tela === 'reuniao' || e.tela === 'entrando';
+// A pausa que vale: a da reunião, ou a guardada da página entrando.
+const pausaDeAgora = (e) => e.pausa ?? e.pausaPendente;
+// O som da reunião está calado: a pausa vale (também a que chegou com a página entrando).
+const calado = (e) => pausaDeAgora(e) !== null;
 // O cartão "Você está numa ligação…" está à vista: o da pausa que chegou pelo canal, na tela da reunião.
 const comOCartaoDaPausa = (e) => e.tela === 'reuniao' && e.pausa?.origem === 'canal';
 // A câmera está presa desligada: pela pausa ou pelo bloqueio.
@@ -853,40 +861,39 @@ function levarAMidia(e, mic, cam) {
   return { mudancas, efeitos };
 }
 
-// A pausa pedida (pelo app, ou pelo canal com a vez). Na tela entrando, ela fica guardada para quando a página entrar;
-// fora da reunião, nada. Em cima de outra, ela só troca a vez (a ligação nova no app): o que a primeira guardou fica.
+// A pausa pedida (pelo app, ou pelo canal com a vez). Na tela entrando, ela vale na hora, como na reunião, e fica
+// guardada (a pausaPendente) para quando a página entrar; fora das duas, nada. Em cima de outra, ela só troca a vez (a
+// ligação nova no app): o que a primeira guardou fica.
 function pausar(e, origem, vez) {
-  if (e.tela === 'entrando') {
-    const igual = e.pausaPendente?.origem === origem && e.pausaPendente.vez === vez;
-    return igual ? nada(e) : com(e, { pausaPendente: { origem, vez } });
-  }
-  if (e.tela !== 'reuniao') return nada(e);
-  if (e.pausa !== null) return e.pausa.vez === vez ? nada(e) : com(e, { pausa: { ...e.pausa, vez } });
-  return comecarAPausa(e, origem, vez);
+  if (!naTelaDaPausa(e)) return nada(e);
+  const campo = e.tela === 'reuniao' ? 'pausa' : 'pausaPendente';
+  const atual = e[campo];
+  if (atual !== null) return atual.vez === vez ? nada(e) : com(e, { [campo]: { ...atual, vez } });
+  return comecarAPausa(e, campo, origem, vez);
 }
 
-// A pausa começa: ela guarda o microfone e a câmera de agora (a câmera de antes do bloqueio, se houver), desliga os
-// dois e para a tela compartilhada (o Parar de compartilhar de hoje). O aviso da câmera e o calar nascem no fim da
-// transicao.
-function comecarAPausa(e, origem, vez) {
+// A pausa começa (no campo dela: a pausa, ou a pausaPendente da página entrando): ela guarda o microfone e a câmera de
+// agora (a câmera de antes do bloqueio, se houver), desliga os dois e para a tela compartilhada (o Parar de
+// compartilhar de hoje). O aviso da câmera e o calar nascem no fim da transicao.
+function comecarAPausa(e, campo, origem, vez) {
   const pausa = { origem, vez, mic: e.mic, cam: e.bloqueio?.cam ?? e.cam };
   const midia = levarAMidia(e, desligado(e.mic), desligado(e.cam));
   const tela = pararDeCompartilhar({ ...e, ...midia.mudancas });
-  return com(tela.estado, { pausa, pausaPendente: null }, ...midia.efeitos, ...tela.efeitos);
+  return com(tela.estado, { [campo]: pausa }, ...midia.efeitos, ...tela.efeitos);
 }
 
-// O retomar do app, ou o pausada falso do canal: a pausa daquela origem acaba (ou a guardada é apagada).
+// O retomar do app, ou o pausada falso do canal: a pausa daquela origem acaba, também a guardada.
 function retomar(e, origem) {
-  if (e.pausaPendente?.origem === origem) return com(e, { pausaPendente: null });
-  return e.pausa?.origem === origem ? acabarAPausa(e) : nada(e);
+  if (e.pausaPendente?.origem === origem) return acabarAPausa(e, 'pausaPendente');
+  return e.pausa?.origem === origem ? acabarAPausa(e, 'pausa') : nada(e);
 }
 
-// A pausa acaba: o microfone e a câmera voltam como eram (a câmera, só sem o bloqueio), e o som volta. A tela
-// compartilhada não volta.
-function acabarAPausa(e, mudancas = {}) {
-  const { mic, cam } = e.pausa;
+// A pausa acaba (a do campo dado): o microfone e a câmera voltam como eram (a câmera, só sem o bloqueio), e o som
+// volta. A tela compartilhada não volta.
+function acabarAPausa(e, campo, mudancas = {}) {
+  const { mic, cam } = e[campo];
   const midia = levarAMidia(e, devolvido(e.mic, mic), e.bloqueio === null ? devolvido(e.cam, cam) : e.cam);
-  return com(e, { ...midia.mudancas, ...mudancas, pausa: null }, ...midia.efeitos);
+  return com(e, { ...midia.mudancas, ...mudancas, [campo]: null }, ...midia.efeitos);
 }
 
 // A mensagem pausa do canal (seção 10 do protocolo): só a página do colega no navegador a segue. A vez que o Voltar
@@ -903,29 +910,30 @@ function pausaDoCanal(e, { pausada, vez }) {
 function voltarDaPausa(e) {
   if (e.tela !== 'reuniao' || e.pausa?.origem !== 'canal') return nada(e);
   const vezesDesfeitas = [...e.vezesDesfeitas, e.pausa.vez].slice(-MAX_VEZES_DESFEITAS);
-  return acabarAPausa(e, { vezesDesfeitas });
+  return acabarAPausa(e, 'pausa', { vezesDesfeitas });
 }
 
-// O bloqueio da sessão do Windows, na reunião: ligado, a câmera desliga; desligado, ela volta como era, se a pausa
-// não a segurar. O ligado que não é um sim ou não fica de fora.
+// O bloqueio da sessão do Windows, na reunião e com a página entrando: ligado, a câmera desliga; desligado, ela volta
+// como era, se a pausa não a segurar. O ligado que não é um sim ou não fica de fora.
 function bloquear(e, ligado) {
-  if (typeof ligado !== 'boolean' || e.tela !== 'reuniao') return nada(e);
+  if (typeof ligado !== 'boolean' || !naTelaDaPausa(e)) return nada(e);
+  const pausa = pausaDeAgora(e);
   if (ligado) {
     if (e.bloqueio !== null) return nada(e);
     const midia = levarAMidia(e, e.mic, desligado(e.cam));
-    return com(e, { ...midia.mudancas, bloqueio: { cam: e.pausa?.cam ?? e.cam } }, ...midia.efeitos);
+    return com(e, { ...midia.mudancas, bloqueio: { cam: pausa?.cam ?? e.cam } }, ...midia.efeitos);
   }
   if (e.bloqueio === null) return nada(e);
-  const midia = levarAMidia(e, e.mic, e.pausa === null ? devolvido(e.cam, e.bloqueio.cam) : e.cam);
+  const midia = levarAMidia(e, e.mic, pausa === null ? devolvido(e.cam, e.bloqueio.cam) : e.cam);
   return com(e, { ...midia.mudancas, bloqueio: null }, ...midia.efeitos);
 }
 
-// A página entrou na reunião (o confirmada da principal): a pausa guardada vale agora.
+// A página entrou na reunião (o confirmada da principal): a pausa guardada passa a ser a da reunião, com o que ela
+// guardou. O microfone e a câmera já estão desligados, e o som, calado.
 function comAPausaGuardada(r) {
   const { pausaPendente } = r.estado;
   if (pausaPendente === null || r.estado.tela !== 'reuniao') return r;
-  const p = comecarAPausa(r.estado, pausaPendente.origem, pausaPendente.vez);
-  return so(p.estado, ...r.efeitos, ...p.efeitos);
+  return com(r.estado, { pausa: pausaPendente, pausaPendente: null }, ...r.efeitos);
 }
 
 // ---- O chat da reunião ----
@@ -1256,10 +1264,11 @@ function linkInvalidoDoVoltar(e) {
   return e.colega !== null ? deixarDeCuidar(e) : pararDeReligar(e);
 }
 
-// A senha da principal chegou: liga, ou a guarda até a mídia chegar.
+// A senha da principal chegou: liga, ou a guarda até a mídia chegar. O ligar sobe com a câmera de agora, que fica
+// lembrada (o camDaLigacao).
 function comSenha(e, senha, mudancas = {}) {
   if (e.esperandoMidia) return com(e, { ...mudancas, principal: 'pedindo', senhaGuardada: senha });
-  return com(e, { ...mudancas, principal: 'ligando' }, ligar('principal', senha));
+  return com(e, { ...mudancas, principal: 'ligando', camDaLigacao: e.cam }, ligar('principal', senha));
 }
 
 // O erro responde ao que a página pediu: a tela, uma senha ou o pedir. O do senha da volta (o limite de 5 por minuto,
@@ -1275,14 +1284,28 @@ function erro(e, qual) {
   return avisar(e, 'semServidor');
 }
 
+// A câmera do estado não é a do último ligar da principal; a que falta, de um lado ou do outro, não se acerta.
+const cameraDiferenteDaLigacao = (e) =>
+  e.camDaLigacao !== null &&
+  e.camDaLigacao !== 'indisponivel' &&
+  e.cam !== 'indisponivel' &&
+  e.cam !== e.camDaLigacao;
+
 // A ligação principal. Os eventos de uma ligação que a página desligou chegam com a principal em nenhuma, e ficam de
 // fora.
 function ligacaoPrincipal(e, o, codigo) {
   if (e.principal === 'ligando') {
     if (o === 'confirmada') {
       const mudancas = { tela: 'reuniao', principal: 'noAr', reconectando: 0, senhaRepetida: false };
+      // A câmera que mudou com a ligação subindo (a pausa, o bloqueio ou o retomar no caminho) é acertada agora.
+      const acerto = [];
+      if (cameraDiferenteDaLigacao(e)) {
+        mudancas.trocandoCamera = true;
+        acerto.push({ tipo: 'trocarCamera', ligada: e.cam === 'ligado' });
+      }
       // O canal que caiu no meio do ligar volta por trás, com a chave. A pausa que chegou com a página entrando vale.
-      return comAPausaGuardada(e.canal === 'fechado' && e.chave !== null ? religar(e, mudancas) : com(e, mudancas));
+      const religa = e.canal === 'fechado' && e.chave !== null;
+      return comAPausaGuardada(religa ? religar(e, mudancas, ...acerto) : com(e, mudancas, ...acerto));
     }
     // A ligação que perdeu a conexão no meio do ligar ainda existe: ela desce.
     const desce = o === 'semConexao' ? [desligar('principal')] : [];
@@ -1587,7 +1610,8 @@ function midia(e, { mic, cam }) {
   if (e.tela === 'aviso' && !DE_NOVO.has(e.aviso)) return com(e, { esperandoMidia: false }, PARAR_MIDIA);
   const mudancas = { mic: escolha(e.mic, mic), cam: escolha(e.cam, cam), esperandoMidia: false };
   if (e.senhaGuardada === null) return com(e, mudancas);
-  return com(e, { ...mudancas, principal: 'ligando', senhaGuardada: null }, ligar('principal', e.senhaGuardada));
+  const ligando = { ...mudancas, principal: 'ligando', senhaGuardada: null, camDaLigacao: mudancas.cam };
+  return com(e, ligando, ligar('principal', e.senhaGuardada));
 }
 
 // Os prazos que o esperar marcou. O que chega depois de a página mudar de rumo fica de fora, e a espera da volta e do

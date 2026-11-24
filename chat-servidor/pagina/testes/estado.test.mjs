@@ -197,6 +197,7 @@ test('o carregar abre', () => {
     vezesDesfeitas: [],
     bloqueio: null,
     cameraDeNovo: false,
+    camDaLigacao: null,
   });
   const r = passo(inicial(), COMECAR);
   assert.equal(r.estado.tela, 'carregando');
@@ -3775,41 +3776,36 @@ test('o retomar sem pausa', () => {
 });
 
 test('a pausa com a página entrando', () => {
-  // No app: o pausar fica guardado, e nada muda ainda.
+  // No app: o pausar vale na hora (o microfone vai à ligação subindo, e o som cala), e fica guardado.
   const e = noAppAceito();
   assert.equal(e.tela, 'entrando');
   let r = passo(e, PAUSAR);
-  assert.deepEqual(r.efeitos, []);
-  assert.deepEqual(r.estado.pausaPendente, { origem: 'app', vez: null });
+  assert.deepEqual(r.efeitos, [trocarMicrofone(false), camera(false), calar(true)]);
+  assert.deepEqual(r.estado.pausaPendente, { origem: 'app', vez: null, mic: 'ligado', cam: 'ligado' });
   assert.equal(r.estado.pausa, null);
-  assert.equal(r.estado.mic, 'ligado');
-  // A página entra já com tudo desligado e o som calado.
+  assert.equal(r.estado.mic, 'desligado');
+  assert.equal(r.estado.cam, 'desligado');
+  // A página entra com tudo desligado e o som já calado; a câmera que subiu com a ligação é desligada nela.
   r = passo(r.estado, ligacao('principal', 'confirmada'));
   assert.equal(r.estado.tela, 'reuniao');
   assert.equal(r.estado.pausaPendente, null);
   assert.deepEqual(r.estado.pausa, { origem: 'app', vez: null, mic: 'ligado', cam: 'ligado' });
   assert.equal(r.estado.mic, 'desligado');
   assert.equal(r.estado.cam, 'desligado');
-  assert.deepEqual(r.efeitos, [trocarMicrofone(false), trocarCamera(false), camera(false), calar(true), FOCAR]);
+  assert.deepEqual(r.efeitos, [trocarCamera(false), FOCAR]);
   // O retomar antes disso a apaga: a página entra como entraria.
   assert.deepEqual(
     rodar(e, PAUSAR, RETOMAR, ligacao('principal', 'confirmada')),
     passo(e, ligacao('principal', 'confirmada')),
   );
-  // No navegador, o pausa do canal: guardado, e o cartão aparece quando a página entra.
+  // No navegador, o pausa do canal: vale na hora e fica guardado, e o cartão aparece quando a página entra.
   r = passo(colegaAceito(), pausa(true, 'v1'));
-  assert.deepEqual(r.estado.pausaPendente, { origem: 'canal', vez: 'v1' });
+  assert.deepEqual(r.efeitos, [trocarMicrofone(false), camera(false), calar(true)]);
+  assert.deepEqual(r.estado.pausaPendente, { origem: 'canal', vez: 'v1', mic: 'ligado', cam: 'ligado' });
   semMudar(r.estado, pausa(true, 'v1'));
   r = passo(r.estado, ligacao('principal', 'confirmada'));
   assert.deepEqual(r.estado.pausa, { origem: 'canal', vez: 'v1', mic: 'ligado', cam: 'ligado' });
-  assert.deepEqual(r.efeitos, [
-    trocarMicrofone(false),
-    trocarCamera(false),
-    camera(false),
-    calar(true),
-    FOCAR,
-    dizer(FRASE_DA_PAUSA),
-  ]);
+  assert.deepEqual(r.efeitos, [trocarCamera(false), FOCAR, dizer(FRASE_DA_PAUSA)]);
   // O pausada falso antes disso também a apaga; a repetição com outra vez fica com a vez nova.
   const c = colegaAceito();
   assert.deepEqual(
@@ -3817,11 +3813,70 @@ test('a pausa com a página entrando', () => {
     passo(c, ligacao('principal', 'confirmada')),
   );
   const outraVez = rodar(c, pausa(true, 'v1'), pausa(true, 'v2')).estado;
-  assert.deepEqual(outraVez.pausaPendente, { origem: 'canal', vez: 'v2' });
-  // A pausa guardada que a página não chega a usar some com a saída.
+  assert.deepEqual(outraVez.pausaPendente, { origem: 'canal', vez: 'v2', mic: 'ligado', cam: 'ligado' });
+  // A pausa guardada some com a saída: o som volta, e o microfone e a câmera ficam como ela os deixou.
   r = rodar(e, PAUSAR, clique('sair'));
   assert.equal(r.estado.pausaPendente, null);
-  assert.ok(!r.efeitos.some((x) => x.tipo === 'calar'));
+  assert.deepEqual(r.efeitos.filter((x) => x.tipo === 'calar'), [calar(false)]);
+  assert.equal(r.estado.mic, 'desligado');
+  assert.equal(r.estado.cam, 'desligado');
+});
+
+test('a pausa que chega com a página entrando cala e desliga na hora', () => {
+  let r = passo(noAppAceito(), PAUSAR);
+  assert.deepEqual(r.efeitos, [trocarMicrofone(false), camera(false), calar(true)]);
+  assert.equal(r.estado.mic, 'desligado');
+  assert.equal(r.estado.cam, 'desligado');
+  assert.deepEqual(r.estado.pausaPendente, { origem: 'app', vez: null, mic: 'ligado', cam: 'ligado' });
+  // Ao entrar, a pausa vale com o que era antes dela, e a câmera que subiu com a ligação é desligada nela.
+  r = passo(r.estado, ligacao('principal', 'confirmada'));
+  assert.deepEqual(r.estado.pausa, { origem: 'app', vez: null, mic: 'ligado', cam: 'ligado' });
+  assert.equal(r.estado.pausaPendente, null);
+  assert.deepEqual(r.efeitos.filter((x) => x.tipo === 'trocarCamera'), [trocarCamera(false)]);
+  assert.equal(r.estado.trocandoCamera, true);
+  assert.deepEqual(r.efeitos.filter((x) => x.tipo === 'calar'), []); // já estava calado
+  // O retomar devolve os dois.
+  r = rodar(r.estado, CAMERA_TROCADA, RETOMAR);
+  assert.equal(r.estado.mic, 'ligado');
+  assert.equal(r.estado.cam, 'ligado');
+});
+
+test('o retomar antes de entrar devolve o que a pausa guardada desligou', () => {
+  const r = rodar(noAppAceito(), PAUSAR, RETOMAR);
+  assert.equal(r.estado.pausaPendente, null);
+  assert.equal(r.estado.mic, 'ligado');
+  assert.equal(r.estado.cam, 'ligado');
+  assert.deepEqual(r.efeitos, [trocarMicrofone(true), camera(true), calar(false)]);
+  // A ligação subiu com a câmera, e o estado a quer ligada: nada a acertar ao entrar.
+  const dentro = passo(r.estado, ligacao('principal', 'confirmada'));
+  assert.deepEqual(dentro.efeitos.filter((x) => x.tipo === 'trocarCamera'), []);
+});
+
+test('o bloqueio que chega com a página entrando desliga a câmera, e ela volta ao desbloquear', () => {
+  let r = passo(noAppAceito(), bloqueio(true));
+  assert.equal(r.estado.cam, 'desligado');
+  assert.deepEqual(r.estado.bloqueio, { cam: 'ligado' });
+  r = passo(r.estado, ligacao('principal', 'confirmada'));
+  assert.deepEqual(r.efeitos.filter((x) => x.tipo === 'trocarCamera'), [trocarCamera(false)]);
+  r = rodar(r.estado, CAMERA_TROCADA, bloqueio(false));
+  assert.equal(r.estado.cam, 'ligado');
+  assert.deepEqual(r.efeitos.filter((x) => x.tipo === 'trocarCamera'), [trocarCamera(true)]);
+});
+
+test('a câmera que mudou com a ligação da volta subindo é acertada quando ela entra', () => {
+  // Na volta depois da conexão caída, em pausa: a ligação sobe sem a câmera, e o retomar chega com ela subindo.
+  const queda = [
+    ligacao('principal', 'semConexao'),
+    tempo('reconectar:1'),
+    mensagem({ tipo: 'senha', senha: 'senha-r1' }),
+  ];
+  const subindo = rodar(noAppNaReuniao(), PAUSAR, CAMERA_TROCADA, ...queda);
+  assert.deepEqual(subindo.efeitos, [ligar('principal', 'senha-r1')]);
+  let r = passo(subindo.estado, RETOMAR);
+  assert.equal(r.estado.cam, 'ligado');
+  r = passo(r.estado, ligacao('principal', 'confirmada'));
+  assert.deepEqual(r.efeitos.filter((x) => x.tipo === 'trocarCamera'), [trocarCamera(true)]);
+  assert.equal(r.estado.trocandoCamera, true);
 });
 
 test('dentro do app, a pausa do canal não vale', () => {
