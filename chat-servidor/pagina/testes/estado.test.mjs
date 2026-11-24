@@ -185,6 +185,7 @@ test('o carregar abre', () => {
     cheiaAoAceitar: false,
     respondendo: [],
     semCuidar: false,
+    reentrando: null,
     queda: false,
     noApp: false,
     aparelhos: { microfone: '', altoFalante: '', camera: '' },
@@ -3037,6 +3038,111 @@ test('o deixou de cuidar acaba com a saída da reunião', () => {
   const caiu = passo(sem, ligacao('principal', 'semConexao')).estado;
   assert.equal(caiu.aviso, 'saiu');
   assert.equal(caiu.semCuidar, false);
+});
+
+test('o chat reiniciou com o colega na reunião, dentro do app: a página entra de novo sozinha', () => {
+  const OUTRO_PASSE = 'q'.repeat(43);
+  const OUTRA_CHAVE = 'd'.repeat(43);
+  const ACEITO_2 = { ...ACEITO, participante: 'participante-2', senha: 'senha-2', volta: VOLTA_2 };
+  let estado = seguir(
+    noAppComPartida(),
+    [
+      [canalFechou(1006), [esperar(2000, 'religar:1')]],
+      [tempo('religar:1'), [abrir(3), prazo(1)]],
+      // Outra partida: o voltar não sai, e a página pede outro passe ao app. A ligação de antes segue no ar.
+      [comPartida(abriu(3), 'partida-2'), [PRONTA, prazoDoPasse(2)]],
+      [passeDoApp(OUTRO_PASSE), [abrirCom(4, { passe: OUTRO_PASSE }), prazo(2)]],
+      [comPartida(abriuColega(4, { ...COLEGA, chave: OUTRA_CHAVE }), 'partida-2'), [abrirCanal(4)]],
+      [CANAL_ABRIU, [ENTRAR]],
+    ],
+    (e) => {
+      assert.equal(e.tela, 'reuniao');
+      assert.equal(e.principal, 'noAr');
+      assert.equal(e.semCuidar, false);
+    },
+  );
+  assert.equal(estado.reentrando, 'entrando');
+  assert.equal(estado.chaveDoColega, OUTRA_CHAVE);
+  assert.equal(estado.partida, 'partida-2');
+  assert.deepEqual(estado.lista, { participantes: [], pedidos: [] });
+  // O aceito do canal novo: as duas ligações de antes descem, e a volta de hoje sobe a nova, com uma senha nova.
+  let r = passo(estado, mensagem(ACEITO_2));
+  assert.deepEqual(r.efeitos, [...DESLIGAR_AS_DUAS, esperar(2000, 'reconectar:3'), camera(true)]);
+  assert.equal(r.estado.reentrando, null);
+  assert.equal(r.estado.reconectando, 1);
+  assert.equal(r.estado.canal, 'aberto');
+  assert.deepEqual(r.estado.chave, { participante: 'participante-2', volta: VOLTA_2 });
+  estado = seguir(r.estado, [
+    [tempo('reconectar:3'), [SENHA, prazo(3)]],
+    [mensagem({ tipo: 'senha', senha: 'senha-3' }), [ligar('principal', 'senha-3')]],
+  ]);
+  r = passo(estado, ligacao('principal', 'confirmada'));
+  assert.equal(r.estado.tela, 'reuniao');
+  assert.equal(r.estado.principal, 'noAr');
+  assert.equal(r.estado.reconectando, 0);
+  // O microfone e a câmera ficam como estavam, e a lista nova chega pelo canal novo.
+  assert.equal(r.estado.mic, 'ligado');
+  assert.equal(r.estado.cam, 'ligado');
+  assert.deepEqual(passo(r.estado, lista([EU], [])).estado.lista, { participantes: [EU], pedidos: [] });
+});
+
+test('a volta sozinha que não dá certo é o deixou de cuidar, com a ligação de antes no ar', () => {
+  const pedindo = rodar(noAppComPartida(), ...REINICIOU).estado;
+  const abrindo = passo(pedindo, passeDoApp('q'.repeat(43))).estado;
+  const entrando = rodar(abrindo, comPartida(abriuColega(4, COLEGA), 'partida-2'), CANAL_ABRIU).estado;
+  const falhas = [
+    [pedindo, tempo('passe:2'), []], // o app não mandou o passe
+    [abrindo, abrirFalhou(4, 0), []], // a rede
+    [abrindo, abrirFalhou(4, 429, 30), []],
+    [abrindo, abrirFalhou(4, 404), []], // o link deixou de valer: quem está na reunião continua nela
+    [abrindo, tempo('prazo:2'), []],
+    [abrindo, comPartida(abriu(4), 'partida-2'), []], // o abrir que não reconheceu o colega
+    [entrando, mensagem({ tipo: 'cheia' }), [FECHAR_CANAL]],
+    [entrando, mensagem({ tipo: 'semServidor' }), [FECHAR_CANAL]],
+    [entrando, mensagem({ tipo: 'linkInvalido' }), [FECHAR_CANAL]],
+    [entrando, mensagem({ tipo: 'erro', erro: 'invalido' }), [FECHAR_CANAL]],
+    [entrando, canalFechou(1006), []],
+    [entrando, tempo('prazo:2'), [FECHAR_CANAL]],
+  ];
+  for (const [antes, evento, antesDoAviso] of falhas) {
+    const r = passo(antes, evento);
+    assert.deepEqual(r.efeitos, [...antesDoAviso, dizer(SEM_CUIDAR)], JSON.stringify(evento));
+    assert.equal(r.estado.semCuidar, true);
+    assert.equal(r.estado.reentrando, null);
+    assert.equal(r.estado.principal, 'noAr');
+    assert.equal(r.estado.canal, 'fechado');
+    assert.equal(r.estado.esperandoPasse, false);
+    assert.equal(r.estado.passe, null);
+  }
+});
+
+test('na volta sozinha, o primeiro passe que não vale pede outro, e o segundo é o deixou de cuidar', () => {
+  const abrindo = rodar(noAppComPartida(), ...REINICIOU, passeDoApp('q'.repeat(43))).estado;
+  let r = passo(abrindo, passeRecusado(4));
+  assert.deepEqual(r.efeitos, [PRONTA, prazoDoPasse(3)]);
+  assert.equal(r.estado.reentrando, 'passe');
+  r = rodar(r.estado, passeDoApp('r'.repeat(43)), passeRecusado(5));
+  assert.deepEqual(r.efeitos, [dizer(SEM_CUIDAR)]);
+  assert.equal(r.estado.semCuidar, true);
+});
+
+test('a chave recusada sem o chat ter reiniciado nunca entra de novo sozinha', () => {
+  // A mesma partida: um colega tirou a pessoa, ou o servidor a esqueceu por outro motivo. Dentro do app, nada de
+  // pronta.
+  const voltando = [canalFechou(1006), tempo('religar:1'), comPartida(abriu(3)), CANAL_ABRIU];
+  const r = rodar(noAppComPartida(), ...voltando, RECUSADA_NO_RELIGAR);
+  assert.deepEqual(doAppNos(r.efeitos), []);
+  assert.equal(r.estado.reentrando, null);
+  assert.equal(r.estado.semCuidar, true);
+});
+
+test('quem sai no meio da volta sozinha não vira de fora quando o prazo do passe vence', () => {
+  const pedindo = rodar(noAppComPartida(), ...REINICIOU).estado;
+  const fora = passo(pedindo, clique('sair')).estado;
+  assert.equal(fora.reentrando, null);
+  assert.equal(fora.esperandoPasse, false);
+  semMudar(fora, tempo('passe:2'));
+  assert.notEqual(fora.colega, null);
 });
 
 // ---- A conversa com o app ----
