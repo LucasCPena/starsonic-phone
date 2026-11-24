@@ -421,6 +421,8 @@ A construção se corta em duas entregas, cada uma com o seu plano e a sua revis
 2. **O app `0.5.0`:** o núcleo, o executável e o instalador; a aba Reuniões; a vista da reunião e a convivência com as ligações.
 
 - **A prova no WebView2 de verdade vem antes da entrega 2 crescer:** a câmera, o microfone e a captura de tela dentro do `iframe`, na fumaça do Windows do GitHub. Se ela falhar, a construção para e volta ao responsável com as reservas da seção 14.
+  - **Nota de 24/11: a entrega 2 em três planos.** O primeiro é só a prova (`docs/superpowers/plans/2026-11-24-reunioes-etapa-2a-prova-no-webview2.md`): as regras do executável e a fumaça do Windows com um servidor do chat de verdade na máquina do teste, sem interface nova. Os outros dois são escritos com o resultado dela na mão: o que a página e o servidor do chat ainda devem ao colega (o item 3 da seção 12.1 e a nota de 24/11 da seção 7.5), e o app (o núcleo, o executável, o instalador e a interface). Cada plano tem a revisão dele, e a do último olha a entrega 2 inteira.
+  - **O jeito de apontar o app da fumaça para um servidor do chat** (a seção 16 o deixava para quem constrói): o app fala com o chat pelo nome de sempre, e a máquina do teste leva esse nome a um servidor do chat dela mesma. O app não ganha gancho de teste para isso.
 - **A ordem de instalar:** o servidor do chat primeiro, o app depois. O guia (`docs/chat-servidor.md`) e as notas da versão dizem isso.
 - **Os documentos que mudam:** o `docs/chat-protocolo.md` (as seções 2, 9, 10 e 12), o `docs/ponte-windows.md`, o `docs/chat-servidor.md`, o `docs/teste-manual.md`, e uma nota datada na spec de 12/11 dizendo o que esta troca.
 - A branch é nova, a partir da `main`. Quem publica as versões é o responsável, pelo GitHub.
