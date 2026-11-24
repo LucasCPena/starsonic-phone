@@ -267,14 +267,18 @@ test('o Aceitar sem o canal mostra o aviso do servidor', async ({ page }) => {
   const volta = await rede.canalNumero(2);
   await expect.poll(() => volta.tipos()).toEqual(['voltar']);
   await semCanal();
-  // O religar desiste (a chave recusada): a reunião segue sem o canal, e o clique também mostra o aviso.
+  // A chave recusada no religar: o colega deixa de cuidar da reunião. O canal fecha, o leitor de tela ouve o aviso, e
+  // a lista sai (o cartão do pedido some). O aviso à vista, no lugar do cartão e no painel, é de outra tarefa.
   volta.mandar({ tipo: 'erro', erro: 'invalido' });
   await expect.poll(() => volta.fechadoPelaPagina).not.toBeUndefined();
-  await semCanal();
-  // Nada foi pelos canais, e o pedido continua no cartão.
+  await expect(anuncio(page)).toHaveText(
+    'Você deixou de cuidar desta reunião. Para aceitar pedidos ou encerrar, saia e abra a reunião de novo pelo app.',
+  );
+  await expect(cartao(page)).toBeHidden();
+  // Nada foi pelos canais.
   expect(respostas(canal)).toEqual([]);
   expect(respostas(volta)).toEqual([]);
-  await expect(tituloDoCartao(page)).toHaveText('Maria Lima quer entrar');
+  expect(volta.tipos()).toEqual(['voltar']);
 });
 
 test('o nome não vira HTML', async ({ page }) => {

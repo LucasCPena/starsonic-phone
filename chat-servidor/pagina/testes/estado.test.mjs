@@ -184,6 +184,7 @@ test('o carregar abre', () => {
     encerrando: false,
     cheiaAoAceitar: false,
     respondendo: [],
+    semCuidar: false,
     queda: false,
     noApp: false,
     aparelhos: { microfone: '', altoFalante: '', camera: '' },
@@ -2636,12 +2637,12 @@ test('a recusa servidorVideo mostra o aviso curto do servidor', () => {
   assert.deepEqual(s.estado.avisoCurto, { n: 1, tipo: 'servidor' });
 });
 
-// O colega na reunião sem o canal: o religar em curso (o canal caiu, e a ligação segue no ar), e o religar que
-// desistiu (a chave recusada: a reunião segue sem o canal).
+// O colega na reunião sem o canal: o religar em curso (o canal caiu, e a ligação segue no ar), e o colega que deixou
+// de cuidar da reunião (a chave recusada no religar: o canal não volta mais, e a lista sai).
 const RECUSADA_NO_RELIGAR = mensagem({ tipo: 'erro', erro: 'invalido' });
 const colegaSemCanal = () => ({
   religando: passo(colegaComLista(), canalFechou(1006)).estado,
-  desistiu: rodar(colegaComLista(), canalFechou(1006), tempo('religar:1'), abriu(3), CANAL_ABRIU, RECUSADA_NO_RELIGAR)
+  semCuidar: rodar(colegaComLista(), canalFechou(1006), tempo('religar:1'), abriu(3), CANAL_ABRIU, RECUSADA_NO_RELIGAR)
     .estado,
 });
 // A resposta que não sai é como a recusa servidorVideo: nada vai ao canal, e o aviso curto do servidor aparece e é dito.
@@ -2651,34 +2652,44 @@ function comOAvisoDoServidor(antes, r) {
   assert.deepEqual(r.efeitos, [tempoDoAviso(n), dizer('O servidor de reuniões não respondeu')]);
   assert.deepEqual(r.estado.respondendo, []);
 }
+// Quem deixou de cuidar não tem mais ninguém na lista, nem o Encerrar para todos: o clique não faz nada.
+function semCuidarNaoFazNada(e, ...cliques) {
+  assert.equal(e.semCuidar, true);
+  assert.deepEqual(e.lista, { participantes: [], pedidos: [] });
+  for (const c of cliques) semMudar(e, c);
+}
 
 test('o aceitar sem o canal mostra o aviso do servidor', () => {
-  for (const [quando, e] of Object.entries(colegaSemCanal())) {
-    assert.notEqual(e.canal, 'aberto', quando);
-    comOAvisoDoServidor(e, passo(e, cliqueEm('aceitar', MARIA.id)));
-  }
+  for (const [quando, e] of Object.entries(colegaSemCanal())) assert.notEqual(e.canal, 'aberto', quando);
+  const { religando, semCuidar } = colegaSemCanal();
+  comOAvisoDoServidor(religando, passo(religando, cliqueEm('aceitar', MARIA.id)));
+  semCuidarNaoFazNada(semCuidar, cliqueEm('aceitar', MARIA.id));
 });
 
 test('o recusar sem o canal mostra o aviso do servidor', () => {
-  for (const e of Object.values(colegaSemCanal())) comOAvisoDoServidor(e, passo(e, cliqueEm('recusar', BIA.id)));
+  const { religando, semCuidar } = colegaSemCanal();
+  comOAvisoDoServidor(religando, passo(religando, cliqueEm('recusar', BIA.id)));
+  semCuidarNaoFazNada(semCuidar, cliqueEm('recusar', BIA.id));
 });
 
 test('o tirar sem o canal mostra o aviso do servidor, e a pergunta se desfaz', () => {
-  for (const e of Object.values(colegaSemCanal())) {
-    const perguntando = passo(e, cliqueEm('tirar', PEDRO.id)).estado;
-    const r = passo(perguntando, cliqueEm('tirarMesmo', PEDRO.id));
-    comOAvisoDoServidor(perguntando, r);
-    assert.equal(r.estado.tirando, null);
-  }
+  const { religando, semCuidar } = colegaSemCanal();
+  const perguntando = passo(religando, cliqueEm('tirar', PEDRO.id)).estado;
+  const r = passo(perguntando, cliqueEm('tirarMesmo', PEDRO.id));
+  comOAvisoDoServidor(perguntando, r);
+  assert.equal(r.estado.tirando, null);
+  // Sem a linha de Pedro, a pergunta nem abre.
+  semCuidarNaoFazNada(semCuidar, cliqueEm('tirar', PEDRO.id), cliqueEm('tirarMesmo', PEDRO.id));
 });
 
 test('o encerrar sem o canal mostra o aviso do servidor, e o diálogo fecha', () => {
-  for (const e of Object.values(colegaSemCanal())) {
-    const perguntando = passo(e, clique('encerrar')).estado;
-    const r = passo(perguntando, clique('encerrarMesmo'));
-    comOAvisoDoServidor(perguntando, r);
-    assert.equal(r.estado.encerrando, false);
-  }
+  const { religando, semCuidar } = colegaSemCanal();
+  const perguntando = passo(religando, clique('encerrar')).estado;
+  const r = passo(perguntando, clique('encerrarMesmo'));
+  comOAvisoDoServidor(perguntando, r);
+  assert.equal(r.estado.encerrando, false);
+  // Com o semCuidar, o Encerrar para todos não abre a pergunta, e sem ela o encerrarMesmo não manda nada.
+  semCuidarNaoFazNada(semCuidar, clique('encerrar'), clique('encerrarMesmo'));
 });
 
 test('o resultado de cada resposta é dito', () => {
@@ -2929,6 +2940,103 @@ test('a escolha não volta', () => {
   r = passo({ ...pelaEscolha, tela: 'carregando', abertura: 4 }, abriu(4));
   assert.equal(r.estado.tela, 'entrada');
   assert.deepEqual(r.efeitos, [PEDIR_MIDIA, FOCAR]);
+});
+
+const SEM_CUIDAR =
+  'Você deixou de cuidar desta reunião. Para aceitar pedidos ou encerrar, saia e abra a reunião de novo pelo app.';
+// O colega na reunião, com a partida do servidor no estado e a lista: no navegador e dentro do app.
+const colegaComPartida = () =>
+  rodar(inicial(), COMECAR_COM_PASSE, comPartida(abriuColega(1, COLEGA)), midia('ligado', 'ligado'), clique('entrar'),
+    comPartida(abriuColega(2)), CANAL_ABRIU, mensagem(ACEITO_COM_CHAVE), ligacao('principal', 'confirmada'),
+    lista([EU, PEDRO], [MARIA, BIA])).estado;
+const noAppComPartida = () =>
+  rodar(inicial(), COMECAR_NO_APP, passeDoApp(), comPartida(abriuColega(1, COLEGA)), midia('ligado', 'ligado'),
+    clique('entrar'), comPartida(abriuColega(2)), CANAL_ABRIU, mensagem(ACEITO_COM_CHAVE),
+    ligacao('principal', 'confirmada'), lista([EU, PEDRO], [MARIA, BIA])).estado;
+const deForaComPartida = () =>
+  rodar(inicial(), COMECAR, comPartida(abriu(1)), midia('ligado', 'ligado'), { tipo: 'nome', valor: 'Maria Lima' },
+    clique('pedir'), comPartida(abriu(2)), CANAL_ABRIU, mensagem({ tipo: 'aguardando' }), mensagem(ACEITO_COM_CHAVE),
+    ligacao('principal', 'confirmada')).estado;
+// O canal caiu, o religar abriu de novo, e o abrir respondeu com outra partida: o chat reiniciou.
+const REINICIOU = [canalFechou(1006), tempo('religar:1'), comPartida(abriu(3), 'partida-2')];
+
+test('o chat reiniciou com o colega na reunião, no navegador: ele deixa de cuidar', () => {
+  const r = rodar(colegaComPartida(), ...REINICIOU);
+  // O voltar não sai e o canal não abre: o chat não conhece mais a pessoa.
+  assert.deepEqual(r.efeitos, [dizer(SEM_CUIDAR)]);
+  assert.equal(r.estado.semCuidar, true);
+  assert.equal(r.estado.tela, 'reuniao');
+  assert.equal(r.estado.principal, 'noAr');
+  assert.equal(r.estado.canal, 'fechado');
+  assert.equal(r.estado.religando, 0);
+  assert.equal(r.estado.chave, null);
+  assert.equal(r.estado.partida, 'partida-2');
+  assert.deepEqual(r.estado.lista, { participantes: [], pedidos: [] });
+  assert.deepEqual(r.estado.respondendo, []);
+  assert.equal(r.estado.palco, null);
+  // Nada mais tenta voltar, e o bilhete daquele abrir não é usado.
+  semMudar(r.estado, CANAL_ABRIU);
+  semMudar(r.estado, tempo('prazo:1'));
+  semMudar(r.estado, tempo('religar:1'));
+});
+
+test('o abrir do voltar com a mesma partida, ou sem partida, segue como hoje', () => {
+  const mesma = rodar(colegaComPartida(), canalFechou(1006), tempo('religar:1'), comPartida(abriu(3)));
+  assert.deepEqual(mesma.efeitos, [abrirCanal(3)]);
+  assert.equal(mesma.estado.semCuidar, false);
+  // A resposta sem a partida, e o estado sem ela (um servidor de antes dela).
+  const semNaResposta = rodar(colegaComPartida(), canalFechou(1006), tempo('religar:1'), abriu(3));
+  assert.deepEqual(semNaResposta.efeitos, [abrirCanal(3)]);
+  assert.deepEqual(rodar(colegaComLista(), ...REINICIOU).efeitos, [abrirCanal(3)]);
+});
+
+test('o chat reiniciou com quem é de fora na reunião: segue como hoje, sem o voltar e sem aviso', () => {
+  const r = rodar(deForaComPartida(), ...REINICIOU);
+  assert.deepEqual(r.efeitos, []);
+  assert.equal(r.estado.semCuidar, false);
+  assert.equal(r.estado.religando, 0);
+  assert.equal(r.estado.chave, null);
+  assert.equal(r.estado.principal, 'noAr');
+  semMudar(r.estado, CANAL_ABRIU);
+});
+
+test('o chat reiniciou e a ligação também caiu: é o saiu, sem o voltar', () => {
+  for (const partida of [colegaComPartida, noAppComPartida, deForaComPartida]) {
+    const caiu = [canalFechou(1006), ligacao('principal', 'semConexao'), tempo('reconectar:2')];
+    const r = rodar(partida(), ...caiu, comPartida(abriu(3), 'partida-2'));
+    assert.equal(r.estado.aviso, 'saiu');
+    assert.equal(r.estado.queda, true);
+    assert.deepEqual(r.efeitos.filter((x) => x.tipo === 'mandar' || x.tipo === 'abrirCanal'), []);
+  }
+});
+
+test('a chave recusada e o link que deixou de valer, no religar do colega, são o deixou de cuidar', () => {
+  const voltando = [canalFechou(1006), tempo('religar:1'), abriu(3), CANAL_ABRIU];
+  for (const resposta of [RECUSADA_NO_RELIGAR, mensagem({ tipo: 'linkInvalido' })]) {
+    const r = rodar(colegaComLista(), ...voltando, resposta);
+    assert.deepEqual(r.efeitos, [FECHAR_CANAL, dizer(SEM_CUIDAR)]);
+    assert.equal(r.estado.semCuidar, true);
+    assert.deepEqual(r.estado.lista, { participantes: [], pedidos: [] });
+    // Quem é de fora segue como hoje.
+    const fora = rodar(naReuniaoComChave(), ...voltando, resposta);
+    assert.deepEqual(fora.efeitos, [FECHAR_CANAL]);
+    assert.equal(fora.estado.semCuidar, false);
+  }
+  // O 404 do abrir do voltar é o mesmo link que deixou de valer.
+  const semLink = rodar(colegaComLista(), canalFechou(1006), tempo('religar:1'), abrirFalhou(3, 404));
+  assert.deepEqual(semLink.efeitos, [dizer(SEM_CUIDAR)]);
+  assert.equal(semLink.estado.semCuidar, true);
+});
+
+test('o deixou de cuidar acaba com a saída da reunião', () => {
+  const sem = rodar(colegaComPartida(), ...REINICIOU).estado;
+  // Sem a lista não há o que responder, e o Encerrar para todos não abre a pergunta.
+  semMudar(sem, cliqueEm('encerrar'));
+  assert.equal(passo(sem, clique('sair')).estado.semCuidar, false);
+  // A ligação que cai depois é o saiu: sem o canal e sem a chave, não há como voltar.
+  const caiu = passo(sem, ligacao('principal', 'semConexao')).estado;
+  assert.equal(caiu.aviso, 'saiu');
+  assert.equal(caiu.semCuidar, false);
 });
 
 // ---- A conversa com o app ----

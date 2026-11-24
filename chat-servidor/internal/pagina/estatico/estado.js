@@ -27,15 +27,15 @@
 // servidor responde {tipo:'voltou', volta}, com a chave nova, e o canal é de novo o da pessoa; ou responde
 // {tipo:'erro', erro:'invalido'} (a chave não vale mais) ou {tipo:'linkInvalido'} (a reunião deixou de valer), e fecha
 // o canal. Quem já está numa reunião que deixou de valer continua nela: com a ligação no ar, o linkInvalido (e o 404 do
-// abrir) só param o religar.
+// abrir) só param o religar; o colega, além disso, deixa de cuidar dela (a seção "O chat que reinicia").
 //
 // O palco e o aviso da câmera (seção 10 do protocolo). O servidor diz à pessoa aceita onde cada um está no mosaico (a
 // mensagem palco), e o cérebro guarda o último palco que vale, para os quadros. Ele só entra depois do aceito, pelo
 // canal aberto, e sai no aceito, em todo aviso, com um palco que não vale (que prova que ele ficou velho) e quando a
-// página deixa o canal sem ele: o canal que fecha sem a chave, o religar que para (a chave recusada, o linkInvalido ou
-// o 404 do abrir do voltar) e a terceira tentativa do religar que falha (o religar segue, devagar, mas sem o canal
-// nada acerta o palco). Ele fica enquanto a página tenta voltar (a conexão caída e o religar, que voltam para a mesma
-// reunião). Um palco que chega com um aviso na tela (o canal continua aberto) fica
+// página deixa o canal sem ele: o canal que fecha sem a chave, o religar que para (a chave recusada, o linkInvalido, o
+// 404 do abrir do voltar ou o chat que reiniciou) e a terceira tentativa do religar que falha (o religar segue,
+// devagar, mas sem o canal nada acerta o palco). Ele fica enquanto a página tenta voltar (a conexão caída e o
+// religar, que voltam para a mesma reunião). Um palco que chega com um aviso na tela (o canal continua aberto) fica
 // guardado de novo, de propósito: ele nunca é desenhado fora da reunião, e o próximo aceito o tira. A página diz ao
 // servidor se a câmera dela está ligada (o {tipo:'camera', ligada}), para o quadro de quem está sem ela: o aviso sai
 // sempre que o canal passa a ser o da pessoa (o aceito, o voltou) e a cada mudança do ligado, e nunca antes do aceito
@@ -69,9 +69,19 @@
 // passe) leva à entrada de quem é de fora, e a página nunca tenta de novo como colega. Na reunião, o colega recebe a
 // lista inteira (quem está nela e quem espera) a cada mudança, e responde pelo canal: aceitar, recusar, tirar e
 // encerrar. O que deu certo não tem resposta: a lista nova (ou o encerrada) diz, e o leitor de tela ouve o resultado
-// (o efeito dizer). A resposta que não pode sair (o canal no religar, ou o que desistiu) é como a recusa servidorVideo:
-// o aviso curto do servidor. A lista, o painel e as perguntas seguem a regra da tela da reunião, como o chat. Quem é de fora
-// nunca tem nada disso. A chave do colega e o passe não vão ao console, como a chave de volta.
+// (o efeito dizer). A resposta que não pode sair (o canal no religar) é como a recusa servidorVideo: o aviso curto do
+// servidor. A lista, o painel e as perguntas seguem a regra da tela da reunião, como o chat. Quem é de fora nunca tem
+// nada disso. A chave do colega e o passe não vão ao console, como a chave de volta.
+//
+// O chat que reinicia. O servidor do chat esquece quem estava nele quando reinicia, e o abrir diz a partida dele, que
+// muda a cada vez que ele sobe; o cérebro guarda a do último abrir que não foi o de um voltar. O abrir do voltar que
+// responde com outra partida diz que o chat reiniciou: o bilhete não serve (o voltar seria recusado), a chave de volta
+// sai, e a partida nova fica. Com a ligação também caída, é o saiu, como a chave recusada da volta; com ela no ar, quem
+// é de fora segue na reunião sem o canal, como hoje. O colega, com a ligação no ar, deixa de cuidar da reunião (o
+// semCuidar): o canal dele não volta mais, e sem ele não há como aceitar, recusar, tirar nem encerrar. A lista sai, as
+// perguntas fecham, e o leitor de tela ouve o aviso; a ligação e o painel aberto ficam. O mesmo vale para a chave
+// recusada no religar e para o link que deixou de valer no voltar (a resposta, ou o 404 do abrir). Com o semCuidar, o
+// Encerrar para todos não abre a pergunta. Ele acaba com a saída da tela da reunião, por qualquer fim.
 //
 // A tela "o app ou o navegador" (a escolha). No Windows (o comecar com o windows), o abriu do carregar de quem a página
 // não reconheceu como colega leva à escolha, e não à entrada: o "Abrir no app" é um link, e a página fica nela; o
@@ -101,7 +111,7 @@
 // Microfone, a Câmera e o Compartilhar a tela não fazem nada. A pausa que chega com a página entrando fica guardada e
 // vale assim que ela entra; fora da reunião, a pausa não faz nada, e a saída (por qualquer fim) a desfaz.
 
-import { LISTA_VAZIA, ditoDaResposta, lerLista, tituloDoCartao } from './colega.js';
+import { AVISO_SEM_CUIDAR, LISTA_VAZIA, ditoDaResposta, lerLista, tituloDoCartao } from './colega.js';
 import { MAX_MENSAGENS, textoLimpo } from './mensagens.js';
 import { lerPalco } from './palco.js';
 
@@ -297,6 +307,7 @@ export function inicial() {
     encerrando: false,
     cheiaAoAceitar: false,
     respondendo: Object.freeze([]),
+    semCuidar: false, // o colega continua na reunião, mas o canal dele não volta mais: o aviso está à vista
     queda: false, // o aviso saiu veio de uma queda, e não do Sair
     // O app: a página está no iframe dele, os nomes dos aparelhos das Configurações dele ({microfone, altoFalante,
     // camera}, vazio é o padrão do sistema), o pronta que espera o passe, o número do último pronta (o prazo de um
@@ -459,6 +470,8 @@ function soNaReuniao(e) {
   if (f.tela !== 'reuniao' && (f.gente || f.tirando !== null || f.encerrando || f.cheiaAoAceitar)) {
     f = { ...f, gente: false, tirando: null, encerrando: false, cheiaAoAceitar: false };
   }
+  // O deixou de cuidar é da tela da reunião: a próxima entrada começa sem ele.
+  if (f.tela !== 'reuniao' && f.semCuidar) f = { ...f, semCuidar: false };
   // A pausa e o bloqueio são da tela da reunião; a pausa guardada, também da tela entrando. O microfone e a câmera
   // ficam como a pausa os deixou: a próxima entrada começa com eles desligados.
   if (f.tela !== 'reuniao' && (f.pausa !== null || f.bloqueio !== null)) f = { ...f, pausa: null, bloqueio: null };
@@ -504,8 +517,25 @@ function abriu(e, { reuniao, bilhete, colega, partida }) {
     const deAgora = e.colega !== null && colegaQueVale(colega) ? { colega: colegaDaResposta(colega) } : {};
     return com(e, { reuniao, ...dela, canal: 'abrindo', ...deAgora }, abrirCanal(bilhete));
   }
-  if (e.esperandoBilhete) return com(e, { esperandoBilhete: false, canal: 'abrindo' }, abrirCanal(bilhete));
+  if (e.esperandoBilhete) {
+    if (reiniciou(e, partida)) return chatReiniciou(e, partida);
+    return com(e, { esperandoBilhete: false, canal: 'abrindo' }, abrirCanal(bilhete));
+  }
   return nada(e);
+}
+
+// O abrir do voltar respondeu com outra partida: o chat reiniciou desde o último abrir. Sem a partida, na resposta ou
+// no estado (um servidor de antes dela), nada se sabe, e o voltar segue.
+const reiniciou = (e, partida) => typeof partida === 'string' && e.partida !== null && partida !== e.partida;
+
+// O chat reiniciou e não conhece mais a chave de volta: o bilhete não é usado, e a chave sai. Na volta depois da
+// conexão caída, a pessoa saiu; com a ligação no ar, o colega deixa de cuidar da reunião (dentro do app também, por
+// ora), e quem é de fora segue sem o canal.
+function chatReiniciou(e, partida) {
+  const f = { ...e, esperandoBilhete: false, chave: null, partida };
+  if (e.reconectando > 0) return terminar(f, 'saiu');
+  if (e.colega !== null && e.principal === 'noAr') return deixarDeCuidar(f);
+  return pararDeReligar(f);
 }
 
 // A escolha aparece no Windows, para quem a página não reconheceu, fora da reunião de teste e do app, e só até a pessoa
@@ -1021,8 +1051,8 @@ function avisoDoServidor(e, mudancas) {
 }
 
 // Uma resposta sai pelo canal e espera a lista nova: {de, id, nome}. Responder de novo tira a reunião cheia. Sem o
-// canal da pessoa (o religar em curso, ou o que desistiu), nada sai: é como a recusa servidorVideo, com o aviso curto
-// do servidor, e a pergunta que a resposta fecharia fecha do mesmo jeito.
+// canal da pessoa (o religar em curso), nada sai: é como a recusa servidorVideo, com o aviso curto do servidor, e a
+// pergunta que a resposta fecharia fecha do mesmo jeito.
 function responder(e, de, id, nome, m, mudancas = {}) {
   if (!podeResponder(e)) return avisoDoServidor(e, mudancas);
   const respondendo = [...e.respondendo, { de, id, nome }];
@@ -1064,7 +1094,8 @@ function cliqueDoColega(e, botao, id) {
       // O Voltar da pergunta devolve o foco ao Tirar daquela linha.
       return e.tirando !== null ? com(e, { tirando: null }, focar('tirar', e.tirando)) : nada(e);
     case 'encerrar':
-      return e.encerrando ? nada(e) : com(e, { encerrando: true }, focar('naoEncerrar'));
+      // Quem deixou de cuidar da reunião não a encerra: a pergunta não abre.
+      return e.encerrando || e.semCuidar ? nada(e) : com(e, { encerrando: true }, focar('naoEncerrar'));
     case 'encerrarMesmo':
       // O encerrar não espera resposta na lista: o encerrada é o fim, e a recusa mostra o aviso. Sem o canal, o aviso
       // vem na hora, como o da recusa.
@@ -1135,17 +1166,19 @@ function voltou(e, volta) {
 }
 
 // A chave recusada sai do estado. Na volta depois da conexão caída, a pessoa saiu; no religar, a reunião segue sem o
-// canal, e uma queda da ligação, depois, é o saiu.
+// canal (o colega, com a ligação no ar, deixa de cuidar dela), e uma queda da ligação, depois, é o saiu.
 function chaveRecusada(e) {
   const f = { ...e, chave: null };
-  return e.reconectando > 0 ? terminar(f, 'saiu') : pararDeReligar(f);
+  if (e.reconectando > 0) return terminar(f, 'saiu');
+  return e.colega !== null && e.principal === 'noAr' ? deixarDeCuidar(f) : pararDeReligar(f);
 }
 
 // O linkInvalido do voltar (a resposta, ou o 404 do abrir dele): a reunião deixou de valer, mas quem já está nela
-// continua, mesmo depois do valeAte. Com a ligação no ar, o religar para, a reunião segue sem o canal, e a ligação
-// decide o fim; a chave fica para a volta das duas. Sem a ligação, é o fim.
+// continua, mesmo depois do valeAte. Com a ligação no ar, o religar para, a reunião segue sem o canal (o colega deixa
+// de cuidar dela), e a ligação decide o fim; a chave fica para a volta das duas. Sem a ligação, é o fim.
 function linkInvalidoDoVoltar(e) {
-  return e.principal === 'noAr' ? pararDeReligar(e) : terminar(e, 'linkInvalido');
+  if (e.principal !== 'noAr') return terminar(e, 'linkInvalido');
+  return e.colega !== null ? deixarDeCuidar(e) : pararDeReligar(e);
 }
 
 // A senha da principal chegou: liga, ou a guarda até a mídia chegar.
@@ -1246,6 +1279,20 @@ function religarFalhou(e) {
 function pararDeReligar(e) {
   const { mudancas, efeitos } = fecharCanalDoVoltar(e);
   return com(e, { ...mudancas, religando: 0, palco: null }, ...efeitos);
+}
+
+// O colega deixa de cuidar da reunião: o religar para, como no pararDeReligar, e o que só o canal servia sai com ele (a
+// lista, as respostas que esperavam por ela e as perguntas). O leitor de tela ouve o aviso, depois do fechar do canal.
+// A ligação segue, e o painel aberto fica aberto.
+function deixarDeCuidar(e) {
+  const { mudancas, efeitos } = fecharCanalDoVoltar(e);
+  const semLista = { lista: LISTA_VAZIA, respondendo: [], tirando: null, encerrando: false, cheiaAoAceitar: false };
+  return com(
+    e,
+    { ...mudancas, ...semLista, semCuidar: true, religando: 0, palco: null },
+    ...efeitos,
+    dizer(AVISO_SEM_CUIDAR),
+  );
 }
 
 // O voltar começa pelo abrir, que dá o bilhete do canal novo, e o prazo da tentativa começa junto.
