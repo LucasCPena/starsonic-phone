@@ -239,6 +239,7 @@ bool MainWindow::Create(HINSTANCE instance, const Options& options, Callbacks ca
     webOptions_.uiFolder = options.uiFolder;
     webOptions_.devTools = options.devTools;
     webOptions_.startPage = Versioned(kMainPage, options.version);
+    webOptions_.window = WebWindow::Main;   // so a janela principal deixa o quadro da reuniao
     CreateWebView();
     RegisterDeviceNotifications();
     return true;

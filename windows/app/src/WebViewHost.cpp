@@ -3,6 +3,7 @@
 #include <wrl.h>
 
 #include <cstdio>
+#include <memory>
 
 #include "LogRedaction.h"
 #include "Text.h"
@@ -47,11 +48,24 @@ std::string TakeString(LPWSTR text) {
 
 WebPermission PermissionOf(COREWEBVIEW2_PERMISSION_KIND kind) {
     if (kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE) return WebPermission::Microphone;
+    if (kind == COREWEBVIEW2_PERMISSION_KIND_CAMERA) return WebPermission::Camera;
     if (kind == COREWEBVIEW2_PERMISSION_KIND_AUTOPLAY) return WebPermission::Autoplay;
     return WebPermission::Other;
 }
 
 std::string Short(const std::string& text) { return text.size() > 160 ? text.substr(0, 160) + "..." : text; }
+
+// (0.5.0) A resposta vale so para este pedido: o perfil do WebView2 (o mesmo em todas as aberturas) nao a guarda, e o
+// proximo pedido passa pela regra de novo. false: o WebView2 nao tem o ICoreWebView2PermissionRequestedEventArgs3.
+bool KeepOutOfProfile(ICoreWebView2PermissionRequestedEventArgs* args) {
+    ComPtr<ICoreWebView2PermissionRequestedEventArgs> event(args);
+    ComPtr<ICoreWebView2PermissionRequestedEventArgs3> event3;
+    if (FAILED(event.As(&event3))) return false;
+    event3->put_SavesInProfile(FALSE);
+    return true;
+}
+
+const char kNoProfileChoice[] = "WebView2 sem a resposta fora do perfil (ICoreWebView2PermissionRequestedEventArgs3)";
 
 }  // namespace
 
@@ -174,7 +188,8 @@ void WebViewHost::Configure() {
     }
 
     // O microfone (os rotulos dos dispositivos) e a reproducao automatica (o toque) so para a origem do app; o resto,
-    // negado (WebPermissions.h).
+    // negado (WebPermissions.h). So essas duas ficam guardadas no perfil (o SetPermissionState); uma recusa vale so
+    // para o pedido.
     ComPtr<ICoreWebView2_13> webview13;
     ComPtr<ICoreWebView2Profile> profile;
     ComPtr<ICoreWebView2Profile4> profile4;
@@ -201,8 +216,9 @@ void WebViewHost::Configure() {
                 args->get_PermissionKind(&kind);
                 const std::string url = TakeString(uri);
                 const bool allowed = AllowWebPermission(PermissionOf(kind), url);
+                if (!allowed && !KeepOutOfProfile(args)) Log(kNoProfileChoice);
                 args->put_State(allowed ? COREWEBVIEW2_PERMISSION_STATE_ALLOW : COREWEBVIEW2_PERMISSION_STATE_DENY);
-                if (!allowed) Log("permissao negada: " + std::to_string(static_cast<int>(kind)) + " " + Short(url));
+                if (!allowed) Log("permissao negada: " + std::to_string(static_cast<int>(kind)) + " " + RedactUrl(url));
                 return S_OK;
             })
             .Get(),
@@ -210,19 +226,172 @@ void WebViewHost::Configure() {
 
     // Nenhuma navegacao fora do app, nem janela nova. O diagnostico leva so o esquema (e o host no http, https, ws e
     // wss: RedactUrl), nunca o caminho: um arquivo solto na janela navega para o file:// dele, com o nome do arquivo.
-    auto blockOutside = [this](ICoreWebView2*, ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT {
-        LPWSTR uri = nullptr;
-        args->get_Uri(&uri);
-        const std::string url = TakeString(uri);
-        if (!IsAppUrl(url)) {
-            args->put_Cancel(TRUE);
-            Log("navegacao bloqueada: " + RedactUrl(url));
-        }
-        return S_OK;
-    };
-    webview_->add_NavigationStarting(Callback<ICoreWebView2NavigationStartingEventHandler>(blockOutside).Get(), &token);
-    webview_->add_FrameNavigationStarting(Callback<ICoreWebView2NavigationStartingEventHandler>(blockOutside).Get(),
-                                          &token);
+    webview_->add_NavigationStarting(
+        Callback<ICoreWebView2NavigationStartingEventHandler>(
+            [this](ICoreWebView2*, ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT {
+                LPWSTR uri = nullptr;
+                args->get_Uri(&uri);
+                const std::string url = TakeString(uri);
+                if (!IsAppUrl(url)) {
+                    args->put_Cancel(TRUE);
+                    Log("navegacao bloqueada: " + RedactUrl(url));
+                }
+                return S_OK;
+            })
+            .Get(),
+        &token);
+    // (0.5.0) Um quadro (iframe): dentro do app ou, na janela principal, uma reuniao do chat (AllowFrameNavigation). O
+    // cancelamento e so aqui; o NavigationStarting do proprio quadro (FrameCreated, abaixo) so guarda o endereco.
+    webview_->add_FrameNavigationStarting(
+        Callback<ICoreWebView2NavigationStartingEventHandler>(
+            [this](ICoreWebView2*, ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT {
+                LPWSTR uri = nullptr;
+                args->get_Uri(&uri);
+                const std::string url = TakeString(uri);
+                if (!AllowFrameNavigation(options_.window, url)) {
+                    args->put_Cancel(TRUE);
+                    Log("navegacao bloqueada: " + RedactUrl(url));
+                } else if (!IsAppUrl(url)) {
+                    Log("navegacao do quadro permitida: " + RedactUrl(url));
+                }
+                return S_OK;
+            })
+            .Get(),
+        &token);
+    webview_->add_FrameNavigationCompleted(
+        Callback<ICoreWebView2NavigationCompletedEventHandler>(
+            [this](ICoreWebView2*, ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
+                BOOL success = FALSE;
+                args->get_IsSuccess(&success);
+                if (!success) {
+                    COREWEBVIEW2_WEB_ERROR_STATUS status = COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN;
+                    args->get_WebErrorStatus(&status);
+                    Log("o quadro nao carregou (erro " + std::to_string(static_cast<int>(status)) + ")");
+                }
+                return S_OK;
+            })
+            .Get(),
+        &token);
+
+    // (0.5.0) Os quadros (WebPermissions.h): cada um guarda o endereco do seu documento (o da ultima navegacao que o
+    // AllowFrameNavigation deixa) e responde com ele aos seus pedidos, antes do evento da janela (Handled). Sem o
+    // evento do quadro, o quadro nao ganha nada: o pedido chega a janela, que so deixa o da pagina do app.
+    ComPtr<ICoreWebView2_4> webview4;
+    if (SUCCEEDED(webview_.As(&webview4))) {
+        webview4->add_FrameCreated(
+            Callback<ICoreWebView2FrameCreatedEventHandler>(
+                [this](ICoreWebView2*, ICoreWebView2FrameCreatedEventArgs* args) -> HRESULT {
+                    ComPtr<ICoreWebView2Frame> frame;
+                    if (FAILED(args->get_Frame(&frame)) || !frame) return S_OK;
+                    // O endereco do documento do quadro, dividido entre os tratadores dele ("" ate a primeira
+                    // navegacao deixada).
+                    auto address = std::make_shared<std::string>();
+                    EventRegistrationToken frameToken = {};
+                    ComPtr<ICoreWebView2Frame2> frame2;
+                    if (SUCCEEDED(frame.As(&frame2))) {
+                        frame2->add_NavigationStarting(
+                            Callback<ICoreWebView2FrameNavigationStartingEventHandler>(
+                                [this, address](ICoreWebView2Frame*, ICoreWebView2NavigationStartingEventArgs* event)
+                                    -> HRESULT {
+                                    LPWSTR uri = nullptr;
+                                    event->get_Uri(&uri);
+                                    const std::string url = TakeString(uri);
+                                    if (AllowFrameNavigation(options_.window, url)) *address = url;
+                                    return S_OK;
+                                })
+                                .Get(),
+                            &frameToken);
+                    } else {
+                        Log("WebView2 sem a navegacao do quadro (ICoreWebView2Frame2)");
+                    }
+                    ComPtr<ICoreWebView2Frame3> frame3;
+                    if (SUCCEEDED(frame.As(&frame3))) {
+                        frame3->add_PermissionRequested(
+                            Callback<ICoreWebView2FramePermissionRequestedEventHandler>(
+                                [this, address](ICoreWebView2Frame*, ICoreWebView2PermissionRequestedEventArgs2* event)
+                                    -> HRESULT {
+                                    LPWSTR uri = nullptr;
+                                    COREWEBVIEW2_PERMISSION_KIND kind = COREWEBVIEW2_PERMISSION_KIND_UNKNOWN_PERMISSION;
+                                    event->get_Uri(&uri);
+                                    event->get_PermissionKind(&kind);
+                                    const std::string url = TakeString(uri);
+                                    bool allowed = AllowFramePermission(options_.window, PermissionOf(kind), *address);
+                                    // Uma resposta que ficaria no perfil, nao: fica no lado fechado.
+                                    if (!KeepOutOfProfile(event)) {
+                                        Log(kNoProfileChoice);
+                                        allowed = false;
+                                    }
+                                    event->put_State(allowed ? COREWEBVIEW2_PERMISSION_STATE_ALLOW
+                                                             : COREWEBVIEW2_PERMISSION_STATE_DENY);
+                                    event->put_Handled(TRUE);   // o evento da janela nao vem
+                                    Log(std::string(allowed ? "permissao permitida (quadro): "
+                                                            : "permissao negada (quadro): ") +
+                                        std::to_string(static_cast<int>(kind)) + " " + RedactUrl(url));
+                                    return S_OK;
+                                })
+                                .Get(),
+                            &frameToken);
+                    } else {
+                        Log("WebView2 sem as permissoes do quadro (ICoreWebView2Frame3)");
+                    }
+                    ComPtr<ICoreWebView2Frame6> frame6;
+                    if (SUCCEEDED(frame.As(&frame6))) {
+                        frame6->add_ScreenCaptureStarting(
+                            Callback<ICoreWebView2FrameScreenCaptureStartingEventHandler>(
+                                [this, address](ICoreWebView2Frame*, ICoreWebView2ScreenCaptureStartingEventArgs* event)
+                                    -> HRESULT {
+                                    const bool allowed = AllowFrameScreenCapture(options_.window, *address);
+                                    event->put_Cancel(allowed ? FALSE : TRUE);
+                                    event->put_Handled(TRUE);   // o evento da janela nao vem
+                                    Log(allowed ? "captura de tela permitida (quadro)"
+                                                : "captura de tela cancelada (quadro)");
+                                    return S_OK;
+                                })
+                                .Get(),
+                            &frameToken);
+                    } else {
+                        Log("WebView2 sem a captura de tela do quadro (ICoreWebView2Frame6)");
+                    }
+                    // O quadro fica vivo (com os tratadores) ate o Destroyed dele. O tratador guarda o ponteiro cru:
+                    // um ComPtr nele seria um ciclo (o quadro segura o tratador).
+                    ICoreWebView2Frame* const alive = frame.Get();
+                    frame->add_Destroyed(
+                        Callback<ICoreWebView2FrameDestroyedEventHandler>(
+                            [this, alive](ICoreWebView2Frame*, IUnknown*) -> HRESULT {
+                                for (auto it = frames_.begin(); it != frames_.end(); ++it) {
+                                    if (it->Get() == alive) {
+                                        frames_.erase(it);
+                                        break;
+                                    }
+                                }
+                                return S_OK;
+                            })
+                            .Get(),
+                        &frameToken);
+                    frames_.push_back(frame);
+                    return S_OK;
+                })
+                .Get(),
+            &token);
+    } else {
+        Log("WebView2 sem os quadros (ICoreWebView2_4)");
+    }
+    // (0.5.0) Uma captura de tela que chega a janela nao e de um quadro de reuniao (esse responde antes, acima):
+    // cancela.
+    ComPtr<ICoreWebView2_27> webview27;
+    if (SUCCEEDED(webview_.As(&webview27))) {
+        webview27->add_ScreenCaptureStarting(
+            Callback<ICoreWebView2ScreenCaptureStartingEventHandler>(
+                [this](ICoreWebView2*, ICoreWebView2ScreenCaptureStartingEventArgs* args) -> HRESULT {
+                    args->put_Cancel(TRUE);
+                    Log("captura de tela cancelada");
+                    return S_OK;
+                })
+                .Get(),
+            &token);
+    } else {
+        Log("WebView2 sem o aviso da captura de tela (ICoreWebView2_27)");
+    }
     webview_->add_NewWindowRequested(
         Callback<ICoreWebView2NewWindowRequestedEventHandler>(
             [this](ICoreWebView2*, ICoreWebView2NewWindowRequestedEventArgs* args) -> HRESULT {
@@ -406,6 +575,7 @@ void WebViewHost::Close() {
     if (closed_) return;
     closed_ = true;
     if (controller_) controller_->Close();
+    frames_.clear();
     webview_.Reset();
     controller_.Reset();
     environment_.Reset();

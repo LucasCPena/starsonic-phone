@@ -485,8 +485,13 @@ test('the page CSP lets the app reach only the chat server', () => {
   const csp = /<meta http-equiv="Content-Security-Policy" content="([^"]*)">/.exec(html)?.[1];
   expect(csp).toBe(
     "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self'; " +
-      "connect-src 'self' https://chat.starcloud-starsonic.com.br:8443 wss://chat.starcloud-starsonic.com.br:8443; media-src 'self'",
+      "connect-src 'self' https://chat.starcloud-starsonic.com.br:8443 wss://chat.starcloud-starsonic.com.br:8443; " +
+      "frame-src https://chat.starcloud-starsonic.com.br:8443; media-src 'self'",
   );
+  // A página do aviso não mostra quadro nenhum de fora.
+  const aviso = readFileSync(fileURLToPath(new URL('../../dist/aviso.html', import.meta.url)), 'utf8');
+  expect(aviso).not.toContain('frame-src');
+  expect(aviso).not.toContain('chat.starcloud-starsonic.com.br');
 });
 
 for (const tema of ['light', 'dark'] as const) {

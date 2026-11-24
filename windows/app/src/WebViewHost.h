@@ -1,12 +1,17 @@
 #pragma once
 // O WebView2 da janela principal (spec 6, 6.1 e 6.4): o ambiente na pasta de dados do WebView2
 // (%LOCALAPPDATA%\Starsonic Phone\WebView2), a interface servida da pasta ui\ do app pelo host virtual
-// https://app.starsonic.local/ (SetVirtualHostNameToFolderMapping), nenhuma navegacao fora dele, a barra de titulo da
-// interface arrastando a janela (app-region, IsNonClientRegionSupportEnabled) e a ponte: o postMessage da interface
-// vira um comando (o JSON) e o C++ responde com PostWebMessageAsJson.
+// https://app.starsonic.local/ (SetVirtualHostNameToFolderMapping), nenhuma navegacao fora dele (fora o quadro da
+// reuniao, abaixo), a barra de titulo da interface arrastando a janela (app-region, IsNonClientRegionSupportEnabled) e
+// a ponte: o postMessage da interface vira um comando (o JSON) e o C++ responde com PostWebMessageAsJson.
 //
 // O microfone e a reproducao automatica ficam permitidos so para a origem do app (WebPermissions.h), e toda outra
-// permissao e negada.
+// permissao da pagina do app e negada.
+//
+// (0.5.0) O quadro da reuniao (WebPermissions.h): na janela principal (Options.window), um iframe pode navegar para o
+// endereco de uma reuniao do chat, e so esse quadro ganha a camera, o microfone, a reproducao automatica e a captura de
+// tela. Cada quadro guarda o endereco do seu documento (o da ultima navegacao que a regra deixa) e responde com ele aos
+// seus pedidos; nenhuma dessas respostas, e nenhuma recusa, fica guardada no perfil. O aviso nao deixa nada disso.
 //
 // As teclas do navegador (Ctrl + P imprimir, F5, Ctrl + F...) ficam desligadas no build de publicacao; no de teste (as
 // ferramentas do desenvolvedor), so na janela principal, e mesmo ali o Ctrl + P nunca imprime (o AcceleratorKeyPressed
@@ -27,10 +32,12 @@
 
 #include <functional>
 #include <string>
+#include <vector>
 
 #include <wrl/client.h>
 
 #include "WebView2.h"
+#include "WebPermissions.h"
 
 namespace starsonic {
 
@@ -64,6 +71,9 @@ public:
         // abre a area do administrador com ela). false (o aviso): ninguem recebe, e as teclas do navegador ficam
         // desligadas tambem no build de teste.
         bool pageGetsCtrlP = true;
+        // (0.5.0) Qual janela este WebView e: decide o que um quadro (iframe) da pagina pode (WebPermissions.h). So a
+        // principal (WebWindow::Main) deixa o quadro da reuniao; o padrao e o mais fechado, o do aviso.
+        WebWindow window = WebWindow::Notice;
     };
 
     WebViewHost(HWND parent, Callbacks callbacks);
@@ -112,6 +122,8 @@ private:
     Microsoft::WRL::ComPtr<ICoreWebView2Environment> environment_;
     Microsoft::WRL::ComPtr<ICoreWebView2Controller> controller_;
     Microsoft::WRL::ComPtr<ICoreWebView2> webview_;
+    // (0.5.0) Os quadros vivos (FrameCreated), cada um ate o Destroyed dele: os tratadores do quadro ficam com ele.
+    std::vector<Microsoft::WRL::ComPtr<ICoreWebView2Frame>> frames_;
 };
 
 }  // namespace starsonic

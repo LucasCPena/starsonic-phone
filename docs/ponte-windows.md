@@ -613,7 +613,8 @@ download dos arquivos.
       `CoCreateInstance`, `HrInit` ou `SetOverlayIcon`;
     - `chat: sem o aviso de bloqueio da sessao (<código>)`: o Windows não avisa o executável quando a sessão bloqueia,
       e a janela conta como na frente só por ela (visível, sem minimizar e ativa).
-  - A navegação para fora do app, nas duas janelas, é bloqueada, e a linha leva só o esquema do endereço, com o host
+  - A navegação para fora do app, nas duas janelas, é bloqueada (a exceção, desde a 0.5.0: o quadro de uma reunião,
+    num `iframe` da janela principal; ver "As reuniões (0.5.0)"), e a linha leva só o esquema do endereço, com o host
     no `http`, `https`, `ws` e `wss`: nunca o caminho, a consulta, o fragmento, a porta, nem o usuário e a senha. Por
     exemplo: `navegacao bloqueada: file:` (um arquivo solto na janela), `navegacao bloqueada: https://exemplo.com` e
     `janela nova bloqueada: blob:`. Um endereço sem esquema vai como `(sem esquema)`. Na janela do aviso de ligação, a
@@ -1014,6 +1015,53 @@ A entrega (`windows/app/src/VideoSink.h` e `WebViewSharedBuffers.h`):
   tocando) e trata o `seq` 0 como vazio, sem imagem: o cabeçalho não diz a ligação. A memória de uma vista esvazia (o
   `seq` volta a 0) quando a ligação dela muda ou acaba, e a do `local` quando ele deixa de receber quadros (escondido ou
   com a janela minimizada): a próxima ligação, ou o próximo mostrar, começa vazia, nunca com o último quadro de antes.
+
+## As reuniões (0.5.0)
+
+A página de uma reunião do chat abre num `iframe` da janela principal. A regra de segurança da página do app
+(`index.html`) deixa esse quadro com o `frame-src https://chat.starcloud-starsonic.com.br:8443`; a do aviso
+(`aviso.html`) não deixa quadro nenhum de fora.
+
+### Para o executável: o que a janela principal deixa
+
+As regras ficam no `WebPermissions.h`, e quem decide o que um quadro ganha é o endereço do **documento** do quadro (o da
+última navegação dele que a regra deixou), nunca a origem que o WebView2 diz no pedido. O endereço de uma reunião é
+exatamente `https://chat.starcloud-starsonic.com.br:8443/r/` seguido de um código de 10 caracteres do alfabeto
+`abcdefghjkmnpqrstvwxyz23456789`, sem mais nada (nem barra no fim, nem consulta, nem fragmento).
+
+- **A navegação:** um quadro navega dentro do app ou, só na janela principal, para o endereço de uma reunião. A
+  navegação da própria janela e as janelas novas continuam bloqueadas, como sempre.
+- **As permissões:** só o quadro de uma reunião, na janela principal, ganha a câmera, o microfone e a reprodução
+  automática; todo o resto que um quadro pede é negado. O que a página do app pede segue a regra de sempre (o microfone
+  e a reprodução automática, só para a origem do app): a página do app nunca ganha a câmera.
+- **A captura de tela:** só a pedida pelo quadro de uma reunião, na janela principal. Em qualquer outro caso, é
+  cancelada (a página recebe o `NotAllowedError` do `getDisplayMedia`).
+
+A janela do aviso de ligação não deixa nada disso: o quadro só navega dentro do app, e todo pedido de um quadro é
+negado. Os eventos e as linhas do diagnóstico (no aviso, a linha começa com `aviso: `; o `<n>` é o número do tipo da
+permissão do WebView2: `1` o microfone, `2` a câmera, `9` a reprodução automática; o endereço vai só com o esquema e o
+host, como nas outras linhas):
+
+| O evento | O que o executável faz | A linha no diagnóstico |
+|---|---|---|
+| a navegação de um quadro, no nível da janela (`FrameNavigationStarting`) | cancela se a regra não deixa | `navegacao bloqueada: <endereço>`; deixada e fora do app: `navegacao do quadro permitida: <endereço>` |
+| a navegação de um quadro, no quadro (`NavigationStarting` do quadro) | guarda o endereço, se a regra deixa; não cancela nada | — |
+| um quadro que não carregou (`FrameNavigationCompleted` sem sucesso) | — | `o quadro nao carregou (erro <n>)`, com o `COREWEBVIEW2_WEB_ERROR_STATUS` |
+| a permissão pedida por um quadro (`PermissionRequested` do quadro) | responde pela regra do quadro e marca como tratada (o evento da janela não vem) | `permissao permitida (quadro): <n> <endereço do pedido>` ou `permissao negada (quadro): <n> <endereço do pedido>` |
+| a permissão pedida pela página do app (`PermissionRequested` da janela) | a regra de sempre | a recusa: `permissao negada: <n> <endereço do pedido>` |
+| a captura de tela pedida por um quadro (`ScreenCaptureStarting` do quadro) | cancela se a regra não deixa, e marca como tratada | `captura de tela permitida (quadro)` ou `captura de tela cancelada (quadro)` |
+| a captura de tela que chega ao nível da janela (`ScreenCaptureStarting` da janela) | cancela sempre | `captura de tela cancelada` |
+
+O perfil do WebView2 (a pasta `…\Starsonic Phone\WebView2`, a mesma em todas as aberturas) não guarda nada disso:
+toda resposta a um quadro, permitida ou negada, e toda recusa à página do app valem só para aquele pedido, e o próximo
+passa pela regra de novo. Só ficam guardados o microfone e a reprodução automática da origem do app, como antes.
+
+Um WebView2 antigo, sem uma das interfaces, deixa uma linha (`WebView2 sem os quadros (ICoreWebView2_4)`,
+`WebView2 sem a navegacao do quadro (ICoreWebView2Frame2)`, `WebView2 sem as permissoes do quadro
+(ICoreWebView2Frame3)`, `WebView2 sem a captura de tela do quadro (ICoreWebView2Frame6)`, `WebView2 sem o aviso da
+captura de tela (ICoreWebView2_27)` ou `WebView2 sem a resposta fora do perfil
+(ICoreWebView2PermissionRequestedEventArgs3)`) e fica no lado fechado: sem o evento do quadro, o quadro não ganha
+nada, e uma resposta que ficaria guardada no perfil é uma recusa.
 
 ## O modo iPhone (etapa 2)
 
