@@ -22,6 +22,31 @@ class BrowserArgumentsTest(unittest.TestCase):
         self.assertEqual(windows_smoke.browser_arguments(),
                          "--remote-debugging-port=9333 --autoplay-policy=no-user-gesture-required")
 
+    def test_the_policy_value_is_named_by_the_file_name_of_the_exe(self):
+        for exe in ("C:\\Temp\\starsonic-instalado-1\\StarsonicPhone.exe", "D:/x/StarsonicPhone.exe",
+                    "StarsonicPhone.exe"):
+            self.assertEqual(windows_smoke.policy_value_name(exe), "StarsonicPhone.exe", exe)
+
+    def test_the_arguments_never_go_in_the_environment_of_the_app(self):
+        inherited = {"PATH": "C:\\Windows", "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS": "--velho"}
+        environment, arguments = windows_smoke.launch_environment(inherited, None)
+        self.assertEqual(arguments, windows_smoke.browser_arguments())
+        self.assertNotIn("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", environment)
+        self.assertEqual(environment["PATH"], "C:\\Windows")
+        self.assertEqual(environment["STARSONIC_SOM_NULO"], "1")
+        self.assertEqual(environment["STARSONIC_PERFIL"], windows_smoke.TEST_PROFILE)
+        # O inherited de quem chama não muda.
+        self.assertEqual(inherited["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"], "--velho")
+
+    def test_the_arguments_of_an_item_come_from_its_extra_environment(self):
+        extra = {"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS": "--remote-debugging-port=9333 --use-fake-device-for-media-stream",
+                 "STARSONIC_TESTE_DNS_MS": "2000"}
+        environment, arguments = windows_smoke.launch_environment({}, extra)
+        self.assertEqual(arguments, "--remote-debugging-port=9333 --use-fake-device-for-media-stream")
+        self.assertNotIn("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", environment)
+        self.assertEqual(environment["STARSONIC_TESTE_DNS_MS"], "2000")
+        self.assertIn("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", extra)
+
 
 
 class WorkAreaTest(unittest.TestCase):

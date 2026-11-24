@@ -3,9 +3,12 @@
 
 Fumaça (padrão), contra o StarsonicPhone.exe instalado do build de teste (STARSONIC_TEST_HOOKS; o mesmo instalador):
 1. sobe o registrador falso (tests/smoke/fake_registrar.py, UDP e TCP na 5060, ramal 2001, e a PORTA do vídeo na 40002);
-2. abre o app com WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 (e o
-   --autoplay-policy do próprio app, que a variável substitui), o perfil de teste (STARSONIC_PERFIL: o registrador
-   falso na 5060 por UDP), o dispositivo de som nulo (STARSONIC_SOM_NULO: o runner não tem placa de som) e
+2. abre o app com os argumentos do WebView2 --remote-debugging-port=9333 e o --autoplay-policy do próprio app, pela
+   política da máquina (o valor StarsonicPhone.exe da chave
+   HKLM\\Software\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments, escrito antes de cada abertura e
+   desfeito no fim: o WebView2 150 e os seguintes ignoram a variável WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS num
+   processo elevado, e o do runner do GitHub é elevado), o perfil de teste (STARSONIC_PERFIL: o registrador falso na
+   5060 por UDP), o dispositivo de som nulo (STARSONIC_SOM_NULO: o runner não tem placa de som) e
    "--dados <pasta nova>", e liga o Playwright pelo CDP;
 3. entra no registrador falso por UDP (servidor 127.0.0.1, ramal 2001) e confere "Conectado · 127.0.0.1"; captura
    janela-principal.png;
@@ -118,9 +121,15 @@ HERE = pathlib.Path(__file__).resolve().parent
 CDP_PORT = 9333
 CDP_URL = "http://127.0.0.1:%d" % CDP_PORT
 DEBUG_ARGUMENT = "--remote-debugging-port=%d" % CDP_PORT
-# A variável WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS toma o lugar dos argumentos que o app passa ao WebView2: o do
-# toque (windows/app/src/WebViewHost.cpp) vai junto, para o app rodar como roda sem a variável.
+# Os argumentos do WebView2 da fumaça vão pela política da máquina, e não pela variável
+# WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: desde o WebView2 150, um processo elevado (o do runner do GitHub) ignora a
+# variável e a política do usuário (HKCU); a da máquina (HKLM) continua valendo. O valor tem o nome do arquivo do exe
+# (o app não tem um Application User Model ID próprio) e vai depois dos argumentos que o app passa; o do toque
+# (windows/app/src/WebViewHost.cpp) vai junto mesmo assim, como ia quando a variável tomava o lugar deles.
 APP_ARGUMENT = "--autoplay-policy=no-user-gesture-required"
+BROWSER_ARGUMENTS_VARIABLE = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
+WEBVIEW2_POLICY_KEY = "Software\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments"
+POLICY_WAY = "politica da maquina"
 SHORT_HEIGHT = 640   # a área de trabalho baixa da fumaça, em pixels lógicos
 WINDOW_CLASS = "Starsonic Phone"
 NOTICE_CLASS = "Starsonic Phone Aviso"
@@ -203,8 +212,125 @@ class SmokeFailure(Exception):
 
 
 def browser_arguments():
-    """O valor de WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: o CDP na 9333 e o argumento do app."""
+    """Os argumentos do WebView2 de uma abertura da fumaça: o CDP na 9333 e o argumento do app."""
     return " ".join([DEBUG_ARGUMENT, APP_ARGUMENT])
+
+
+def policy_value_name(exe):
+    """O nome do valor da política dos argumentos para este exe: o nome do arquivo ("StarsonicPhone.exe")."""
+    return pathlib.PureWindowsPath(str(exe)).name
+
+
+def launch_environment(inherited, extra_environment):
+    """(o ambiente do app, os argumentos do WebView2): os argumentos vêm da WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS do
+    extra_environment, quando ela está lá (o item 13), ou do browser_arguments(); a variável não fica no ambiente,
+    nem a herdada (ela iria por cima da política num WebView2 antigo)."""
+    extra = dict(extra_environment or {})
+    arguments = extra.pop(BROWSER_ARGUMENTS_VARIABLE, None) or browser_arguments()
+    environment = {key: value for key, value in inherited.items() if key.upper() != BROWSER_ARGUMENTS_VARIABLE}
+    environment["STARSONIC_PERFIL"] = TEST_PROFILE
+    environment["STARSONIC_SOM_NULO"] = "1"
+    environment.update(extra)
+    return environment, arguments
+
+
+# O que havia na política antes da primeira escrita da fumaça, em cada vista do registro: {vista: estado}.
+_POLICY_BEFORE = {}
+_POLICY_NAME = []
+
+
+def _policy_views():
+    import winreg
+    # As duas vistas do registro (a de 64 bits e a de 32 bits): o app é de 32 bits e o Python, de 64, e não se sabe em
+    # qual delas o WebView2 lê a política; se a chave for compartilhada pelas duas, as duas escritas caem no mesmo lugar.
+    return {"64": winreg.KEY_WOW64_64KEY, "32": winreg.KEY_WOW64_32KEY}
+
+
+def _policy_state(view, name):
+    """(as partes do caminho da chave que existem, (o valor, o tipo) ou None)."""
+    import winreg
+    parts = WEBVIEW2_POLICY_KEY.split("\\")
+    existing = 0
+    for depth in range(1, len(parts) + 1):
+        try:
+            winreg.CloseKey(winreg.OpenKeyEx(winreg.HKEY_LOCAL_MACHINE, "\\".join(parts[:depth]), 0,
+                                             winreg.KEY_READ | view))
+        except OSError:
+            break
+        existing = depth
+    value = None
+    if existing == len(parts):
+        with winreg.OpenKeyEx(winreg.HKEY_LOCAL_MACHINE, WEBVIEW2_POLICY_KEY, 0, winreg.KEY_READ | view) as key:
+            try:
+                value = winreg.QueryValueEx(key, name)
+            except OSError:
+                value = None
+    return existing, value
+
+
+def write_browser_policy(exe, arguments):
+    """Os argumentos do WebView2 na política da máquina, para este exe; o estado de antes fica guardado na primeira
+    vez."""
+    import winreg
+    name = policy_value_name(exe)
+    views = _policy_views()
+    # Todas as vistas lidas antes de qualquer escrita: numa chave compartilhada, a escrita numa apareceria na outra.
+    for label, view in views.items():
+        if label not in _POLICY_BEFORE:
+            _POLICY_BEFORE[label] = _policy_state(view, name)
+    for view in views.values():
+        with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, WEBVIEW2_POLICY_KEY, 0,
+                                winreg.KEY_SET_VALUE | view) as key:
+            winreg.SetValueEx(key, name, 0, winreg.REG_SZ, arguments)
+    if name not in _POLICY_NAME:
+        _POLICY_NAME.append(name)
+
+
+def undo_browser_policy(result):
+    """A política de volta ao que era (o valor, ou a falta dele, e as chaves que a fumaça criou), conferida pela
+    leitura: result["argumentos_do_webview2"] = {"por", "desfeito"}."""
+    record = result["argumentos_do_webview2"] = {"por": POLICY_WAY, "desfeito": True}
+    if not _POLICY_NAME:
+        return
+    import winreg
+    name = _POLICY_NAME[0]
+    parts = WEBVIEW2_POLICY_KEY.split("\\")
+    done = True
+    for label, view in _policy_views().items():
+        existing, value = _POLICY_BEFORE.get(label, (len(parts), None))
+        try:
+            if existing == len(parts) and value is not None:
+                with winreg.OpenKeyEx(winreg.HKEY_LOCAL_MACHINE, WEBVIEW2_POLICY_KEY, 0,
+                                      winreg.KEY_SET_VALUE | view) as key:
+                    winreg.SetValueEx(key, name, 0, value[1], value[0])
+            else:
+                try:
+                    with winreg.OpenKeyEx(winreg.HKEY_LOCAL_MACHINE, WEBVIEW2_POLICY_KEY, 0,
+                                          winreg.KEY_SET_VALUE | view) as key:
+                        winreg.DeleteValue(key, name)
+                except FileNotFoundError:
+                    pass
+                # As chaves que a fumaça criou, da mais funda para cima, só se ficaram vazias.
+                for depth in range(len(parts), existing, -1):
+                    path = "\\".join(parts[:depth])
+                    try:
+                        with winreg.OpenKeyEx(winreg.HKEY_LOCAL_MACHINE, path, 0, winreg.KEY_READ | view) as key:
+                            subkeys, values, _ = winreg.QueryInfoKey(key)
+                        if subkeys or values:
+                            break
+                        winreg.DeleteKeyEx(winreg.HKEY_LOCAL_MACHINE, path, view, 0)
+                    except FileNotFoundError:
+                        continue
+        except OSError as error:
+            log("a politica do WebView2 (vista de %s bits) nao foi desfeita: %s" % (label, type(error).__name__))
+        try:
+            now = _policy_state(view, name)
+        except OSError:
+            now = None
+        if now != (existing, value):
+            done = False
+    record["desfeito"] = done
+    log("a politica do WebView2 da maquina: desfeita %s" % done)
 
 
 def short_work_area(work, logical_height, dpi):
@@ -686,7 +812,7 @@ def webview_process_rows():
 
 def wait_app_gone(exe, timeout=40):
     """Fecha o app aberto (o que o instalador abriu, por exemplo) e espera o WebView2 dele sair: os argumentos da
-    variável só valem para um WebView2 que ainda não está aberto."""
+    política só valem para um WebView2 que ainda não está aberto."""
     subprocess.run([str(exe), "--sair"], timeout=30)
     if not wait_for(lambda: webview_processes() == 0, timeout, interval=1):
         raise SmokeFailure("o WebView2 de um app anterior continua aberto")
@@ -730,12 +856,10 @@ class App:
 
     def __init__(self, exe, data_dir, extra_environment=None):
         self.exe = pathlib.Path(exe)
-        environment = dict(os.environ)
-        environment["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = browser_arguments()
-        environment["STARSONIC_PERFIL"] = TEST_PROFILE
-        environment["STARSONIC_SOM_NULO"] = "1"
-        environment.update(extra_environment or {})
-        log("abrindo %s --dados %s (%s)" % (self.exe, data_dir, environment["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"]))
+        environment, arguments = launch_environment(os.environ, extra_environment)
+        # Os argumentos pela política da máquina, logo antes do processo (o WebView2 a lê quando o app o abre).
+        write_browser_policy(self.exe, arguments)
+        log("abrindo %s --dados %s (%s)" % (self.exe, data_dir, arguments))
         self.process = subprocess.Popen([str(self.exe), "--dados", str(data_dir)], env=environment,
                                         cwd=str(self.exe.parent))
 
@@ -1070,6 +1194,7 @@ def run_smoke(args, result):
             app.kill()
         registrar.stop()
         show_log(data_dir / "diagnostico.log")
+        undo_browser_policy(result)
 
 
 PAGE_STATE_SCRIPT = """() => ({
@@ -2549,6 +2674,15 @@ def main(argv):
         if os.environ.get("GITHUB_ACTIONS") == "true":
             text = str(error).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
             print("::error title=windows_smoke::" + text, flush=True)
+        code = 1
+    # A política da máquina que não voltou ao que era reprova, depois de tudo.
+    if (result.get("argumentos_do_webview2") or {}).get("desfeito") is False:
+        sentence = "a politica dos argumentos do WebView2 nao voltou ao que era na maquina"
+        result["erro"] = (result["erro"] + "; " + sentence) if result.get("erro") else sentence
+        result["ok"] = False
+        print("FALHOU: " + sentence, flush=True)
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            print("::error title=windows_smoke::" + sentence, flush=True)
         code = 1
     (pathlib.Path(args.capturas) / ("resultado-%s.json" % result["modo"])).write_text(
         json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
