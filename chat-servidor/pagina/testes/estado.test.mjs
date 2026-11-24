@@ -3184,16 +3184,43 @@ test('um campo que não vale', () => {
     semMudar(esperando, doApp({ tipo: 'passe', passe, aparelhos: APARELHOS }));
   }
   semMudar(esperando, doApp({ tipo: 'passe', aparelhos: APARELHOS }));
-  // Os aparelhos que não são um objeto, ou com um nome que não vale.
-  const ruins = [null, 'Microfone USB', ['Microfone USB'], 7, { microfone: 7 }, { camera: 'x'.repeat(201) }];
-  for (const aparelhos of ruins) semMudar(esperando, doApp({ tipo: 'passe', passe: PASSE, aparelhos }));
-  semMudar(esperando, doApp({ tipo: 'passe', passe: PASSE }));
   const e = noAppNaReuniao();
-  for (const aparelhos of ruins) semMudar(e, doApp({ tipo: 'aparelhos', aparelhos }));
-  semMudar(e, doApp({ tipo: 'aparelhos' }));
+  // Os aparelhos que não são um objeto, ou com um nome que não vale, leem como os padrões do sistema, que não são os
+  // nomes em uso: uma troca de verdade, com o microfone e a câmera ligados trocados para o padrão.
+  const padroes = { microfone: '', altoFalante: '', camera: '' };
+  const ruins = [undefined, null, 'Microfone USB', ['Microfone USB'], 7, { microfone: 7 }, { camera: 'x'.repeat(201) }];
+  for (const aparelhos of ruins) {
+    const r = passo(e, doApp({ tipo: 'aparelhos', aparelhos }));
+    assert.deepEqual(r.estado.aparelhos, padroes, JSON.stringify(aparelhos));
+    assert.deepEqual(
+      r.efeitos,
+      [{ tipo: 'trocarMicrofone', ligado: true, nome: '' }, { tipo: 'trocarCamera', ligada: true, nome: '' }],
+      JSON.stringify(aparelhos),
+    );
+    assert.equal(r.estado.trocandoCamera, true);
+  }
   // Sem o m, ou um tipo que o cérebro não conhece.
   semMudar(e, { tipo: 'app' });
   semMudar(e, doApp({ tipo: 'abrir' }));
+});
+
+test('um nome de aparelho que não serve é o padrão do sistema, e o passe vale', () => {
+  const esperando = rodar(inicial(), COMECAR_NO_APP).estado;
+  const ruins = [undefined, null, 'texto', 7, [], { microfone: 7, altoFalante: 'x'.repeat(201), camera: 'Câmera HD' }];
+  for (const aparelhos of ruins) {
+    const r = passo(esperando, doApp({ tipo: 'passe', passe: PASSE, aparelhos }));
+    assert.deepEqual(r.efeitos, [abrirCom(1, { passe: PASSE })], JSON.stringify(aparelhos));
+  }
+  const r = passo(esperando, doApp({ tipo: 'passe', passe: PASSE, aparelhos: ruins.at(-1) }));
+  assert.deepEqual(r.estado.aparelhos, { microfone: '', altoFalante: '', camera: 'Câmera HD' });
+  // O passe continua recusado pelo que é dele: a forma.
+  semMudar(esperando, doApp({ tipo: 'passe', passe: 'curto', aparelhos: {} }));
+});
+
+test('a troca de aparelhos com um nome que não serve usa o padrão para ele', () => {
+  const r = passo(noAppNaEntrada(), doApp({ tipo: 'aparelhos', aparelhos: { ...APARELHOS, microfone: 7 } }));
+  assert.deepEqual(r.estado.aparelhos, { ...APARELHOS, microfone: '' });
+  assert.deepEqual(r.efeitos, [PEDIR_MIDIA]);
 });
 
 test('dentro do app não há escolha', () => {

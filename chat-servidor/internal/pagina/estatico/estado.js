@@ -663,10 +663,8 @@ function doApp(e, m) {
   switch (m.tipo) {
     case 'passe':
       return passeDoApp(e, m);
-    case 'aparelhos': {
-      const aparelhos = lerAparelhos(m.aparelhos);
-      return aparelhos === null ? nada(e) : trocarAparelhos(e, aparelhos);
-    }
+    case 'aparelhos':
+      return trocarAparelhos(e, lerAparelhos(m.aparelhos));
     case 'sair':
       return sairPeloApp(e);
     case 'pausar':
@@ -683,23 +681,20 @@ function doApp(e, m) {
 // O passe que o app mandou, com os aparelhos, só em resposta a um pronta. O carregar e o Entrar que o esperavam abrem
 // com ele; em outra tela (a pessoa saiu enquanto ele vinha), o próximo abrir o leva.
 function passeDoApp(e, m) {
-  const aparelhos = lerAparelhos(m.aparelhos);
-  if (!e.esperandoPasse || typeof m.passe !== 'string' || !PASSE_QUE_VALE.test(m.passe) || aparelhos === null) {
-    return nada(e);
-  }
-  const mudancas = { passe: m.passe, aparelhos, esperandoPasse: false };
+  if (!e.esperandoPasse || typeof m.passe !== 'string' || !PASSE_QUE_VALE.test(m.passe)) return nada(e);
+  const mudancas = { passe: m.passe, aparelhos: lerAparelhos(m.aparelhos), esperandoPasse: false };
   return e.tela === 'carregando' || esperaOAbrir(e) ? comAbrir(e, mudancas) : com(e, mudancas);
 }
 
-// Os nomes dos aparelhos que o app manda: um objeto com o microfone, o altoFalante e a camera, cada um um texto de até
-// 200 caracteres. O que falta, ou vazio, é o padrão do sistema. Fora disso, null: a mensagem não vale.
+// Os nomes dos aparelhos que o app manda: um objeto com o microfone, o altoFalante e a camera. Um nome que não é um
+// texto de até 200 caracteres conta como o que falta, o padrão do sistema ('') para aquele aparelho; os aparelhos que
+// faltam ou não são um objeto contam como {}. Um nome ruim nunca joga fora a mensagem, e muito menos o passe.
 function lerAparelhos(a) {
-  if (a === null || typeof a !== 'object' || Array.isArray(a)) return null;
+  const objeto = a !== null && typeof a === 'object' && !Array.isArray(a) ? a : {};
   const lidos = {};
   for (const campo of Object.keys(APARELHOS_PADRAO)) {
-    const nome = a[campo] ?? '';
-    if (typeof nome !== 'string' || [...nome].length > MAX_NOME_DO_APARELHO) return null;
-    lidos[campo] = nome;
+    const nome = objeto[campo];
+    lidos[campo] = typeof nome === 'string' && [...nome].length <= MAX_NOME_DO_APARELHO ? nome : '';
   }
   return lidos;
 }
