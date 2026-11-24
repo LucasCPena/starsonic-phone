@@ -74,8 +74,9 @@ Fumaça (padrão), contra o StarsonicPhone.exe instalado do build de teste (STAR
    novas do app, cada uma numa pasta de dados nova, a fumaça põe a página da reunião num iframe da página do app:
    a principal (a entrada do colega, a câmera e o microfone de mentira, o alto-falante, a captura
    reuniao-entrada.png e a tela), as outras tentativas da tela se ela não capturou, uma com a proteção Local Network
-   Access ligada (só registra) e, por último, as recusas (a câmera e a tela pedidas pela página do app e três
-   quadros que não entram); as linhas das regras do quadro no diagnostico.log fecham a prova. O hosts e a lista do
+   Access ligada (só registra) e, por último, as recusas (a câmera e a tela pedidas pela página do app, três
+   quadros que não entram e o quadro da reunião mandado para outro endereço do chat: fora da reunião, a câmera e a
+   tela pedidas por ele não vêm); as linhas das regras do quadro no diagnostico.log fecham a prova. O hosts e a lista do
    Windows voltam ao que eram. O resultado vai na chave "reuniao", sem o código, o passe nem a chave.
 Os itens 7 a 11 juntam o que falhou e reprovam no fim (um não esconde o outro); o 13 também, ao fim dele.
 O item 12 fica à parte: junta os problemas dele (um não esconde o outro) e reprova ao fim dele mesmo, antes dos itens

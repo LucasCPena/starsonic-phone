@@ -35,9 +35,13 @@ LINES = ["navegacao do quadro permitida: https://chat.starcloud-starsonic.com.br
          "permissao permitida (quadro): 2 https://chat.starcloud-starsonic.com.br",
          "permissao negada: 2 https://app.starsonic.local",
          "navegacao bloqueada: https://chat.starcloud-starsonic.com.br",
-         "captura de tela cancelada", "captura de tela permitida (quadro)"]
-# Como o problems_of chama cada uma (a da permissão do quadro é procurada pelo começo).
-NEEDED = [LINES[0], "permissao permitida (quadro): 2 ", LINES[2], LINES[3], LINES[4], LINES[5]]
+         "captura de tela cancelada", "captura de tela permitida (quadro)",
+         # As do quadro que deixa a reunião (o "saiu" com o navegou).
+         "permissao negada (quadro): 2 https://chat.starcloud-starsonic.com.br",
+         "captura de tela cancelada (quadro)"]
+# Como o problems_of chama cada uma (as das permissões do quadro são procuradas pelo começo).
+NEEDED = [LINES[0], "permissao permitida (quadro): 2 ", LINES[2], LINES[3], LINES[4], LINES[5],
+          "permissao negada (quadro): 2 ", LINES[7]]
 
 
 def complete():
@@ -56,7 +60,9 @@ def complete():
                         "do_app": {"camera": {"erro": "NotAllowedError: Permission denied"},
                                    "tela": {"erro": "NotAllowedError: Permission denied"}},
                         "recusados": {"administracao": False, "consulta": False, "de_fora": False},
-                        "csp": [], "diagnostico": list(LINES[2:5])},
+                        "saiu": {"navegou": True, "camera": {"erro": "NotAllowedError: Permission denied"},
+                                 "tela": {"erro": "NotAllowedError: Permission denied"}},
+                        "csp": [], "diagnostico": list(LINES[2:5]) + list(LINES[6:])},
             "vazou": [],
             "desfeito": {"hosts": True, "certificado": True}}
 
@@ -68,10 +74,12 @@ class LogTest(unittest.TestCase):
                            "2026-11-24 10:00:02.003 captura de tela cancelada",
                            "2026-11-24 10:00:03.004 navegacao bloqueada: file:",
                            "2026-11-24 10:00:04.005 o quadro nao carregou (erro 7)",
-                           "2026-11-24 10:00:05.006 chat: chatKey", ""])
+                           "2026-11-24 10:00:05.006 chat: chatKey",
+                           "2026-11-24 10:00:06.007 quadro fora da regra: https://chat.starcloud-starsonic.com.br", ""])
         self.assertEqual(reuniao_fumaca.log_lines(log),
                          ["permissao negada: 2 https://app.starsonic.local", "captura de tela cancelada",
-                          "navegacao bloqueada: file:", "o quadro nao carregou (erro 7)"])
+                          "navegacao bloqueada: file:", "o quadro nao carregou (erro 7)",
+                          "quadro fora da regra: https://chat.starcloud-starsonic.com.br"])
 
     def test_a_secret_in_the_log_is_found(self):
         log = "2026-11-24 10:00:00.001 navegacao bloqueada: https://exemplo.com.br/r/k7q49xwpht"
@@ -114,8 +122,10 @@ class VerdictTest(unittest.TestCase):
             (("recusas", "do_app", "camera"), {"faixas": ["video:live"]}, "pagina do app"),
             (("recusas", "do_app", "tela"), {"faixa": "live", "superficie": "monitor"}, "pagina do app"),
             (("recusas", "recusados", "administracao"), True, "administracao"),
-            (("recusas", "recusados", "consulta"), True, "consulta"),
             (("recusas", "recusados", "de_fora"), True, "de_fora"),
+            (("recusas", "saiu"), None, "deixa a reuniao"),
+            (("recusas", "saiu", "camera"), {"faixas": ["video:live"]}, "fora da reuniao"),
+            (("recusas", "saiu", "tela"), {"faixa": "live", "superficie": "monitor"}, "fora da reuniao"),
             (("vazou",), ["k7q49xwpht"], "vazou"),
             (("desfeito", "hosts"), False, "hosts"),
             (("desfeito", "certificado"), False, "certificado"),
@@ -132,14 +142,24 @@ class VerdictTest(unittest.TestCase):
 
     def test_the_line_of_the_frame_does_not_count_as_the_line_of_the_window(self):
         record = complete()
-        record["recusas"]["diagnostico"] = [l for l in LINES[2:5] if l != "captura de tela cancelada"] + [
-            "captura de tela cancelada (quadro)"]
+        record["recusas"]["diagnostico"] = [l for l in LINES[2:] if l != "captura de tela cancelada"]
         self.assertEqual(reuniao_fumaca.problems_of(record), ["falta no diagnostico: captura de tela cancelada"])
 
     def test_the_line_of_a_screen_attempt_counts(self):
         record = complete()
         record["principal"]["diagnostico"] = list(LINES[:2])
         record["tela"]["tentativas"][0]["diagnostico"] = ["captura de tela permitida (quadro)"]
+        self.assertEqual(reuniao_fumaca.problems_of(record), [])
+
+    def test_a_refused_address_that_loads_does_not_fail_by_itself(self):
+        record = complete()
+        record["recusas"]["recusados"]["consulta"] = True
+        self.assertEqual(reuniao_fumaca.problems_of(record), [])
+
+    def test_a_frame_held_in_the_meeting_needs_no_refusal_lines(self):
+        record = complete()
+        record["recusas"]["saiu"] = {"navegou": False, "camera": None, "tela": None}
+        record["recusas"]["diagnostico"] = list(LINES[2:5])
         self.assertEqual(reuniao_fumaca.problems_of(record), [])
 
     def test_the_local_network_run_never_fails_the_proof(self):
@@ -183,10 +203,11 @@ class RehearsalTest(unittest.TestCase):
         self.addCleanup(self.front.stop)
 
         link = self.chat.company_with_meetings(reuniao_fumaca.COMPANY)
-        key = self.chat.link_computer(link, reuniao_fumaca.COMPUTER)
-        self.chat.enter_person(key, reuniao_fumaca.RAMAL, reuniao_fumaca.PERSON)
-        self.code = self.chat.schedule_meeting(key, reuniao_fumaca.SUBJECT)
-        self.meeting_pass = self.chat.meeting_pass(key, self.code)
+        self.key = self.chat.link_computer(link, reuniao_fumaca.COMPUTER)
+        self.chat.enter_person(self.key, reuniao_fumaca.RAMAL, reuniao_fumaca.PERSON)
+        self.code = self.chat.schedule_meeting(self.key, reuniao_fumaca.SUBJECT)
+        self.meeting_pass = self.chat.meeting_pass(self.key, self.code)
+        self.meeting_passes = [self.meeting_pass]
 
         pw = sync_playwright().start()
         self.addCleanup(pw.stop)
@@ -231,9 +252,19 @@ class RehearsalTest(unittest.TestCase):
         errors = [text for kind, text in self.console if kind == "error" and "speaker-selection" not in text]
         self.assertEqual(errors, [])
         # O quadro de fora, quem recusa aqui é a regra de segurança da página do app (os dois do chat são do Windows).
-        self.assertIs(reuniao_fumaca.probe_refused_frames(self.page, reuniao_local.CHAT_ORIGIN, self.code, self.pump)["de_fora"], False)
+        refused = reuniao_fumaca.probe_refused_frames(self.page, reuniao_local.CHAT_ORIGIN, self.code, self.pump)
+        self.assertIs(refused["de_fora"], False)
+        # Aqui nenhum executável recusa: o quadro do chat com mais coisa no endereço carrega, e a sonda o vê.
+        self.assertIs(refused["consulta"], True)
+        # O quadro que deixa a reunião: aqui ele navega, e a câmera dada a ele aparece na sonda.
+        second_pass = self.chat.meeting_pass(self.key, self.code)
+        self.meeting_passes.append(second_pass)
+        reuniao_fumaca.open_meeting(self.page, reuniao_local.CHAT_ORIGIN, self.code, second_pass, self.pump)
+        left = reuniao_fumaca.probe_left_meeting(self.page, reuniao_local.CHAT_ORIGIN, self.code, self.pump)
+        self.assertIs(left["navegou"], True)
+        self.assertEqual(left["camera"], {"faixas": ["video:live"]})
         log = pathlib.Path(self.chat.log_file).read_text(encoding="utf-8", errors="replace")
-        self.assertEqual(reuniao_fumaca.leaks(log, [self.code, self.meeting_pass, "Ana Souza"]), [])
+        self.assertEqual(reuniao_fumaca.leaks(log, [self.code, "Ana Souza"] + self.meeting_passes), [])
 
 
 if __name__ == "__main__":

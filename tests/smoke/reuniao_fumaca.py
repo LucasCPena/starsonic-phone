@@ -41,10 +41,11 @@ FRAME_ID = "reuniao-da-fumaca"
 REFUSED_ID = "recusado-da-fumaca"
 SCREEN_BUTTON_ID = "sonda-da-tela"
 REFUSED_WAIT_MS = 3000
+LEFT_WAIT_MS = 3000
 
 # O começo de cada linha do diagnostico.log ("AAAA-MM-DD HH:MM:SS.mmm ") e as linhas das regras do quadro.
 LOG_TIME = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} ")
-LOG_PREFIXES = ("permissao ", "captura de tela", "navegacao ", "o quadro nao carregou")
+LOG_PREFIXES = ("permissao ", "captura de tela", "navegacao ", "o quadro nao carregou", "quadro fora da regra")
 # As linhas que o portão procura em todos os diagnósticos juntos: (a linha, procurada pelo começo).
 NEEDED_LINES = [
     ("navegacao do quadro permitida: https://chat.starcloud-starsonic.com.br", False),
@@ -53,6 +54,11 @@ NEEDED_LINES = [
     ("navegacao bloqueada: https://chat.starcloud-starsonic.com.br", False),
     ("captura de tela cancelada", False),
     ("captura de tela permitida (quadro)", False),
+]
+# As que faltam só quando o quadro deixou a reunião (o "saiu" com o navegou): ele pediu e não levou.
+LEFT_MEETING_LINES = [
+    ("permissao negada (quadro): 2 ", True),
+    ("captura de tela cancelada (quadro)", False),
 ]
 TRACKS = ["audio:live", "video:live"]
 
@@ -285,6 +291,29 @@ def probe_refused_frames(page, origin: str, code: str, pump) -> dict:
     return loaded
 
 
+# O quadro da reunião mandado para outro endereço (o src do elemento).
+LEAVE_SCRIPT = "([id, src]) => { document.getElementById(id).src = src; }"
+HREF_SCRIPT = "() => location.href"
+
+
+def probe_left_meeting(page, origin: str, code: str, pump) -> dict:
+    """Com o quadro da reunião aberto (open_meeting): manda esse quadro para o endereço da reunião com mais coisa
+    (?x=1), espera 3 s e lê o location.href do documento que ele mostra. {"navegou", "camera", "tela"}: com o
+    navegou, a câmera (só o vídeo) e a tela pedidas por esse documento; sem ele (o quadro continuou na reunião), None."""
+    meeting = origin + "/r/" + code
+    page.evaluate(LEAVE_SCRIPT, [FRAME_ID, meeting + "?x=1"])
+    pump(LEFT_WAIT_MS)
+    frame = page.locator("#" + FRAME_ID).element_handle().content_frame()
+    try:
+        href = frame.evaluate(HREF_SCRIPT) if frame is not None else None
+    except Exception:   # noqa: BLE001 - um documento que não deixa ler (uma página de erro) não é a reunião
+        href = None
+    if href == meeting:
+        return {"navegou": False, "camera": None, "tela": None}
+    return {"navegou": True, "camera": probe_media(frame, audio=False, video=True),
+            "tela": probe_screen(frame, pump)}
+
+
 def log_lines(log_text: str) -> list[str]:
     """As linhas das regras do quadro no diagnostico.log, sem a data e a hora do começo."""
     lines = []
@@ -366,9 +395,21 @@ def problems_of(record: dict) -> list[str]:
         if not str(answer.get("erro", "")).startswith("NotAllowedError"):
             problems.append("a pagina do app pediu %s e nao levou um NotAllowedError: %s" % (name, answer))
     refused = _part(refusals, "recusados")
-    for name in ("administracao", "consulta", "de_fora"):
+    # O "consulta" fica registrado e não é julgado (a regra final de uma navegação recusada vem na rodada seguinte).
+    for name in ("administracao", "de_fora"):
         if refused.get(name) is not False:
             problems.append("um quadro recusado carregou (ou nao foi visto): %s" % name)
+    left = _part(refusals, "saiu")
+    needed_lines = list(NEEDED_LINES)
+    if not isinstance(left.get("navegou"), bool):
+        problems.append("nao se sabe se o quadro que deixa a reuniao navegou: %s" % (refusals.get("saiu"),))
+    elif left["navegou"]:
+        for what, name in (("camera", "a camera"), ("tela", "a tela")):
+            answer = _part(left, what)
+            if not str(answer.get("erro", "")).startswith("NotAllowedError"):
+                problems.append("o quadro fora da reuniao pediu %s e nao levou um NotAllowedError: %s"
+                                % (name, left.get(what)))
+        needed_lines += LEFT_MEETING_LINES
     leaked = record.get("vazou")
     if leaked is None or leaked:
         problems.append("o diagnostico vazou (ou nao foi conferido): %s" % leaked)
@@ -382,7 +423,7 @@ def problems_of(record: dict) -> list[str]:
     for attempt in attempts if isinstance(attempts, list) else []:
         if isinstance(attempt, dict):
             lines += _list(attempt, "diagnostico")
-    for needed, by_start in NEEDED_LINES:
+    for needed, by_start in needed_lines:
         if not any(line.startswith(needed) if by_start else line == needed for line in lines):
             problems.append("falta no diagnostico: " + needed)
     return problems
@@ -475,6 +516,8 @@ class _Item:
                 if self.record.get("webview2") is None:
                     self.record["webview2"] = (smoke.cdp_ready() or {}).get("Browser")
                 page = smoke.find_page(browser, "/index.html", 60, lambda ms: time.sleep(ms / 1000.0))
+                # A página do app pronta antes de tudo: a pasta de dados nova abre na tela Entrar.
+                page.locator("#entrar-servidor").wait_for(timeout=60000)
                 page.on("console", lambda message: lines.append("%s: %s" % (message.type, message.text)))
                 page.on("pageerror", lambda error: lines.append("pageerror: %s" % error))
                 # O app abre na tela Entrar e ninguém entra: o quadro vai por cima dela.
@@ -503,10 +546,13 @@ class _Item:
         print(self.clean(text) if text else "(sem o log)", flush=True)
         print("--- fim do diagnostico.log ---", flush=True)
 
-    def open_frame(self, page, pump, part):
+    def open_frame(self, page, pump, part, before=None):
         """O quadro da reunião, com um passe novo. Um quadro que carregou sem a frente ver uma ligação fecha o app e
-        para o item: a página não veio do chat da fumaça."""
-        before = self.front.connections
+        para o item: a página não veio do chat da fumaça. before: a contagem da frente de antes do primeiro quadro do
+        chat desta abertura (o navegador guarda a ligação aberta e a usa de novo no quadro seguinte); sem ele, a de
+        agora."""
+        if before is None:
+            before = self.front.connections
         opened = open_meeting(page, CHAT_ORIGIN, self.code, self.new_pass(), pump)
         frame = opened.pop("quadro")
         if frame is not None and self.front.connections <= before:
@@ -652,10 +698,13 @@ class _Item:
         self.launch("lna", part, "pedaco", True, body, console=True)
 
     def run_refusals(self):
-        """7. Por último: o que a página do app pede e não leva, e os três quadros que não entram."""
+        """7. Por último: o que a página do app pede e não leva, os três quadros que não entram e o quadro que
+        deixa a reunião."""
         part = self.record["recusas"]
 
         def body(page, pump):
+            # Antes dos quadros do chat desta abertura: o da reunião, depois deles, pode vir por uma ligação deles.
+            before = self.front.connections
             part["do_app"] = {}
             part["do_app"]["camera"] = self.clean(probe_media(page, audio=False, video=True))
             part["do_app"]["tela"] = self.clean(probe_screen(page, pump))
@@ -663,6 +712,11 @@ class _Item:
             part["recusados"] = probe_refused_frames(page, CHAT_ORIGIN, self.code, pump)
             part["csp"] = self.clean(read_messages(page)["csp"])
             self.say("quadros recusados (carregou?): %s; csp %s" % (part["recusados"], part["csp"]))
+            # O quadro que deixa a reunião: só um documento de reunião ganha a câmera e a tela.
+            frame, _ = self.open_frame(page, pump, part, before)
+            part["saiu"] = (self.clean(probe_left_meeting(page, CHAT_ORIGIN, self.code, pump)) if frame is not None
+                            else {"erro": "sem o quadro"})
+            self.say("o quadro que deixa a reuniao: %s" % part["saiu"])
 
         self.launch("recusas", part, "pedaco", False, body)
 
