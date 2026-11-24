@@ -241,20 +241,24 @@ class LocalChat:
         command = [self.binary, "servir", "--teste", "--escutar", "127.0.0.1:%d" % self.port, "--dados", self._data]
         for origin in self.origins:
             command += ["--origem", origin]
-        self._log = open(self.log_file, "wb")
-        self._process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=self._log, stderr=subprocess.STDOUT)
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            if self._process.poll() is not None:
-                raise RuntimeError("o chat saiu ao subir (status %d)" % self._process.returncode)
-            try:
-                if self._request("GET", "/admin/entrar")[0] == 200:
-                    return
-            except OSError:
-                pass
-            time.sleep(0.1)
-        self.stop()
-        raise RuntimeError("o chat não subiu em 30 s")
+        try:
+            self._log = open(self.log_file, "wb")
+            self._process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=self._log,
+                                             stderr=subprocess.STDOUT)
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if self._process.poll() is not None:
+                    raise RuntimeError("o chat saiu ao subir (status %d)" % self._process.returncode)
+                try:
+                    if self._request("GET", "/admin/entrar")[0] == 200:
+                        return
+                except (OSError, http.client.HTTPException):
+                    pass   # ainda subindo: recusado ou cortado
+                time.sleep(0.1)
+            raise RuntimeError("o chat não subiu em 30 s")
+        except BaseException:
+            self.stop()   # qualquer falha depois do registro aberto deixa o processo parado e o registro fechado
+            raise
 
     def stop(self) -> None:
         if self._process is not None:

@@ -167,6 +167,44 @@ class LocalChatTest(unittest.TestCase):
             self.assertNotIn(secret, log)
 
 
+class FailedStartTest(unittest.TestCase):
+    """Um chat que sai ao subir não deixa nada para trás. O programa de mentira é um script com #! e o bit de execução:
+    estes testes rodam no Linux (aqui e no GitHub), e não precisam do STARSONIC_CHAT_BIN."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.binary = os.path.join(self.tmp.name, "chat-de-mentira")
+        with open(self.binary, "w", encoding="ascii") as f:
+            f.write('#!/bin/sh\nif [ "$1" = "admin-criar" ]; then cat >/dev/null; exit 0; fi\n'
+                    'echo "segredo-do-registro"; exit 3\n')
+        os.chmod(self.binary, 0o755)
+        self.chat = reuniao_local.LocalChat(self.binary, os.path.join(self.tmp.name, "chat"), [])
+        os.makedirs(self.chat.data_dir, exist_ok=True)
+
+    def assert_nothing_left(self):
+        self.assertIsNone(self.chat._log)        # o registro foi fechado
+        self.assertIsNone(self.chat._process)    # o processo foi esperado
+
+    def test_a_chat_that_exits_while_starting_leaves_nothing_behind(self):
+        with self.assertRaises(RuntimeError) as raised:
+            self.chat.start()
+        self.assertEqual(str(raised.exception), "o chat saiu ao subir (status 3)")
+        self.assert_nothing_left()
+        with open(self.chat.log_file, "ab"):     # o registro abre de novo para escrita
+            pass
+
+    def test_a_failed_start_can_be_followed_by_stop_and_by_another_start_attempt(self):
+        with self.assertRaises(RuntimeError):
+            self.chat.start()
+        self.chat.stop()
+        self.assert_nothing_left()
+        with self.assertRaises(RuntimeError) as raised:
+            self.chat.start()
+        self.assertEqual(str(raised.exception), "o chat saiu ao subir (status 3)")
+        self.assert_nothing_left()
+
+
 class NamesTest(unittest.TestCase):
     def test_the_chat_address_is_the_one_of_the_app(self):
         for path in ("windows/app/src/ChatFiles.h", "windows/ui/src/chat/endereco.ts"):
