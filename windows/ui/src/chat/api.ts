@@ -6,6 +6,7 @@
 // miniatura e os downloads pelo fetch; nos três, os 20 s contam desde o último pedaço que andou (um arquivo de 25 MB
 // numa rede lenta leva mais que isso, mas nunca 20 s parado).
 import type { EstadoDoRamal } from './ramal';
+import type { Reuniao, Participante, Pedido } from '../reunioes/tipos';
 import type { Arquivo, Conversa, Membro, Mensagem, Pessoa } from './tipos';
 
 /** As mensagens vêm em páginas de 50 (o máximo do protocolo). */
@@ -64,6 +65,22 @@ export interface ApiChat {
   bilhete(): Promise<string>;
   /** O PUT /api/v1/computadores/eu/ramal. O 204 resolve; o resto rejeita com o ErroChat. */
   dizerRamal(estado: EstadoDoRamal, segundos: number): Promise<void>;
+  /** GET /reunioes: as reuniões marcadas que a pessoa criou e que ainda valem (docs/chat-protocolo.md, seção 9). */
+  reunioes(): Promise<Reuniao[]>;
+  /** POST /reunioes. */
+  criarReuniao(corpo: { assunto?: string; inicio: number; valeAte: number }): Promise<Reuniao>;
+  /** DELETE /reunioes/{codigo}. */
+  cancelarReuniao(codigo: string): Promise<void>;
+  /** POST /reunioes/{codigo}/passe: o passe de uso único com que a página da reunião entra. */
+  passeDaReuniao(codigo: string): Promise<{ passe: string; reuniao: Reuniao }>;
+  /** POST /reunioes/{codigo}/aceitar. */
+  aceitarPedido(codigo: string, pedido: string): Promise<void>;
+  /** POST /reunioes/{codigo}/recusar. */
+  recusarPedido(codigo: string, pedido: string): Promise<void>;
+  /** POST /reunioes/{codigo}/pausa: a reunião do navegador entra em pausa (ou sai dela); o `vez` é de cada pausa. */
+  pausarReuniao(codigo: string, pausada: boolean, vez: string): Promise<void>;
+  /** GET /reunioes/{codigo}/participantes: quem está na reunião e quem pede para entrar. */
+  participantesDaReuniao(codigo: string): Promise<{ participantes: Participante[]; pedidos: Pedido[] }>;
 }
 
 /** O ErroChat de uma resposta fora dos 2xx, com o `erro` do corpo (`servidor` sem ele: o corpo de um proxy). */
@@ -310,6 +327,36 @@ export function criarApi(base: string, chave: string): ApiChat {
     },
     async dizerRamal(estado, segundos) {
       await p('PUT', '/computadores/eu/ramal', { estado, segundos });
+    },
+    async reunioes() {
+      return ((await p('GET', '/reunioes')) as { reunioes: Reuniao[] }).reunioes;
+    },
+    async criarReuniao(corpo) {
+      return ((await p('POST', '/reunioes', corpo)) as { reuniao: Reuniao }).reuniao;
+    },
+    async cancelarReuniao(codigo) {
+      await p('DELETE', `/reunioes/${encodeURIComponent(codigo)}`);
+    },
+    async passeDaReuniao(codigo) {
+      const caminho = `/reunioes/${encodeURIComponent(codigo)}/passe`;
+      const r = (await p('POST', caminho)) as { passe?: unknown; reuniao?: Reuniao } | null;
+      if (typeof r?.passe !== 'string' || !r.reuniao) throw new ErroChat(500, 'servidor');
+      return { passe: r.passe, reuniao: r.reuniao };
+    },
+    async aceitarPedido(codigo, pedido) {
+      await p('POST', `/reunioes/${encodeURIComponent(codigo)}/aceitar`, { pedido });
+    },
+    async recusarPedido(codigo, pedido) {
+      await p('POST', `/reunioes/${encodeURIComponent(codigo)}/recusar`, { pedido });
+    },
+    async pausarReuniao(codigo, pausada, vez) {
+      await p('POST', `/reunioes/${encodeURIComponent(codigo)}/pausa`, { pausada, vez });
+    },
+    async participantesDaReuniao(codigo) {
+      return (await p('GET', `/reunioes/${encodeURIComponent(codigo)}/participantes`)) as {
+        participantes: Participante[];
+        pedidos: Pedido[];
+      };
     },
   };
 }

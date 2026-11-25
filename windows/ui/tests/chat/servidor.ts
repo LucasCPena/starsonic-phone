@@ -302,3 +302,21 @@ export async function empresaComPessoas(
   }
   return { empresaId: id, codigo, pessoas: ligadas };
 }
+
+/** Libera, ou bloqueia, as reuniões da empresa na administração (o POST /admin/reunioes/empresas/{id}). */
+export async function liberarReunioes(empresaId: number, liberar = true): Promise<void> {
+  await entrarNaAdministracao();
+  const csrf = await csrfDe(await admin('GET', '/admin/reunioes'));
+  const r = await admin('POST', `/admin/reunioes/empresas/${empresaId}`, { csrf, liberar: liberar ? '1' : '0' });
+  if (r.status !== 303) throw new Error(`liberar as reuniões respondeu ${r.status}`);
+}
+
+/** O empresaComPessoas, com as reuniões liberadas. */
+export async function empresaComReunioes(
+  nome: string,
+  pessoas: Array<{ ramal: string; nome: string }>,
+): ReturnType<typeof empresaComPessoas> {
+  const r = await empresaComPessoas(nome, pessoas);
+  await liberarReunioes(r.empresaId);
+  return r;
+}
