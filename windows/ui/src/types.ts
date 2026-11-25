@@ -28,4 +28,6 @@ export type View =
   | { kind: 'chatNova'; back: View }
   | { kind: 'chatNovoGrupo'; back: View }
   | { kind: 'chatMembros'; conversa: number; back: View }
-  | { kind: 'chatPor'; conversa: number; back: View };
+  | { kind: 'chatPor'; conversa: number; back: View }
+  /** (Reuniões) A Nova reunião, no lugar das abas. */
+  | { kind: 'reuniaoNova'; back: View };

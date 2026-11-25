@@ -1,12 +1,14 @@
 // A aba Reuniões (os quadros Main e PrimeiraVez): o título "Reuniões", "As que você marcou" e as reuniões da pessoa, na
 // ordem do servidor: o assunto (ou "Reunião sem assunto"), o dia e a hora e, com alguém nela, o "Acontecendo". Sem
 // nenhuma, a primeira vez; sem conexão, a frase da falta de conexão no lugar da lista. Os assuntos vão sempre como
-// texto. A hora de agora é lida a cada desenho, e a aba é desenhada de novo a cada leitura da lista.
-import { IconReunioes, IconSemRede } from '../../icons';
+// texto. O "Nova reunião" abre o formulário; a linha da reunião que acabou de ter o link copiado diz "Link copiado" (um
+// `status`, por 2 s). A hora de agora é lida a cada desenho, e a aba é desenhada de novo a cada leitura da lista.
+import { IconCheck, IconPlus, IconReunioes, IconSemRede } from '../../icons';
 import type { VistaReunioes } from '../cliente';
 import { acontecendo, descricaoDaLinha, quando } from '../formato';
 import {
   AS_QUE_VOCE_MARCOU,
+  LINK_COPIADO,
   NENHUMA_REUNIAO,
   NOVA_REUNIAO,
   PRIMEIRA_VEZ_ANTES,
@@ -19,9 +21,11 @@ import type { Reuniao } from '../tipos';
 
 interface Props {
   vista: VistaReunioes;
+  /** O botão "Nova reunião". */
+  onNova(): void;
 }
 
-function Linha({ reuniao, agora }: { reuniao: Reuniao; agora: number }) {
+function Linha({ reuniao, agora, copiado }: { reuniao: Reuniao; agora: number; copiado: boolean }) {
   const aoVivo = acontecendo(reuniao);
   return (
     <li>
@@ -38,20 +42,32 @@ function Linha({ reuniao, agora }: { reuniao: Reuniao; agora: number }) {
               {aoVivo}
             </span>
           )}
+          {copiado && (
+            <span class="reun-copiado" role="status">
+              <IconCheck size="sm" />
+              {LINK_COPIADO}
+            </span>
+          )}
         </div>
       </article>
     </li>
   );
 }
 
-export function Aba({ vista }: Props) {
-  const { lista, conectado } = vista;
+export function Aba({ vista, onNova }: Props) {
+  const { lista, conectado, copiado } = vista;
   const agora = Date.now();
   return (
     <div class="body scroll chat reun">
-      <div class="reun-topo">
-        <h1 class="chat-titulo">{REUNIOES}</h1>
-        <span class="reun-sub">{AS_QUE_VOCE_MARCOU}</span>
+      <div class="reun-cabeca">
+        <div class="reun-topo">
+          <h1 class="chat-titulo">{REUNIOES}</h1>
+          <span class="reun-sub">{AS_QUE_VOCE_MARCOU}</span>
+        </div>
+        <button type="button" class="btn btn-cyan reun-nova" onClick={onNova}>
+          <IconPlus size="sm" />
+          {NOVA_REUNIAO}
+        </button>
       </div>
       {!conectado ? (
         <div class="chat-vazio">
@@ -78,7 +94,7 @@ export function Aba({ vista }: Props) {
         lista !== null && (
           <ul class="reun-lista">
             {lista.map((r) => (
-              <Linha key={r.codigo} reuniao={r} agora={agora} />
+              <Linha key={r.codigo} reuniao={r} agora={agora} copiado={copiado === r.codigo} />
             ))}
           </ul>
         )

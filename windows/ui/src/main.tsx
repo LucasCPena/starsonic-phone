@@ -53,6 +53,7 @@ import type { Conversa as ConversaDaLista } from './chat/tipos';
 import { useAcao, useVistaChat } from './chat/usarChat';
 import { ReunioesCliente } from './reunioes/cliente';
 import { Aba as AbaReunioes } from './reunioes/telas/Aba';
+import { Nova as NovaReuniao } from './reunioes/telas/Nova';
 import { useVistaReunioes } from './reunioes/usarReunioes';
 import { AdminLogin } from './components/AdminLogin';
 import { Atualizacao } from './components/Atualizacao';
@@ -159,6 +160,7 @@ function conversaDaTela(v: View): number | null {
 }
 
 const ABA_CHAT: View = { kind: 'tab', tab: 'chat' };
+const ABA_REUNIOES: View = { kind: 'tab', tab: 'reunioes' };
 
 function App() {
   const [state, setState] = useState<AppState | null>(null);
@@ -281,7 +283,10 @@ function App() {
   const abaDasReunioes = !ios && resumoDoChat?.ligado === true && vistaReunioes.aba;
   useLayoutEffect(() => {
     if (abaDasReunioes) return;
-    setView((v) => (v.kind === 'tab' && v.tab === 'reunioes' ? { kind: 'tab', tab: 'teclado' } : v));
+    setView((v) => {
+      const daAba = v.kind === 'tab' && v.tab === 'reunioes';
+      return daAba || v.kind === 'reuniaoNova' ? { kind: 'tab', tab: 'teclado' } : v;
+    });
   }, [abaDasReunioes]);
 
   // (0.2.0) A conversa das vistas chatConversa, chatMembros e chatPor, quando a lista já a tem. Uma que não está nela
@@ -312,7 +317,10 @@ function App() {
   const euNoChat = vistaChat.eu?.id ?? null;
   const euAntes = useRef<number | null>(null);
   useEffect(() => {
-    if (euAntes.current !== null && euAntes.current !== euNoChat) setView((v) => (telaDoChat(v) ? ABA_CHAT : v));
+    if (euAntes.current !== null && euAntes.current !== euNoChat) {
+      // A Nova reunião é da pessoa de antes: com outra, a aba (ou o Teclado, se a aba sumiu: o efeito acima).
+      setView((v) => (telaDoChat(v) ? ABA_CHAT : v.kind === 'reuniaoNova' ? ABA_REUNIOES : v));
+    }
     euAntes.current = euNoChat;
   }, [euNoChat]);
   // O Esc, sem diálogo nem menu aberto (e fora da ligação), volta da conversa para a lista.
@@ -749,6 +757,12 @@ function App() {
         );
       }
       break;
+    case 'reuniaoNova': {
+      // A Nova reunião só existe com a aba (o efeito acima leva ao Teclado quando ela some).
+      const daVista = view;
+      conteudo = <NovaReuniao cliente={reunioesCliente} onVoltar={() => setView(daVista.back)} />;
+      break;
+    }
     case 'tab':
     case 'admin':
       break;
@@ -840,7 +854,9 @@ function App() {
             onFecharAviso={() => chatCliente.dispensarComputadorNovo()}
           />
         )}
-        {tab === 'reunioes' && <AbaReunioes vista={vistaReunioes} />}
+        {tab === 'reunioes' && (
+          <AbaReunioes vista={vistaReunioes} onNova={() => setView({ kind: 'reuniaoNova', back: view })} />
+        )}
       </main>
       <Nav tabs={abas} tab={tab} onSelect={(t) => setView({ kind: 'tab', tab: t })} keyShortcuts={!ios} naoLidas={vistaChat.naoLidas} />
       {avisos}
