@@ -121,15 +121,18 @@ export function ditoDaResposta(de, nome) {
 }
 
 /**
- * O aviso do colega que deixou de cuidar da reunião: o chat não conhece mais a pessoa (ele reiniciou, a chave de volta
- * não vale mais, ou a entrada de novo não deu certo), e o canal dela não volta. A ligação segue; aceitar e encerrar,
- * não.
+ * O aviso do colega que deixou de cuidar da reunião (o título, o texto e os dois juntos, o AVISO_SEM_CUIDAR): o chat
+ * não conhece mais a pessoa (ele reiniciou, a chave de volta não vale mais, ou a entrada de novo não deu certo), e o
+ * canal dela não volta. A ligação segue; aceitar e encerrar, não.
  */
 export const TITULO_SEM_CUIDAR = 'Você deixou de cuidar desta reunião';
 export const TEXTO_SEM_CUIDAR = 'Para aceitar pedidos ou encerrar, saia e abra a reunião de novo pelo app.';
 export const AVISO_SEM_CUIDAR = `${TITULO_SEM_CUIDAR}. ${TEXTO_SEM_CUIDAR}`;
 
-/** O aviso do colega cujo link deixou de valer com a reunião acontecendo (o texto aprovado em 25/11/2026). */
+/**
+ * O aviso do colega cujo link deixou de valer com a reunião acontecendo (o texto aprovado em 25/11/2026): o título, o
+ * texto e os dois juntos, o AVISO_DO_LINK_VENCIDO.
+ */
 export const TITULO_DO_LINK_VENCIDO = 'O link desta reunião deixou de valer';
 export const TEXTO_DO_LINK_VENCIDO =
   'Você continua na reunião, mas não pode mais aceitar pedidos nem encerrar. Se sair, não consegue voltar.';

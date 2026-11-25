@@ -82,10 +82,9 @@
 // perguntas fecham, e o leitor de tela ouve o aviso; a ligação e o painel aberto ficam. O mesmo vale para a chave
 // recusada no religar. O link que deixou de valer no voltar (a resposta, ou o 404 do abrir) é o semCuidar também, mas
 // com o motivo dele (o linkVenceu) e o aviso dele: a pessoa continua na reunião e, se sair, não consegue voltar. Com o
-// semCuidar, o
-// Encerrar para todos não abre a pergunta, como antes de a primeira lista chegar. Ele acaba com a saída da tela da
-// reunião, por qualquer fim, e onde o canal volta a ser o da pessoa: o voltou da volta das duas (o link que deixou de
-// valer guarda a chave) e o começo da entrada de novo.
+// semCuidar, o Encerrar para todos não abre a pergunta, como antes de a primeira lista chegar. Ele acaba com a saída
+// da tela da reunião, por qualquer fim, e onde o canal volta a ser o da pessoa: o voltou da volta das duas (o link
+// que deixou de valer guarda a chave) e o começo da entrada de novo.
 // Dentro do app, o chat que reiniciou com o colega na reunião e a ligação no ar não é o semCuidar: a página entra de
 // novo sozinha (o reentrando). A lista, as perguntas e o palco saem, sem o aviso; ela pede outro passe ao app, abre
 // com ele, e o canal novo manda o entrar, e não o voltar. Até o aceito, a ligação de antes segue no ar, e o canal novo

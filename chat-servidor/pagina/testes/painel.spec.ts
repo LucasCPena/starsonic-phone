@@ -1008,6 +1008,7 @@ test('o leitor de tela ouve cada mensagem dos outros, também a repetida', async
   // Quem fala é a região de sempre; o aviso que aparece não é uma região falada, para a mensagem não ser dita duas
   // vezes.
   await expect(regiaoFalada(page)).toHaveAttribute('aria-live', 'polite');
+  await expect(regiaoFalada(page)).toHaveAttribute('aria-atomic', 'false');
   expect(
     await aviso(page).evaluate((el) => [
       el.getAttribute('role'),

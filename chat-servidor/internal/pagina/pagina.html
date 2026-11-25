@@ -441,7 +441,8 @@ Participantes. O título entra pelo pagina.js, como texto. -->
 </section>
 <!-- O aviso do colega que deixou de cuidar da reunião, no lugar do cartão do pedido e com as medidas dele, sem botões:
 o canal dele não volta mais. São as duas frases do aviso aprovado (o AVISO_SEM_CUIDAR do colega.js); com o link que
-deixou de valer, a página troca o título e o texto pelos do aviso do link (o AVISO_DO_LINK_VENCIDO). -->
+deixou de valer, a página troca o título e o texto pelos do aviso do link (o TITULO_DO_LINK_VENCIDO e o
+TEXTO_DO_LINK_VENCIDO). -->
 <section class="sem-cuidar" aria-labelledby="sem-cuidar-titulo" hidden>
 <h2 id="sem-cuidar-titulo" class="sem-cuidar-titulo">Você deixou de cuidar desta reunião</h2>
 <p class="sem-cuidar-texto">Para aceitar pedidos ou encerrar, saia e abra a reunião de novo pelo app.</p>
@@ -598,7 +599,8 @@ da reunião, o aviso inteiro (que o participantes.js põe, do colega.js) fica no
 
 </main>
 
-<!-- A região que anuncia a mudança de tela aos leitores de tela. -->
-<p class="so-leitor" role="status" aria-live="polite" data-campo="anuncio"></p>
+<!-- A região que os leitores de tela anunciam: cada aviso é um pedaço seu, e o leitor diz só o que entra. O papel
+"status" lê a região inteira a cada mudança, a menos que o aria-atomic seja "false". -->
+<p class="so-leitor" role="status" aria-live="polite" aria-atomic="false" data-campo="anuncio"></p>
 </body>
 </html>

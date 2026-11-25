@@ -529,6 +529,7 @@ test('o leitor de tela ouve a conexão ruim uma vez só', async ({ page }) => {
   expect(await ditos()).toEqual(['Sua conexão está ruim']);
   // Quem fala é a região de sempre: o aviso que aparece não é uma região falada, para não ser dito duas vezes.
   await expect(regiaoFalada(page)).toHaveAttribute('aria-live', 'polite');
+  await expect(regiaoFalada(page)).toHaveAttribute('aria-atomic', 'false');
   expect(
     await aviso(page).evaluate((el) => [
       el.getAttribute('role'),
@@ -536,6 +537,18 @@ test('o leitor de tela ouve a conexão ruim uma vez só', async ({ page }) => {
       el.closest('[aria-live], [role="status"], [role="alert"]') === null,
     ]),
   ).toEqual([null, null, true]);
+});
+
+test('a região do leitor de tela anuncia só o que entra, sem ler a região inteira', async ({ page }) => {
+  await naReuniaoCom(page, TRES);
+  // O que o Chromium expõe aos leitores de tela, não só o atributo: o papel "status" lê a região inteira por padrão.
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Accessibility.enable');
+  const { root } = await cdp.send('DOM.getDocument');
+  const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: '[data-campo="anuncio"]' });
+  const { nodes } = await cdp.send('Accessibility.getPartialAXTree', { nodeId, fetchRelatives: false });
+  const propriedades = Object.fromEntries((nodes[0].properties ?? []).map((p) => [p.name, p.value.value]));
+  expect(propriedades).toMatchObject({ live: 'polite', atomic: false });
 });
 
 test('o aviso da conexão e o da mensagem: um por vez', async ({ page }) => {

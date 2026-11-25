@@ -775,6 +775,8 @@ test.describe('sem o canal', () => {
     // No painel, o aviso inteiro, no lugar das listas e do Encerrar para todos.
     await oBotao(page).click();
     await expect(painel(page).getByText(AVISO, { exact: true })).toBeVisible();
+    // Abrir o painel não diz a frase das respostas desligadas: quem deixou de cuidar ouve só o aviso dele.
+    await expect(anuncio(page)).toHaveText(AVISO);
     await expect(painel(page).getByRole('heading', { level: 3 })).toHaveCount(0);
     await expect(pedidos(page)).toHaveCount(0);
     await expect(pessoas(page)).toHaveCount(0);
