@@ -69,3 +69,34 @@ export async function marcar(
   if (r.status !== 201) throw new Error(`marcar a reunião respondeu ${r.status}: ${JSON.stringify(r.json)}`);
   return r.json.reuniao;
 }
+
+/**
+ * Marca cada leitura da lista com o número dela: o assunto da primeira reunião chega como "Leitura N". Assim o teste
+ * sabe que o app TRATOU a resposta da leitura N (o assunto está na tela), e não só que o pedido saiu. O relógio da
+ * página só deve andar depois disso: a leitura arma o relógio dos 30 s quando trata a resposta. `atraso`: espera, em tempo
+ * real, antes de entregar cada resposta (a máquina lenta do GitHub, de propósito).
+ */
+export async function numerarAsLeituras(page: Page, atraso = 0): Promise<{ lidas(): number }> {
+  let n = 0;
+  await page.route(
+    (url) => url.pathname === '/api/v1/reunioes',
+    async (rota) => {
+      if (rota.request().method() !== 'GET') return rota.continue();
+      const esta = ++n;
+      if (atraso > 0) await new Promise((r) => setTimeout(r, atraso));
+      const resposta = await rota.fetch();
+      const json = await resposta.json();
+      if (json.reunioes?.[0]) json.reunioes[0].assunto = `Leitura ${esta}`;
+      await rota.fulfill({ response: resposta, json });
+    },
+  );
+  return { lidas: () => n };
+}
+
+/** Espera o app tratar a última leitura numerada (com pelo menos `minimo` leituras), com a aba Reuniões na tela. */
+export async function esperarALeitura(page: Page, l: { lidas(): number }, minimo = 1): Promise<void> {
+  await expect.poll(() => l.lidas()).toBeGreaterThanOrEqual(minimo);
+  await expect
+    .poll(async () => (await page.locator('.reun-assunto').allTextContents())[0] === `Leitura ${l.lidas()}`)
+    .toBe(true);
+}

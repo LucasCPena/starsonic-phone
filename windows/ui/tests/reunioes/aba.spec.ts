@@ -6,7 +6,16 @@ import { expect, test, type Page, type Route } from '@playwright/test';
 import { semViolacoesSerias } from '../helpers';
 import { abrirNoChat, pararORelogio } from '../chat/abrir';
 import { empresaComPessoas, empresaComReunioes, liberarReunioes } from '../chat/servidor';
-import { abrirNasReunioes, anoNaPagina, diaDaLista, marcar, meioDiaDeHoje, noRelogioDaPagina } from './abrir';
+import {
+  abrirNasReunioes,
+  anoNaPagina,
+  diaDaLista,
+  esperarALeitura,
+  marcar,
+  meioDiaDeHoje,
+  noRelogioDaPagina,
+  numerarAsLeituras,
+} from './abrir';
 
 // O CSP da página só deixa falar com o endereço do chat de verdade; o servidor de teste fica no 127.0.0.1:4180.
 test.use({ bypassCSP: true });
@@ -161,31 +170,32 @@ test('sem conexão com o chat, a aba diz isso no lugar da lista, e a lista volta
 
 test('a lista é lida de novo a cada 30 s com a aba à vista, e não fora dela', async ({ page }) => {
   const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
+  await marcar(pessoas[0].api, noRelogioDaPagina(0, 14, 0), 'Planejamento de dezembro');
   await page.clock.install({ time: meioDiaDeHoje() });
-  let leituras = 0;
-  await page.route(eAListaDasReunioes, async (rota) => {
-    leituras += 1;
-    await rota.continue();
-  });
+  // Cada resposta demora um pouco, de propósito: o relógio só anda depois de o app tratar a resposta (a máquina lenta).
+  const l = await numerarAsLeituras(page, 150);
   await abrirNoChat(page, { chave: pessoas[0].chave, ...RECEPCAO });
   await expect(abaReunioes(page)).toBeVisible();
   await pararORelogio(page);
 
-  leituras = 0;
+  const antes = l.lidas();
   await abaReunioes(page).click();
-  await expect.poll(() => leituras).toBe(1);
+  await esperarALeitura(page, l, antes + 1);
+  expect(l.lidas()).toBe(antes + 1);
   await page.clock.runFor(30_000);
-  await expect.poll(() => leituras).toBe(2);
+  await esperarALeitura(page, l, antes + 2);
+  expect(l.lidas()).toBe(antes + 2);
 
   await abas(page).first().click();
   await expect(titulo(page)).toHaveCount(0);
   await page.clock.runFor(60_000);
   // Dá tempo de um pedido que saísse errado chegar ao contador.
   await page.evaluate(() => fetch('/index.html').then((r) => r.text()));
-  expect(leituras).toBe(2);
+  expect(l.lidas()).toBe(antes + 2);
 
   await abaReunioes(page).click();
-  await expect.poll(() => leituras).toBe(3);
+  await esperarALeitura(page, l, antes + 3);
+  expect(l.lidas()).toBe(antes + 3);
 });
 
 test('à meia-noite, o Amanhã vira Hoje sem recarregar', async ({ page }) => {
@@ -193,8 +203,11 @@ test('à meia-noite, o Amanhã vira Hoje sem recarregar', async ({ page }) => {
   await marcar(pessoas[0].api, noRelogioDaPagina(1, 9, 30), 'Reunião com a contabilidade');
   // 23:59:50 de hoje, no relógio da página: a hora anda com o runFor.
   await page.clock.install({ time: noRelogioDaPagina(0, 23, 59) + 50_000 });
+  const l = await numerarAsLeituras(page, 150);
   await abrirNasReunioes(page, { chave: pessoas[0].chave, ...RECEPCAO });
   await pararORelogio(page);
+  // A leitura de quando a aba entrou foi tratada: ela arma o relógio dos 30 s.
+  await esperarALeitura(page, l, 2);
   await expect(linhas(page).locator('.reun-quando')).toHaveText(['Amanhã, 09:30']);
   await page.clock.runFor(40_000);
   await expect(linhas(page).locator('.reun-quando')).toHaveText(['Hoje, 09:30']);
@@ -202,10 +215,14 @@ test('à meia-noite, o Amanhã vira Hoje sem recarregar', async ({ page }) => {
 
 test('a aba some com o semReunioes e volta quando a empresa é liberada', async ({ page }) => {
   const { empresaId, pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
+  await marcar(pessoas[0].api, noRelogioDaPagina(0, 14, 0), 'Planejamento de dezembro');
   await page.clock.install({ time: meioDiaDeHoje() });
+  const l = await numerarAsLeituras(page, 150);
   await abrirNasReunioes(page, { chave: pessoas[0].chave, ...RECEPCAO });
   await pararORelogio(page);
   await expect(abas(page)).toHaveCount(6);
+  // A leitura de quando a aba entrou foi tratada: ela arma o relógio dos 30 s.
+  await esperarALeitura(page, l, 2);
 
   await liberarReunioes(empresaId, false);
   await page.clock.runFor(30_000);
