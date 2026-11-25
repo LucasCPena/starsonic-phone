@@ -1,5 +1,6 @@
 // Testes do protocolo da ponte (starsonic/desktop/Protocol.h; o contrato e o docs/ponte-windows.md).
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "Protocol.h"
@@ -963,4 +964,162 @@ TEST_CASE("the room commands parse") {
     CHECK(std::string(CommandName(CommandKind::RoomRemove)) == "salaTirar");
     CHECK(std::string(CommandName(CommandKind::RoomEnd)) == "salaEncerrar");
     CHECK(std::string(CommandName(CommandKind::RoomReturn)) == "salaVoltar");
+}
+
+// ---------------------------------------------------------------- as reunioes (a etapa 2)
+
+namespace {
+
+// Os valores inventados das reunioes (nunca de verdade): o codigo, o passe (43 de [A-Za-z0-9_-]) e o id de um pedido.
+const char* const kMeetingCode = "k7q49xwpht";
+const char* const kMeetingPass = "Passe_de-teste-inventado-0123456789-ABCDxyz";
+const char* const kMeetingRequestId = "8899aabbccddeeff";
+
+std::string MeetingBrowserCommand(const json& codigo, const json& passe = nullptr) {
+    json message = {{"v", 1}, {"cmd", "reuniaoNavegador"}, {"codigo", codigo}};
+    if (!passe.is_null()) message["passe"] = passe;
+    return message.dump();
+}
+std::string MeetingRequestCommand(const json& pedido, const json& escondida = true) {
+    json message = {{"v", 1}, {"cmd", "reuniaoPedido"}, {"pedido", pedido}};
+    if (!escondida.is_null()) message["escondida"] = escondida;
+    return message.dump();
+}
+json MeetingRequest(const json& id, const json& nome, const json& assunto) {
+    return {{"id", id}, {"nome", nome}, {"assunto", assunto}};
+}
+std::string MeetingAnswerCommand(const json& pedido, const json& resposta) {
+    json message = {{"v", 1}, {"cmd", "reuniaoResposta"}, {"pedido", pedido}};
+    if (!resposta.is_null()) message["resposta"] = resposta;
+    return message.dump();
+}
+
+}  // namespace
+
+TEST_CASE("the meeting commands are read with their fields") {
+    // reuniaoNavegador: com e sem o passe.
+    Command c = Parsed(MeetingBrowserCommand(kMeetingCode, kMeetingPass));
+    CHECK(c.kind == CommandKind::MeetingBrowser);
+    CHECK(std::string(CommandName(c.kind)) == "reuniaoNavegador");
+    CHECK(c.meeting.code == kMeetingCode);
+    CHECK(c.meeting.pass == kMeetingPass);
+    c = Parsed(MeetingBrowserCommand(kMeetingCode));
+    CHECK(c.kind == CommandKind::MeetingBrowser);
+    CHECK(c.meeting.code == kMeetingCode);
+    CHECK(c.meeting.pass.empty());
+
+    // reuniaoPedido: o nome com acento e o assunto com texto, vazio e null.
+    c = Parsed(MeetingRequestCommand(MeetingRequest(kMeetingRequestId, "Maria Lima", "Planejamento de dezembro")));
+    CHECK(c.kind == CommandKind::MeetingRequest);
+    CHECK(std::string(CommandName(c.kind)) == "reuniaoPedido");
+    CHECK(c.meeting.hasRequest);
+    CHECK(c.meeting.requestId == kMeetingRequestId);
+    CHECK(c.meeting.requestName == "Maria Lima");
+    REQUIRE(c.meeting.requestSubject.has_value());
+    CHECK(*c.meeting.requestSubject == "Planejamento de dezembro");
+    CHECK(c.meeting.hidden);
+    c = Parsed(MeetingRequestCommand(MeetingRequest(kMeetingRequestId, "Jos\xc3\xa9 \xc3\x82ngelo", ""), false));
+    CHECK(c.meeting.requestName == "Jos\xc3\xa9 \xc3\x82ngelo");
+    REQUIRE(c.meeting.requestSubject.has_value());
+    CHECK(*c.meeting.requestSubject == "");
+    CHECK_FALSE(c.meeting.hidden);
+    c = Parsed(MeetingRequestCommand(MeetingRequest(kMeetingRequestId, "Maria Lima", nullptr)));
+    CHECK(c.meeting.hasRequest);
+    CHECK_FALSE(c.meeting.requestSubject.has_value());
+    // Os limites contam os caracteres: 120 de dois bytes valem.
+    c = Parsed(MeetingRequestCommand(MeetingRequest(kMeetingRequestId, Accented(120), Accented(120))));
+    CHECK(c.meeting.requestName == Accented(120));
+    CHECK(*c.meeting.requestSubject == Accented(120));
+    // Sem o pedido: nenhum para mostrar.
+    c = Parsed(R"({"v":1,"cmd":"reuniaoPedido"})");
+    CHECK(c.kind == CommandKind::MeetingRequest);
+    CHECK_FALSE(c.meeting.hasRequest);
+
+    // reuniaoResposta: as tres respostas.
+    for (const char* answer : {"aceitar", "recusar", "fechar"}) {
+        INFO(answer);
+        c = Parsed(MeetingAnswerCommand(kMeetingRequestId, answer));
+        CHECK(c.kind == CommandKind::MeetingAnswer);
+        CHECK(std::string(CommandName(c.kind)) == "reuniaoResposta");
+        CHECK(c.meeting.requestId == kMeetingRequestId);
+        CHECK(c.meeting.answer == answer);
+    }
+
+    // reuniaoMostrar.
+    c = Parsed(R"({"v":1,"cmd":"reuniaoMostrar"})");
+    CHECK(c.kind == CommandKind::MeetingShow);
+    CHECK(std::string(CommandName(c.kind)) == "reuniaoMostrar");
+}
+
+TEST_CASE("the meeting commands with bad fields are refused without the values") {
+    const std::string pass = kMeetingPass;
+    std::vector<std::pair<std::string, std::string>> refusals;   // o comando e o motivo esperado
+    auto expect = [&](const std::string& command, const std::string& reason) {
+        refusals.emplace_back(command, reason);
+    };
+
+    // O codigo de 9 e de 11 caracteres, em maiusculas, e com "i", "l", "o", "u", "0" ou "1".
+    for (const char* code : {"k7q49xwph", "k7q49xwpht2", "K7Q49XWPHT", "k7q49xwpil", "k7q49xwpho", "k7q49xwphu",
+                             "k7q49xwph0", "k7q49xwph1", ""}) {
+        expect(MeetingBrowserCommand(code), "reuniaoNavegador: codigo invalido");
+    }
+    expect(MeetingBrowserCommand(7), "reuniaoNavegador: o campo codigo precisa ser texto");
+    expect(R"({"v":1,"cmd":"reuniaoNavegador"})", "reuniaoNavegador: falta o campo codigo");
+    // O passe de 42 caracteres, de 44, ou com "+".
+    expect(MeetingBrowserCommand(kMeetingCode, pass.substr(0, 42)), "reuniaoNavegador: passe invalido");
+    expect(MeetingBrowserCommand(kMeetingCode, pass + "x"), "reuniaoNavegador: passe invalido");
+    expect(MeetingBrowserCommand(kMeetingCode, pass.substr(0, 42) + "+"), "reuniaoNavegador: passe invalido");
+    expect(MeetingBrowserCommand(kMeetingCode, 5), "reuniaoNavegador: o campo passe precisa ser texto");
+
+    // O pedido que nao e objeto; o id de 15 caracteres ou em maiusculas; o nome vazio, de 121 ou com "\n"; o assunto
+    // de 121 caracteres ou um numero.
+    const std::string id = kMeetingRequestId;
+    expect(MeetingRequestCommand("Maria Lima"), "reuniaoPedido: pedido invalido");
+    expect(MeetingRequestCommand(json::array()), "reuniaoPedido: pedido invalido");
+    expect(MeetingRequestCommand(MeetingRequest(id.substr(0, 15), "Maria Lima", "x")),
+           "reuniaoPedido: pedido invalido");
+    expect(MeetingRequestCommand(MeetingRequest("8899AABBCCDDEEFF", "Maria Lima", "x")),
+           "reuniaoPedido: pedido invalido");
+    expect(MeetingRequestCommand(MeetingRequest(5, "Maria Lima", "x")), "reuniaoPedido: pedido invalido");
+    expect(MeetingRequestCommand(MeetingRequest(id, "", "x")), "reuniaoPedido: pedido invalido");
+    expect(MeetingRequestCommand(MeetingRequest(id, Accented(121), "x")), "reuniaoPedido: pedido invalido");
+    expect(MeetingRequestCommand(MeetingRequest(id, "Maria\nLima", "x")), "reuniaoPedido: pedido invalido");
+    expect(MeetingRequestCommand(MeetingRequest(id, "Maria Lima", Accented(121))), "reuniaoPedido: pedido invalido");
+    expect(MeetingRequestCommand(MeetingRequest(id, "Maria Lima", "Pauta\tde dezembro")),
+           "reuniaoPedido: pedido invalido");
+    expect(MeetingRequestCommand(MeetingRequest(id, "Maria Lima", 7)), "reuniaoPedido: pedido invalido");
+    // O pedido sem um dos campos.
+    expect(MeetingRequestCommand(json{{"nome", "Maria Lima"}, {"assunto", "x"}}), "reuniaoPedido: pedido invalido");
+    expect(MeetingRequestCommand(json{{"id", id}, {"assunto", "x"}}), "reuniaoPedido: pedido invalido");
+    expect(MeetingRequestCommand(json{{"id", id}, {"nome", "Maria Lima"}}), "reuniaoPedido: pedido invalido");
+    // O pedido sem o escondida, e o escondida que nao e booleano.
+    expect(MeetingRequestCommand(MeetingRequest(id, "Maria Lima", "x"), nullptr),
+           "reuniaoPedido: falta o campo escondida");
+    expect(MeetingRequestCommand(MeetingRequest(id, "Maria Lima", "x"), "sim"),
+           "reuniaoPedido: o campo escondida precisa ser booleano");
+
+    // O reuniaoResposta sem a resposta, com outra palavra ou com o pedido que nao e um id.
+    expect(MeetingAnswerCommand(id, nullptr), "reuniaoResposta: falta o campo resposta");
+    expect(MeetingAnswerCommand(id, "sim"), "reuniaoResposta: resposta invalida");
+    expect(MeetingAnswerCommand(id, "Aceitar"), "reuniaoResposta: resposta invalida");
+    expect(MeetingAnswerCommand("8899aabbccddeef", "aceitar"), "reuniaoResposta: pedido invalido");
+    expect(MeetingAnswerCommand("8899AABBCCDDEEFF", "aceitar"), "reuniaoResposta: pedido invalido");
+    expect(MeetingAnswerCommand(5, "aceitar"), "reuniaoResposta: o campo pedido precisa ser texto");
+    expect(R"({"v":1,"cmd":"reuniaoResposta","resposta":"aceitar"})", "reuniaoResposta: falta o campo pedido");
+
+    for (const auto& refusal : refusals) {
+        INFO(refusal.first);
+        const std::string reason = RefusalOf(refusal.first);
+        CHECK(reason == refusal.second);
+        // Em todas as recusas: o texto nao leva nenhum dos valores mandados.
+        for (const char* value : {kMeetingCode, kMeetingPass, kMeetingRequestId, "Maria Lima", "Maria\nLima"}) {
+            CHECK(reason.find(value) == std::string::npos);
+        }
+    }
+}
+
+TEST_CASE("the meeting messages to the interface") {
+    CHECK(Parse(MeetingAnswerMessage(kMeetingRequestId, "aceitar")) ==
+          json({{"v", 1}, {"type", "reuniaoResposta"}, {"pedido", kMeetingRequestId}, {"resposta", "aceitar"}}));
+    CHECK(Parse(OpenMeetingsMessage()) == json({{"v", 1}, {"type", "abrir"}, {"tela", "reunioes"}}));
 }

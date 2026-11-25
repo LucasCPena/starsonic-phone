@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "Reunioes.h"   // as conferencias do codigo, do passe e do id de um pedido
 #include "Chat.h"   // 0.2.0: as conferencias da chave, da empresa e do id de um arquivo do chat
 #include "Text.h"   // WideToUtf8: os nomes da planilha (SheetContact)
 #include "nlohmann/json.hpp"
@@ -84,12 +85,19 @@ const Name kNames[] = {
     {CommandKind::RoomRemove, "salaTirar"},
     {CommandKind::RoomEnd, "salaEncerrar"},
     {CommandKind::RoomReturn, "salaVoltar"},
+    {CommandKind::MeetingBrowser, "reuniaoNavegador"},
+    {CommandKind::MeetingRequest, "reuniaoPedido"},
+    {CommandKind::MeetingAnswer, "reuniaoResposta"},
+    {CommandKind::MeetingShow, "reuniaoMostrar"},
 };
 
 // Os limites dos textos do chat (docs/ponte-windows.md, "Os comandos do chat"), em caracteres.
 constexpr size_t kMaxChatTitle = 200;
 constexpr size_t kMaxChatText = 500;
 constexpr size_t kMaxChatFileName = 255;
+// Os limites do nome e do assunto do pedido de uma reuniao, em caracteres.
+constexpr size_t kMaxMeetingName = 120;
+constexpr size_t kMaxMeetingSubject = 120;
 // Os limites dos campos do video (0.3.0), em caracteres: o nome da camera (o do dispositivo do Windows) e as vistas
 // (uma lista curta de nomes curtos: remoto, local, porteiro).
 constexpr size_t kMaxCameraName = 200;
@@ -108,6 +116,20 @@ size_t CountCharacters(const std::string& utf8) {
 bool CharactersBetween(const std::string& text, size_t least, size_t most) {
     const size_t count = CountCharacters(text);
     return count >= least && count <= most;
+}
+
+// O texto tem algum caractere de controle (U+0000 a U+001F, U+007F a U+009F)? O JSON lido ja e UTF-8 valido; o C1
+// (U+0080 a U+009F) tem dois bytes, 0xC2 e depois 0x80 a 0x9F.
+bool HasControlCharacter(const std::string& utf8) {
+    for (size_t i = 0; i < utf8.size(); ++i) {
+        const unsigned char ch = static_cast<unsigned char>(utf8[i]);
+        if (ch < 0x20 || ch == 0x7F) return true;
+        if (ch == 0xC2 && i + 1 < utf8.size()) {
+            const unsigned char next = static_cast<unsigned char>(utf8[i + 1]);
+            if (next >= 0x80 && next <= 0x9F) return true;
+        }
+    }
+    return false;
 }
 
 // Le os campos de um comando, anotando o primeiro problema (um campo obrigatorio que falta ou um tipo errado).
@@ -202,6 +224,17 @@ public:
     }
     void Fail(const std::string& message) {
         if (ok()) error_ = message;
+    }
+    // Um objeto opcional (o pedido de uma reuniao): nullptr se faltar; o que nao e objeto e recusado com o nome do
+    // campo, sem o valor.
+    const Json* OptionalObject(const char* key, const char* reason) {
+        const Json* value = Find(key, false);
+        if (!value) return nullptr;
+        if (!value->is_object()) {
+            Fail(reason);
+            return nullptr;
+        }
+        return value;
     }
 
 private:
@@ -663,6 +696,57 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
             if (f.ok() && !ValidFileId(command.chat.fileId)) f.Fail("arquivo invalido");
             if (f.ok() && !CharactersBetween(command.chat.fileName, 1, kMaxChatFileName)) f.Fail("nome invalido");
             break;
+        // As reunioes (so no Windows). Como no chat: o campo fora da regra e recusado com o nome dele, nunca com o
+        // valor (o codigo, o passe, o id, o nome e o assunto nao vao ao diagnostico).
+        case CommandKind::MeetingBrowser:
+            f.Text("codigo", &command.meeting.code, true);
+            f.Text("passe", &command.meeting.pass, false);
+            if (f.ok() && !ValidMeetingCode(command.meeting.code)) f.Fail("codigo invalido");
+            if (f.ok() && !command.meeting.pass.empty() && !ValidMeetingPass(command.meeting.pass)) {
+                f.Fail("passe invalido");
+            }
+            break;
+        case CommandKind::MeetingRequest: {
+            // O pedido e opcional: sem ele, nenhum pedido para mostrar. Com ele, o escondida e obrigatorio.
+            const Json* request = f.OptionalObject("pedido", "pedido invalido");
+            if (!request) break;
+            command.meeting.hasRequest = true;
+            const auto id = request->find("id");
+            const auto name = request->find("nome");
+            const auto subject = request->find("assunto");
+            const bool shaped = id != request->end() && id->is_string() && name != request->end() &&
+                                name->is_string() && subject != request->end() &&
+                                (subject->is_string() || subject->is_null());
+            if (!shaped) {
+                f.Fail("pedido invalido");
+                break;
+            }
+            command.meeting.requestId = id->get<std::string>();
+            command.meeting.requestName = name->get<std::string>();
+            if (subject->is_string()) command.meeting.requestSubject = subject->get<std::string>();
+            const bool valid =
+                ValidMeetingRequestId(command.meeting.requestId) &&
+                CharactersBetween(command.meeting.requestName, 1, kMaxMeetingName) &&
+                !HasControlCharacter(command.meeting.requestName) &&
+                (!command.meeting.requestSubject ||
+                 (CharactersBetween(*command.meeting.requestSubject, 0, kMaxMeetingSubject) &&
+                  !HasControlCharacter(*command.meeting.requestSubject)));
+            if (!valid) {
+                f.Fail("pedido invalido");
+                break;
+            }
+            f.Flag("escondida", &command.meeting.hidden, true);
+            break;
+        }
+        case CommandKind::MeetingAnswer:
+            f.Text("pedido", &command.meeting.requestId, true);
+            f.Text("resposta", &command.meeting.answer, true);
+            if (f.ok() && !ValidMeetingRequestId(command.meeting.requestId)) f.Fail("pedido invalido");
+            if (f.ok() && command.meeting.answer != "aceitar" && command.meeting.answer != "recusar" &&
+                command.meeting.answer != "fechar") {
+                f.Fail("resposta invalida");
+            }
+            break;
         case CommandKind::Answer:
             f.Flag("video", &command.video, false);   // 0.3.0
             break;
@@ -693,6 +777,7 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
         case CommandKind::H264Retry:
         case CommandKind::RoomEnd:
         case CommandKind::RoomReturn:
+        case CommandKind::MeetingShow:
             break;
     }
     if (!f.ok()) return Refuse(error, cmd + ": " + f.error());
@@ -785,6 +870,13 @@ std::string StateMessage(const BridgeState& state) {
                         {"computador", state.chat->computer},
                         {"contaConectada", state.chat->accountConnected}};
     }
+    // As reunioes (so no Windows), so com um pedido guardado: o assunto null continua null.
+    if (state.meeting) {
+        s["reuniao"] = Out{{"pedido", Out{{"id", state.meeting->id},
+                                          {"nome", state.meeting->name},
+                                          {"assunto", state.meeting->subject ? Out(*state.meeting->subject) : Out()}}},
+                           {"escondida", state.meeting->hidden}};
+    }
     // O modo iPhone: os campos dele no fim, na ordem do docs/ponte-windows.md ("O estado no iPhone").
     if (state.iphone) {
         s["plataforma"] = "ios";
@@ -834,6 +926,14 @@ std::string ChatKeyMessage(const std::string& key, const std::string& company) {
 
 std::string WindowMessage(bool inFront) {
     return Dump(Out{{"v", kBridgeVersion}, {"type", "janela"}, {"frente", inFront}});
+}
+
+std::string MeetingAnswerMessage(const std::string& requestId, const std::string& answer) {
+    return Dump(Out{{"v", kBridgeVersion}, {"type", "reuniaoResposta"}, {"pedido", requestId}, {"resposta", answer}});
+}
+
+std::string OpenMeetingsMessage() {
+    return Dump(Out{{"v", kBridgeVersion}, {"type", "abrir"}, {"tela", "reunioes"}});
 }
 
 std::string OpenChatMessage(int64_t conversation) {

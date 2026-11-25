@@ -89,6 +89,10 @@ enum class CommandKind {
     RoomRemove,      // tirar o convidado do id da sala (salaTirar)
     RoomEnd,         // encerrar a sala para todos (salaEncerrar)
     RoomReturn,      // voltar para a sala, com a ligacao de fora (salaVoltar)
+    MeetingBrowser,  // as reunioes (so no Windows; os campos em Command::meeting): reuniaoNavegador
+    MeetingRequest,  // o pedido para entrar que o aviso mostra, ou nenhum (reuniaoPedido)
+    MeetingAnswer,   // a resposta da pagina do aviso a esse pedido (reuniaoResposta)
+    MeetingShow,     // o clique fora dos botoes do aviso (reuniaoMostrar)
 };
 
 // Um servidor da lista do administrador (adminSet e o estado): o endereco (UTF-8) e a porta (UDP e TCP).
@@ -126,6 +130,19 @@ struct ChatFields {
     int badge = 0;                // chatBadge: n (0 ou mais)
     std::string fileId;           // chatDownload: arquivo (ValidFileId)
     std::string fileName;         // chatDownload: nome (1 a 255 caracteres)
+};
+
+// Os campos dos comandos das reunioes, ja conferidos (docs/ponte-windows.md). O codigo, o passe, o id, o nome e o
+// assunto nunca vao ao diagnostico.
+struct MeetingFields {
+    std::string code;            // reuniaoNavegador: codigo (ValidMeetingCode)
+    std::string pass;            // reuniaoNavegador: passe (ValidMeetingPass; "" sem ele)
+    bool hasRequest = false;     // reuniaoPedido: veio o pedido
+    std::string requestId;       // reuniaoPedido: pedido.id; reuniaoResposta: pedido (ValidMeetingRequestId)
+    std::string requestName;     // reuniaoPedido: pedido.nome (1 a 120 caracteres, sem controle)
+    std::optional<std::string> requestSubject;   // reuniaoPedido: pedido.assunto (0 a 120, sem controle); null
+    bool hidden = false;         // reuniaoPedido: escondida
+    std::string answer;          // reuniaoResposta: resposta ("aceitar", "recusar" ou "fechar")
 };
 
 // Um comando lido. So os campos do comando valem; os outros ficam vazios.
@@ -179,6 +196,8 @@ struct Command {
     std::string link;
     // Os do chat (0.2.0).
     ChatFields chat;
+    // As das reunioes.
+    MeetingFields meeting;
     // 0.3.0: o video. video: o dial (tambem com contato) e o answer com video; ausente, false. camera: o on. setVideo:
     // cameraName ("" = a primeira camera) e h264 (a chave da pessoa); ausentes ficam como estao. cameraTest: o on. videoViews: page
     // ("principal" | "aviso") e views, como vieram. videoWindow: mode, como veio (o nucleo ignora o que nao e dos tres).
@@ -334,6 +353,14 @@ struct VideoView {
     std::string window = "normal";              // janela: "normal" | "grande" | "telaCheia"
 };
 
+// reuniao (so no Windows): o pedido para entrar que o aviso mostra. So na memoria; nunca no diagnostico.
+struct MeetingRequestView {
+    std::string id;                          // reuniao.pedido.id
+    std::string name;                        // reuniao.pedido.nome
+    std::optional<std::string> subject;      // reuniao.pedido.assunto (null: o app nao sabe)
+    bool hidden = true;                      // reuniao.escondida
+};
+
 struct BridgeState {
     bool mainScreen = false;                // tela: "principal" (true) ou "entrar"
     LoginView login;                        // entrar
@@ -358,6 +385,7 @@ struct BridgeState {
     CompanyView company;                    // empresa (rc.4)
     std::optional<ChatView> chat;           // chat (0.2.0): so no Windows; nada no iPhone
     VideoView video;                        // video (0.3.0)
+    std::optional<MeetingRequestView> meeting;   // reuniao: so com um pedido guardado (Windows)
     // O modo iPhone: plataforma "ios", agenda, rotaAudio e config.bipeTecla. Nada (o Windows): o estado de sempre,
     // sem nenhum campo a mais.
     std::optional<IPhoneView> iphone;
@@ -393,5 +421,11 @@ std::string WindowMessage(bool inFront);
 // {"v":1,"type":"abrir","tela":"chat","conversa":N} (0.2.0): a pessoa clicou no aviso do chat; com a conversa 0, a aba
 // Chat.
 std::string OpenChatMessage(int64_t conversation);
+// {"v":1,"type":"reuniaoResposta","pedido":"...","resposta":"aceitar"|"recusar"|"fechar"}: a resposta da pagina do
+// aviso ao pedido que ele mostra, para a interface da janela principal.
+std::string MeetingAnswerMessage(const std::string& requestId, const std::string& answer);
+// {"v":1,"type":"abrir","tela":"reunioes"}: a pessoa clicou no aviso de um pedido, e a interface vai para a aba
+// Reunioes.
+std::string OpenMeetingsMessage();
 
 }  // namespace starsonic

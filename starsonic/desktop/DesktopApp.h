@@ -193,6 +193,9 @@ struct DesktopHooks {
     // Baixa o arquivo do chat com a chave guardada (chatDownload), para a pasta Downloads, marca como vindo da internet
     // e abre. Um erro volta como toast pelo Notify: "Arquivo expirado" (o 410) ou "Nao foi possivel baixar o arquivo.".
     std::function<void(const std::string& arquivo, const std::string& nome, const std::string& chave)> chatDownload;
+    // As reunioes (so no Windows): abre a reuniao no navegador padrao (reuniaoNavegador). pass: "" sem o passe. Nunca
+    // espera. Nada da reuniao (o codigo, o passe) vai ao diagnostico.
+    std::function<void(const std::string& code, const std::string& pass)> openMeeting;
     // 0.3.0: o video (docs/ponte-windows.md, "O video (0.3.0)"), so no Windows. Ligados no executavel (Tasks 8 e 9); um
     // vazio nao faz nada. Todos chamados na thread de comandos e nunca esperam.
     // As vistas do video que a pagina mostra agora (videoViews, ja sem as que nao sao da pagina), e se e a pagina do
@@ -636,6 +639,9 @@ private:
     bool windowInFront_ = false;
     int chatBadge_ = 0;
     std::optional<int64_t> openChatPending_;
+    // O pedido para entrar que o aviso mostra (reuniaoPedido): so na memoria, e nunca no diagnostico. O ready da janela
+    // principal o esquece (a interface que recarregou nao o conhece mais).
+    std::optional<MeetingRequestView> meetingRequest_;
 
     // 0.3.0: o video (so na thread de comandos; so no Windows). As cameras que o motor lista (lidas na abertura e no
     // RefreshAudioDevices), o teste da camera ligado, a situacao do modulo H.264, o modo da janela do video e as

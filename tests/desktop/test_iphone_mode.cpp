@@ -1512,6 +1512,25 @@ TEST_CASE("the iPhone state has no chat and the chat commands are refused") {
         CHECK(h.logs == std::vector<std::string>{std::string("comando recusado no modo iPhone: ") + command.name});
     }
 
+    // As quatro das reunioes (a etapa 2), com campos que valem: recusadas do mesmo jeito, sem os campos.
+    const std::vector<Named> meetingCommands = {
+        {"reuniaoNavegador", R"({"v":1,"cmd":"reuniaoNavegador","codigo":"k7q49xwpht",)"
+                             R"("passe":"Passe_de-teste-inventado-0123456789-ABCDxyz"})"},
+        {"reuniaoPedido", R"({"v":1,"cmd":"reuniaoPedido","pedido":{"id":"8899aabbccddeeff","nome":"Maria Lima",)"
+                          R"("assunto":"Planejamento de dezembro"},"escondida":true})"},
+        {"reuniaoResposta", R"({"v":1,"cmd":"reuniaoResposta","pedido":"8899aabbccddeeff","resposta":"aceitar"})"},
+        {"reuniaoMostrar", R"({"v":1,"cmd":"reuniaoMostrar"})"},
+    };
+    for (const Named& command : meetingCommands) {
+        INFO(command.name);
+        const std::string before = Effects(h);
+        h.logs.clear();
+        h.Send(command.command);
+        CHECK(Effects(h) == before);
+        CHECK(h.logs == std::vector<std::string>{std::string("comando recusado no modo iPhone: ") + command.name});
+    }
+    CHECK_FALSE(h.State().contains("reuniao"));
+
     // A janela na frente e o clique num aviso do chat nao existem no iPhone: uma linha cada, e nada mais.
     h.Send(kReady);
     const std::string before = Effects(h);

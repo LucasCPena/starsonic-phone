@@ -123,6 +123,11 @@ CommandPlatform PlatformOf(const Command& command) {
         case CommandKind::RoomRemove:
         case CommandKind::RoomEnd:
         case CommandKind::RoomReturn:
+        // As reunioes (a etapa 2): so no Windows.
+        case CommandKind::MeetingBrowser:
+        case CommandKind::MeetingRequest:
+        case CommandKind::MeetingAnswer:
+        case CommandKind::MeetingShow:
             return CommandPlatform::Windows;
         case CommandKind::ContactsOpened:
         case CommandKind::AllowContacts:
@@ -688,6 +693,9 @@ void DesktopApp::Execute(const Command& command, bool noticePage) {
                 Log("video: o teste da camera parou (a janela principal recarregou)");
                 CameraTest(false);
             }
+            // As reunioes: o pedido que o aviso mostra tambem fica sem dono (o aviso sairia da tela sem ninguem para
+            // tira-lo). O ready da pagina do aviso nao mexe nele. Nenhum dado do pedido vai ao diagnostico.
+            if (!noticePage && meetingRequest_) meetingRequest_.reset();
             PublishState(/*force=*/true);
             if (IPhone()) {
                 // O estado, a agenda (se houve uma desde a abertura: com o vez 0 ela e vazia, como a da interface) e o
@@ -1019,6 +1027,35 @@ void DesktopApp::Execute(const Command& command, bool noticePage) {
             break;
         case CommandKind::RoomReturn:
             controller_->RoomReturn();
+            break;
+        // As reunioes (so no Windows: PlatformOf). O diagnostico leva so o nome do comando: nunca o codigo, o passe, o
+        // id do pedido, o nome ou o assunto. O Nao perturbe nao muda nada aqui.
+        case CommandKind::MeetingBrowser:
+            Log("reunioes: reuniaoNavegador");
+            if (hooks_.openMeeting) hooks_.openMeeting(command.meeting.code, command.meeting.pass);
+            break;
+        case CommandKind::MeetingRequest:
+            Log("reunioes: reuniaoPedido");
+            if (command.meeting.hasRequest) {
+                meetingRequest_ = MeetingRequestView{command.meeting.requestId, command.meeting.requestName,
+                                                     command.meeting.requestSubject, command.meeting.hidden};
+            } else {
+                meetingRequest_.reset();
+            }
+            break;
+        case CommandKind::MeetingAnswer:
+            // Uma resposta so vale para o pedido que o aviso mostra: a atrasada, de um pedido que ja saiu, e ignorada.
+            if (!meetingRequest_ || meetingRequest_->id != command.meeting.requestId) {
+                Log("reunioes: reuniaoResposta ignorada (outro pedido)");
+                break;
+            }
+            Log("reunioes: reuniaoResposta");
+            meetingRequest_.reset();
+            if (hooks_.post) hooks_.post(MeetingAnswerMessage(command.meeting.requestId, command.meeting.answer));
+            break;
+        case CommandKind::MeetingShow:
+            Log("reunioes: reuniaoMostrar");
+            if (hooks_.post) hooks_.post(OpenMeetingsMessage());
             break;
     }
 }
@@ -1627,6 +1664,7 @@ BridgeState DesktopApp::BuildState() const {
         chat.computer = config_.computerName;
         chat.accountConnected = active && chat_.HasRamal(U8(active->address), U8(active->ramal));
         state.chat = chat;
+        state.meeting = meetingRequest_;
         // 0.3.0: o video. O ligado olha so as escolhas (o H.264 que vale conta como disponivel: VideoOn): o modulo que
         // ainda baixa nao desliga o botao; o aviso da recusa e o HandleVideoRefused.
         VideoView video;
