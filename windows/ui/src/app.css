@@ -20,6 +20,8 @@
   /* O verde da bolinha "conectado" (rc.2). A marca não tem verde (o único é o do WhatsApp, reservado a ele): este é
      um pedido explícito do responsável (Lucas, 22/10/2026), decisão dele. Só a bolinha e a bandeja usam. */
   --status-online: #22c55e;
+  /* (Reuniões) A bolinha do "Acontecendo" na lista (o quadro Main): o verde do desenho, escuro no claro. */
+  --ao-vivo: #0a7d55;
   /* O contorno tracejado dos espaços vazios (rc.3: "Adicionar atalho", "Adicionar servidor"). */
   --dashed: #d3d8e6;
   /* (0.3.0) O fundo da área do vídeo e das faixas da imagem encaixada, nos dois temas (o quadro da videochamada). */
@@ -63,6 +65,7 @@
     --field-invalid: rgba(214, 69, 69, 0.12);
     --shadow-panel: 0 34px 80px -30px rgba(0, 0, 0, 0.7);
     --dashed: rgba(255, 255, 255, 0.28);
+    --ao-vivo: var(--status-online);
   }
 }
 
@@ -982,6 +985,23 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .chat-vazio-titulo { margin: 4px 0 0; font-size: 16.5px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.25; color: var(--text-strong); }
 .chat-vazio-texto { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--text-muted); }
 .chat-comecar { margin-top: 6px; height: 44px; font-size: 14.5px; }
+
+/* A aba Reuniões (os quadros Main e PrimeiraVez): o título, "As que você marcou" e uma reunião por linha. */
+.reun-topo { display: flex; flex-direction: column; gap: 1px; flex: none; }
+.reun-sub { font-size: 12px; line-height: 15px; color: var(--text-muted); }
+.reun-lista { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; flex: none; }
+.reun-linha { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border-radius: 14px;
+  border: 1px solid var(--border); background: var(--card); min-width: 0; }
+.reun-linha-ao-vivo { border-color: rgba(0, 194, 203, 0.6); background: var(--icon-tile); }
+.reun-assunto { margin: 0; font-size: 15px; line-height: 19px; font-weight: 800; color: var(--text-strong);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reun-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-height: 20px; }
+.reun-quando { font-size: 12.5px; color: var(--text-muted); }
+.reun-acontecendo { display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0 9px;
+  border-radius: 999px; background: var(--icon-tile); color: var(--text-strong); font-size: 12px; font-weight: 700; }
+.reun-ponto { width: 7px; height: 7px; border-radius: 999px; background: var(--ao-vivo); flex: none; }
+.reun-vazio-texto { max-width: 300px; }
+.reun-vazio-texto strong { font-weight: 700; color: var(--text); }
 
 /* A faixa embaixo do cabeçalho (o quadro SemConexao): sem conexão e, com o "×", o computador novo. */
 .faixa { flex: none; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 14px; background: var(--surface);

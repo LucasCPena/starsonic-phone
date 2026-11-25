@@ -3,8 +3,9 @@ import type { Command, Contact, Shortcut } from './state';
 
 export type Send = (command: Command) => void;
 
-/** As abas, na ordem da navegação (Ctrl+1 a 5). (0.2.0) O Chat só aparece com o computador ligado ao chat. */
-export type Tab = 'teclado' | 'atalhos' | 'recentes' | 'contatos' | 'chat';
+/** As abas, na ordem da navegação (Ctrl+1 a 6). (0.2.0) O Chat só aparece com o computador ligado ao chat; as
+ *  Reuniões, também com as reuniões liberadas para a empresa. */
+export type Tab = 'teclado' | 'atalhos' | 'recentes' | 'contatos' | 'chat' | 'reunioes';
 
 export type View =
   /** `foco`: o que volta a ter o foco quando a aba volta de uma edição (o `data-foco` do botão que a abriu); vale uma vez. */

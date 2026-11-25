@@ -1,12 +1,13 @@
 // A navegação de baixo: as abas de `tabs`, uma coluna para cada. No Windows, Teclado, Atalhos, Recentes e Contatos
-// (Ctrl+1 a 4, nessa ordem) e, (0.2.0) com o computador ligado ao chat, o Chat (Ctrl+5), com o número de não lidas no
-// canto do ícone (de 1 a 9, e "9+" acima disso; o nome dele é o rótulo de leitor de tela, com o número inteiro: "Chat,
-// 12 mensagens não lidas"); no iPhone (plataforma.ts), Teclado, Recentes e Contatos, sem as teclas. No Normal e no
-// Compacto, o ícone e o rótulo de cada aba (Ruling 10 da rc.3); no Mínimo, só os ícones (o nome de cada aba fica no
-// aria-label).
+// (Ctrl+1 a 4, nessa ordem) e, (0.2.0) com o computador ligado ao chat, o Chat (Ctrl+5) e, com as reuniões liberadas,
+// as Reuniões (Ctrl+6), com o número de não lidas no canto do ícone do Chat (de 1 a 9, e "9+" acima disso; o nome dele
+// é o rótulo de leitor de tela, com o número inteiro: "Chat, 12 mensagens não lidas"); no iPhone (plataforma.ts),
+// Teclado, Recentes e Contatos, sem as teclas. No Normal e no Compacto, o ícone e o rótulo de cada aba (Ruling 10 da
+// rc.3); no Mínimo, só os ícones (o nome de cada aba fica no aria-label).
 import { numeroDaAba } from '../chat/formato';
 import { CHAT, rotuloDaAba } from '../chat/textos';
-import { IconBolt, IconClock, IconContacts, IconKeypad, IconMessage } from '../icons';
+import { IconBolt, IconClock, IconContacts, IconKeypad, IconMessage, IconReunioes } from '../icons';
+import { REUNIOES } from '../reunioes/textos';
 import type { Tab } from '../types';
 
 interface Props {
@@ -14,7 +15,7 @@ interface Props {
   tabs: Tab[];
   tab: Tab | null;
   onSelect(tab: Tab): void;
-  /** As teclas Ctrl+1 a 5 trocam a aba (só no Windows): cada aba diz a sua no aria-keyshortcuts. */
+  /** As teclas Ctrl+1 a 6 trocam a aba (só no Windows): cada aba diz a sua no aria-keyshortcuts. */
   keyShortcuts: boolean;
   /** (0.2.0) As não lidas do chat: o número da aba Chat (0 ou nada: sem número). */
   naoLidas?: number;
@@ -26,6 +27,7 @@ export const TABS: Array<{ tab: Tab; label: string; Icon: typeof IconKeypad; key
   { tab: 'recentes', label: 'Recentes', Icon: IconClock, key: 'Control+3' },
   { tab: 'contatos', label: 'Contatos', Icon: IconContacts, key: 'Control+4' },
   { tab: 'chat', label: CHAT, Icon: IconMessage, key: 'Control+5' },
+  { tab: 'reunioes', label: REUNIOES, Icon: IconReunioes, key: 'Control+6' },
 ];
 
 export function Nav({ tabs, tab, onSelect, keyShortcuts, naoLidas = 0 }: Props) {

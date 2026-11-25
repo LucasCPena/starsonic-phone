@@ -26,6 +26,13 @@ export function esperaDoLimite(e: ErroChat): number {
 const numero = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const objeto = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
 
+const texto = (v: unknown): v is string => typeof v === 'string';
+/** O código de uma reunião (o formato, a Reunioes.h e o formato.ts conferem; aqui basta ser um texto). */
+const codigo = texto;
+const ehPedido = (v: unknown): boolean => objeto(v) && texto(v.id) && texto(v.nome);
+const ehParticipante = (v: unknown): boolean =>
+  objeto(v) && texto(v.id) && texto(v.nome) && typeof v.deFora === 'boolean' && typeof v.tela === 'boolean';
+
 /** O evento de uma mensagem do WebSocket; null para o que não é um evento conhecido. */
 function lerEvento(dados: unknown): Evento | null {
   let e: unknown;
@@ -48,6 +55,17 @@ function lerEvento(dados: unknown): Evento | null {
       return typeof e.computador === 'string' ? (e as Evento) : null;
     case 'fora':
       return { tipo: 'fora' };
+    case 'reuniaoPedido':
+      return codigo(e.reuniao) && ehPedido(e.pedido) ? (e as Evento) : null;
+    case 'reuniaoPedidoFim':
+      return codigo(e.reuniao) && typeof e.pedido === 'string' ? (e as Evento) : null;
+    case 'reuniaoParticipantes':
+      return codigo(e.reuniao) && Array.isArray(e.participantes) && e.participantes.every(ehParticipante) &&
+        Array.isArray(e.pedidos) && e.pedidos.every(ehPedido)
+        ? (e as Evento)
+        : null;
+    case 'reuniaoAcabou':
+      return codigo(e.reuniao) ? (e as Evento) : null;
     default:
       return null;
   }

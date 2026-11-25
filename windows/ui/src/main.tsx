@@ -26,6 +26,8 @@
 // saem para a aba Chat quando ela sai da lista (R26), e todas, quando a pessoa não está mais no chat. O toast delas é
 // o mesmo da ponte (R31), também o dos arquivos da conversa (Task 7). Um arquivo arrastado para a janela nunca navega
 // (R39).
+// (Reuniões) A sexta aba (Ctrl+6) é do reunioes/: o cliente das reuniões (reunioes/cliente.ts) usa a sessão do cliente
+// do chat, e a aba só aparece depois da primeira leitura que dá certo (as reuniões liberadas para a empresa).
 // (0.3.0) O vídeo: as memórias das vistas desta página (video/vistas.ts) são guardadas uma vez, junto com a ponte, e vão
 // às vistas de vídeo pelo VideoContexto. Os avisos do vídeo (os toasts do AVISOS_DE_5_S) ficam 5 s na tela; os outros,
 // os 2 s de sempre. (Task 8) O chat na ligação: numa ligação com um colega do chat (video/chatDaLigacao.ts), o Chat da
@@ -49,6 +51,9 @@ import { NovoGrupo } from './chat/telas/NovoGrupo';
 import { PorPessoas } from './chat/telas/PorPessoas';
 import type { Conversa as ConversaDaLista } from './chat/tipos';
 import { useAcao, useVistaChat } from './chat/usarChat';
+import { ReunioesCliente } from './reunioes/cliente';
+import { Aba as AbaReunioes } from './reunioes/telas/Aba';
+import { useVistaReunioes } from './reunioes/usarReunioes';
 import { AdminLogin } from './components/AdminLogin';
 import { Atualizacao } from './components/Atualizacao';
 import { BackBar } from './components/BackBar';
@@ -87,6 +92,7 @@ import { criarVideoDaPagina, VideoContexto } from './video/vistas';
 
 const bridge = createBridge();
 const chatCliente = new ChatCliente({ bridge, base: enderecoDoChat() });
+const reunioesCliente = new ReunioesCliente({ chat: chatCliente, bridge, base: enderecoDoChat() });
 const videoDaPagina = criarVideoDaPagina(bridge, 'principal');
 // (0.2.0, R39) Um arquivo arrastado para a janela nunca navega, em lugar nenhum dela: sem isto, o WebView2 abriria o
 // file:// do arquivo (e o núcleo gravaria o caminho dele no diagnóstico). Só a conversa que recebe arquivos (com o
@@ -100,10 +106,13 @@ const ringer = createRinger();
 const TOAST_MS = 2000;
 /** (vídeo, etapa 2) Os avisos do vídeo (a câmera, o H.264, a recusa) ficam mais tempo: dizem o que fazer. */
 const TOAST_DO_VIDEO_MS = 5000;
-/** As abas do Windows, na ordem da navegação: com o computador ligado ao chat, também o Chat. */
-const ABAS_COM_CHAT = TABS.map((t) => t.tab);
+/** As abas do Windows, na ordem da navegação: com o computador ligado ao chat, também o Chat e, com as reuniões
+ *  liberadas, as Reuniões. */
+const ABAS_COM_REUNIOES = TABS.map((t) => t.tab);
+const ABAS_COM_CHAT = ABAS_COM_REUNIOES.filter((t) => t !== 'reunioes');
 const ABAS_SEM_CHAT = ABAS_COM_CHAT.filter((t) => t !== 'chat');
-/** Ctrl+1 a 5: as abas na ordem da navegação (o 5, o Chat, só com o computador ligado ao chat). */
+/** Ctrl+1 a 6: as abas na ordem da navegação (o 5, o Chat, só com o computador ligado ao chat; o 6, as Reuniões,
+ *  só com a aba à vista). */
 const TECLA_ABA: Record<string, Tab> = Object.fromEntries(TABS.map((t, i) => [String(i + 1), t.tab]));
 
 /**
@@ -252,6 +261,22 @@ function App() {
     contaEmUso?.status,
   ]);
 
+  // As reuniões: a aba só existe com o chat ligado e depois de uma leitura que deu certo (vistaReunioes.aba). Com ela
+  // na vista (a aba aberta, sem ligação nem tela por cima), o cliente lê a lista na hora e a cada 30 s.
+  const vistaReunioes = useVistaReunioes(reunioesCliente);
+  const reunioesNaVista =
+    !ios &&
+    resumoDoChat?.ligado === true &&
+    vistaReunioes.aba &&
+    view.kind === 'tab' &&
+    view.tab === 'reunioes' &&
+    !state?.ligacao &&
+    state?.tela !== 'entrar';
+  // Um efeito de layout: a leitura sai na hora que a aba entra na vista (o useEffect espera o próximo quadro).
+  useLayoutEffect(() => {
+    reunioesCliente.abaAVista(reunioesNaVista);
+  }, [reunioesNaVista]);
+
   // (0.2.0) A conversa das vistas chatConversa, chatMembros e chatPor, quando a lista já a tem. Uma que não está nela
   // com a lista já lida (o aviso de uma conversa que saiu, ou que não existe; o grupo de que a pessoa saiu ou foi tirada,
   // R26) leva à aba Chat; as telas do chat fora da aba também vão para ela quando a pessoa não está mais no chat.
@@ -357,7 +382,8 @@ function App() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  // Ctrl+1 a 5 trocam a aba (o 5, o Chat, só com o computador ligado ao chat); Ctrl + P abre a área do administrador.
+  // Ctrl+1 a 6 trocam a aba (o 5, o Chat, só com o computador ligado ao chat; o 6, as Reuniões, só com a aba à
+  // vista); Ctrl + P abre a área do administrador.
   // (iPhone) Nenhum dos dois.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -374,6 +400,7 @@ function App() {
       const aba = TECLA_ABA[e.key];
       if (!aba || document.querySelector('dialog[open]')) return;
       if (aba === 'chat' && !atual.current?.chat?.ligado) return;
+      if (aba === 'reunioes' && !(atual.current?.chat?.ligado && reunioesCliente.vista().aba)) return;
       e.preventDefault();
       setView({ kind: 'tab', tab: aba });
     };
@@ -737,7 +764,8 @@ function App() {
   // (iPhone) Sem a aba Atalhos: uma tela de antes que fosse ela (o cenário da ponte falsa) é o Teclado. (0.2.0) Sem o
   // computador ligado ao chat, sem a aba Chat (a tela que fosse ela é o Teclado). Uma tela do chat de uma conversa que a
   // lista ainda não tem (ou não tem mais) mostra a aba Chat.
-  const abas = ios ? IPHONE_TABS : state.chat?.ligado ? ABAS_COM_CHAT : ABAS_SEM_CHAT;
+  const abasDoWindows = state.chat?.ligado ? (vistaReunioes.aba ? ABAS_COM_REUNIOES : ABAS_COM_CHAT) : ABAS_SEM_CHAT;
+  const abas = ios ? IPHONE_TABS : abasDoWindows;
   const tab = view.kind === 'tab' && abas.includes(view.tab) ? view.tab : telaDoChat(view) && abas.includes('chat') ? 'chat' : 'teclado';
   const conta = state.conta;
   return (
@@ -805,6 +833,7 @@ function App() {
             onFecharAviso={() => chatCliente.dispensarComputadorNovo()}
           />
         )}
+        {tab === 'reunioes' && <AbaReunioes vista={vistaReunioes} />}
       </main>
       <Nav tabs={abas} tab={tab} onSelect={(t) => setView({ kind: 'tab', tab: t })} keyShortcuts={!ios} naoLidas={vistaChat.naoLidas} />
       {avisos}

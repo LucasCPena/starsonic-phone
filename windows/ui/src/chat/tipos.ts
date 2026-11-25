@@ -1,5 +1,6 @@
 // Os objetos do chat, como o servidor os manda (docs/chat-protocolo.md, seção 4) e os eventos do WebSocket (seção 7).
 // As horas são milissegundos desde 1970 (UTC).
+import type { EventoDaReuniao } from '../reunioes/tipos';
 
 export interface Pessoa {
   id: number;
@@ -59,4 +60,6 @@ export type Evento =
   | { tipo: 'conversa'; conversa: Conversa }
   | { tipo: 'conversaSaiu'; conversa: number }
   | { tipo: 'computadorNovo'; computador: string }
-  | { tipo: 'fora' };
+  | { tipo: 'fora' }
+  /** Os eventos das reuniões (seção 11): só quem assinou a sessão (assinarSessao) os recebe. */
+  | EventoDaReuniao;

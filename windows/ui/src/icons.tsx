@@ -287,6 +287,13 @@ export const IconNovoGrupo = svg(
     <path d="M19 8v6M16 11h6" />
   </>,
 );
+/** (Reuniões) A aba Reuniões e a primeira vez dela: a câmera de vídeo. */
+export const IconReunioes = svg(
+  <>
+    <rect x="2.5" y="6.5" width="13" height="11" rx="2.5" />
+    <path d="M15.5 10.5L21 7.5v9l-5.5-3" />
+  </>,
+);
 /** (Task 7) O clipe do lugar de escrever ("Anexar um arquivo ou uma foto"). */
 export const IconClipe = svg(<path d="M21 11.5l-8.6 8.6a5 5 0 0 1-7.1-7.1l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9" />);
 /** (Task 7) Um arquivo do chat: a folha com o canto dobrado. */

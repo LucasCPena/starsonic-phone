@@ -34,6 +34,9 @@
 // - (Task 7) Os arquivos: o enviarArquivos vai para os envios (um Pendente por arquivo, e o texto por último); as
 //   miniaturas são da conversa aberta (aberta.ts); e o arquivo de uma foto (a foto grande) é um pedido da tela, como os
 //   da Task 5.
+// - (Reuniões) O `pedir` e o `assinarSessao` abrem a sessão ao cliente das reuniões (reunioes/cliente.ts): um pedido
+//   como a pessoa da vez, e os eventos das reuniões, cada conexão dos eventos e cada parada. Os eventos das reuniões
+//   não entram na lista de conversas.
 import type { Bridge } from '../bridge';
 import { limitCharacters } from '../format';
 import type { AccountStatus, ChatSummary } from '../state';
@@ -44,6 +47,7 @@ import { conectarEventos, esperaDaVez, esperaDoLimite } from './eventos';
 import { criarAvisoDoRamal, type AvisoDoRamal } from './ramal';
 import { textoDoAviso, tituloDoAviso } from './formato';
 import { CHAT, computadorNovo } from './textos';
+import type { EventoDaReuniao } from '../reunioes/tipos';
 import type { Conversa, Evento, Membro, Mensagem, Pessoa } from './tipos';
 
 export type SituacaoChat = 'desligado' | 'precisaConta' | 'entrando' | 'pronto' | 'fora';
@@ -123,6 +127,18 @@ const VISTA_VAZIA: VistaChat = {
 /** O pedido ou a espera de antes de uma parada (ou de uma conversa que fechou): quem esperava desiste. */
 class Parado extends Error {}
 
+/** O pedido de antes de uma parada (a pessoa trocou, o chat desligou): a resposta não vale. */
+export const ehParado = (e: unknown): boolean => e instanceof Parado;
+
+/** Quem assina a sessão (o cliente das reuniões): os eventos das reuniões, cada conexão dos eventos e cada parada. */
+interface AssinanteDaSessao {
+  evento(e: EventoDaReuniao): void;
+  conectou(): void;
+  parou(): void;
+}
+
+const ehDaReuniao = (e: Evento): e is EventoDaReuniao => e.tipo.startsWith('reuniao');
+
 const ehLimite = (e: unknown): e is ErroChat => e instanceof ErroChat && e.status === 429 && e.erro === 'limite';
 
 /** A ordem da lista: a conversa atualizada mais nova primeiro; no empate, a de id maior (a ordem do servidor). */
@@ -194,6 +210,8 @@ export class ChatCliente {
   private falhaDaLista = false;
   /** As esperas da sessão em curso (a parada acorda todas). */
   private readonly acordar = new Set<() => void>();
+  /** Quem assinou a sessão (assinarSessao). */
+  private readonly assinantes = new Set<AssinanteDaSessao>();
   /** A espera da sessão (a da partida, da releitura e dos envios). */
   private readonly daSessao: Dono = { dormir: (ms) => this.dormir(ms), ativa: () => true };
   /** O último entrar: o próximo só sai depois da resposta dele. */
@@ -430,6 +448,7 @@ export class ChatCliente {
     this.envios = null;
     this.lidas.clear();
     for (const acordar of [...this.acordar]) acordar();
+    for (const a of [...this.assinantes]) a.parou();
   }
 
   /** A partida, como a pessoa da conta: até dar certo, até a chave não valer ou até a próxima parada. */
@@ -547,6 +566,7 @@ export class ChatCliente {
         this.mudar({});
         void this.reler(vez, api);
         this.aberta?.conectou();
+        for (const a of [...this.assinantes]) a.conectou();
         // A cada abertura do canal, o chat ouve como está o ramal (ele esquece quando o canal cai).
         if (this.ramalDaVez !== null) {
           this.avisoDoRamal.canalAbriu(this.ramalDaVez, (estado, segundos) => api.dizerRamal(estado, segundos));
@@ -632,6 +652,11 @@ export class ChatCliente {
   }
 
   private aoEvento(e: Evento, api: ApiChat): void {
+    if (ehDaReuniao(e)) {
+      // Os eventos das reuniões não mexem na lista do chat: são só de quem assinou a sessão.
+      for (const a of [...this.assinantes]) a.evento(e);
+      return;
+    }
     if (e.tipo === 'computadorNovo') {
       this.mudar({ computadorNovo: e.computador });
       this.bridge.send({ cmd: 'chatNotify', conversa: 0, titulo: CHAT, texto: computadorNovo(e.computador) });
@@ -673,6 +698,32 @@ export class ChatCliente {
     if (fechar) this.soltarAberta();
     for (const c of this.v.conversas) if (!ficam.has(c.id)) this.envios?.soltarConversa(c.id);
     this.mudar(fechar ? { conversas, aberta: null } : { conversas });
+  }
+
+  /**
+   * Um pedido como a pessoa da vez, uma vez só (para os clientes que moram fora do chat: o das reuniões). Rejeita com o
+   * Parado se não há pessoa ou se ela trocou no meio; o 401 tira o computador do chat. `lendo`: o 429 `limite` espera e
+   * tenta de novo uma vez.
+   */
+  pedir<T>(f: (api: ApiChat) => Promise<T>, o: { lendo?: boolean } = {}): Promise<T> {
+    let s: Sessao;
+    try {
+      s = this.sessao();
+    } catch (e) {
+      return Promise.reject(e);
+    }
+    return this.daTela(s, () => f(s.api), o);
+  }
+
+  /**
+   * Os eventos das reuniões, cada conexão dos eventos (a primeira e as voltas) e cada parada da sessão (a pessoa
+   * trocou, ou o chat desligou). Devolve o cancelar.
+   */
+  assinarSessao(a: AssinanteDaSessao): () => void {
+    this.assinantes.add(a);
+    return () => {
+      this.assinantes.delete(a);
+    };
   }
 
   /** (Task 5) A sessão de agora, para um pedido de uma tela; fora do `pronto`, o Parado (a tela não diz nada). */
