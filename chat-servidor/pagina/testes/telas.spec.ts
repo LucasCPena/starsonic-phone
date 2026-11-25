@@ -1415,7 +1415,9 @@ test.describe('a reunião', () => {
     await expect(
       page.getByText('Espere um instante: a página volta sozinha para a reunião.', { exact: true }),
     ).toBeVisible();
-    await expect(page.getByRole('status').locator(':scope > :last-child')).toHaveText('A conexão caiu. Entrando de novo…');
+    await expect(page.getByRole('status').locator(':scope > :last-child')).toHaveText(
+      'A conexão caiu. Entrando de novo…',
+    );
     await expect(botao(page, 'Compartilhar a tela')).toBeDisabled();
 
     await expect(botao(page, 'Sair')).toBeEnabled();
