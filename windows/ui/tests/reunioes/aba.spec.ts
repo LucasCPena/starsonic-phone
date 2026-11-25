@@ -216,6 +216,9 @@ test('a aba some com o semReunioes e volta quando a empresa é liberada', async 
   await liberarReunioes(empresaId);
   await page.clock.runFor(300_000);
   await expect(abas(page)).toHaveText(['Teclado', 'Atalhos', 'Recentes', 'Contatos', 'Chat', 'Reuniões']);
+  // A tela não volta sozinha para as Reuniões: o Teclado continua sendo a aba de agora.
+  await expect(abas(page).first()).toHaveAttribute('aria-current', 'page');
+  await expect(titulo(page)).toHaveCount(0);
 });
 
 test('a troca de pessoa esquece a lista', async ({ page }) => {

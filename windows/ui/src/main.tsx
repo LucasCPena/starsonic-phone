@@ -276,6 +276,13 @@ function App() {
   useLayoutEffect(() => {
     reunioesCliente.abaAVista(reunioesNaVista);
   }, [reunioesNaVista]);
+  // A aba some com a pessoa nela (o semReunioes, o chat desligado): a vista vai para o Teclado de fato, e não só a tela.
+  // Sem isto, a aba que volta (as reuniões liberadas de novo) puxaria a pessoa de volta para ela sozinha.
+  const abaDasReunioes = !ios && resumoDoChat?.ligado === true && vistaReunioes.aba;
+  useLayoutEffect(() => {
+    if (abaDasReunioes) return;
+    setView((v) => (v.kind === 'tab' && v.tab === 'reunioes' ? { kind: 'tab', tab: 'teclado' } : v));
+  }, [abaDasReunioes]);
 
   // (0.2.0) A conversa das vistas chatConversa, chatMembros e chatPor, quando a lista já a tem. Uma que não está nela
   // com a lista já lida (o aviso de uma conversa que saiu, ou que não existe; o grupo de que a pessoa saiu ou foi tirada,
