@@ -3,7 +3,7 @@
 // servidor (10 por hora do endereço), e os testes nunca mandam um.
 import { expect, test, type Page, type Route } from '@playwright/test';
 import { capturar, comandos, entrarNaAdmin, esperarComando, semViolacoesSerias, verTextos } from '../helpers';
-import { abrirNoChat } from './abrir';
+import { abrirNoChat, pararORelogio } from './abrir';
 import { baseDoChat, empresaComPessoas, novaEmpresa } from './servidor';
 
 // O CSP da página só deixa falar com o endereço do chat de verdade; o servidor de teste fica no 127.0.0.1:4180.
@@ -148,6 +148,7 @@ test('Desligar do chat unlinks even when the server never answers', async ({ pag
   expect((await comandos(page)).filter((c) => c.cmd === 'chatUnlink')).toEqual([]);
 
   // Mesmo sem resposta: depois de 20 s, o chatUnlink, e o cartão volta a mostrar o campo do código.
+  await pararORelogio(page);
   await page.clock.runFor(20_000);
   await esperarComando(page, { cmd: 'chatUnlink' });
   await expect(campo(page)).toBeVisible();

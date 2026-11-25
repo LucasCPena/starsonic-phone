@@ -7,7 +7,7 @@
 // teclado e a acessibilidade nos dois temas (R32). Cada teste cria a própria empresa.
 import { expect, test, type Page, type Route } from '@playwright/test';
 import { capturar, semViolacoesSerias } from '../helpers';
-import { abrirAConversa, abrirNoChat, esperarOsEventos } from './abrir';
+import { abrirAConversa, abrirNoChat, abrirOMais, esperarOsEventos } from './abrir';
 import { baseDoChat, empresaComPessoas } from './servidor';
 
 // O CSP da página só deixa falar com o endereço do chat de verdade; o servidor de teste fica no 127.0.0.1:4180.
@@ -29,7 +29,7 @@ const umInstante = (page: Page) => page.evaluate(() => new Promise((r) => setTim
 
 /** Da aba Chat para o Novo grupo, pelo "+". */
 async function irParaONovoGrupo(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Nova conversa ou novo grupo' }).click();
+  await abrirOMais(page);
   await page.getByRole('menuitem', { name: 'Novo grupo' }).click();
   await expect(page.getByRole('heading', { name: 'Novo grupo', level: 1 })).toBeVisible();
 }

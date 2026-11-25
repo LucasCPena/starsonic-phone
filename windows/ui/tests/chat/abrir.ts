@@ -73,6 +73,23 @@ export async function pararORelogio(page: Page): Promise<void> {
   await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000);
 }
 
+/**
+ * O chat acabou de entrar: à vista o título "Nenhuma conversa ainda" ou a busca "Procurar conversa", que só existem
+ * com o chat dentro (a situação `pronto` do src/chat/telas/Lista.tsx). O main.tsx desenha a lista com a chave
+ * `vistaChat.eu?.id ?? 0`, que muda quando o entrar termina: a lista é recriada, e um menu do "+" aberto antes disso
+ * fecha. Um teste que abre o "+" espera por aqui antes (o abrirOMais já espera).
+ */
+export async function chatDentro(page: Page): Promise<void> {
+  const vazia = page.getByRole('heading', { name: 'Nenhuma conversa ainda' });
+  await expect(vazia.or(page.getByRole('searchbox', { name: 'Procurar conversa' }))).toBeVisible();
+}
+
+/** Abre o menu do "+" da lista do chat, com o chat já dentro (o chatDentro diz por quê). */
+export async function abrirOMais(page: Page): Promise<void> {
+  await chatDentro(page);
+  await page.getByRole('button', { name: 'Nova conversa ou novo grupo' }).click();
+}
+
 /** O texto inteiro, sem mais nada antes ou depois. */
 export function exato(texto: string): RegExp {
   return new RegExp(`^${texto.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);

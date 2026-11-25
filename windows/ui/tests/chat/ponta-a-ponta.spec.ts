@@ -6,7 +6,7 @@
 // código já existe).
 import { expect, test, type Page } from '@playwright/test';
 import { esperarComando } from '../helpers';
-import { abrirAConversa, abrirNoChat, esperarOsEventos, exato } from './abrir';
+import { abrirAConversa, abrirNoChat, abrirOMais, esperarOsEventos, exato } from './abrir';
 import { escolher, imagemDaPagina, type ArquivoDeTeste } from './anexar';
 import { empresaComPessoas } from './servidor';
 
@@ -42,7 +42,7 @@ test('two apps talk through the real server with text, photo, file and group', a
     }
 
     // 1. A abre a Nova conversa, escolhe a Ana e manda "Bom dia".
-    await pa.getByRole('button', { name: 'Nova conversa ou novo grupo' }).click();
+    await abrirOMais(pa);
     await pa.getByRole('menuitem', { name: 'Nova conversa' }).click();
     await pa.getByRole('list', { name: 'Colegas no chat' }).getByRole('button', { name: /^Ana Souza/ }).click();
     const conversaA = pa.getByRole('log', { name: 'Mensagens com Ana Souza' });
@@ -91,7 +91,7 @@ test('two apps talk through the real server with text, photo, file and group', a
 
     // 5. A cria o grupo "Comercial" com a Ana e o Carlos. A B vê o grupo e os avisos.
     await voltar(pa);
-    await pa.getByRole('button', { name: 'Nova conversa ou novo grupo' }).click();
+    await abrirOMais(pa);
     await pa.getByRole('menuitem', { name: 'Novo grupo' }).click();
     await pa.getByRole('textbox', { name: 'Nome do grupo' }).fill('Comercial');
     await pa.getByRole('checkbox', { name: /^Ana Souza/ }).check();

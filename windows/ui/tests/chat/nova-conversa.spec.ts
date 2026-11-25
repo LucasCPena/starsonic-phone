@@ -3,7 +3,7 @@
 // dois que abre (a mesma, uma só por par) e a acessibilidade nos dois temas. Cada teste cria a própria empresa.
 import { expect, test, type Page, type Route } from '@playwright/test';
 import { capturar, semViolacoesSerias } from '../helpers';
-import { abrirNoChat } from './abrir';
+import { abrirNoChat, abrirOMais } from './abrir';
 import { baseDoChat, empresaComPessoas } from './servidor';
 
 // O CSP da página só deixa falar com o endereço do chat de verdade; o servidor de teste fica no 127.0.0.1:4180.
@@ -17,7 +17,7 @@ const nomeDoTema = (tema: 'light' | 'dark') => (tema === 'light' ? 'claro' : 'es
 
 /** Da aba Chat para a Nova conversa, pelo "+". */
 async function irParaANovaConversa(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Nova conversa ou novo grupo' }).click();
+  await abrirOMais(page);
   await page.getByRole('menuitem', { name: 'Nova conversa' }).click();
   await expect(page.getByRole('heading', { name: 'Nova conversa', level: 1 })).toBeVisible();
 }

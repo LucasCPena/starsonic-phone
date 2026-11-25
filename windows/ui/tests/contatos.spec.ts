@@ -2,7 +2,7 @@
 // ponte falsa: o teste manda o estado `empresa` e a mensagem `contatosEmpresa` pela mesma ponte de mentira e confere os
 // textos exatos e os comandos que saem (importContacts, exportContacts, setCompanyList, refreshCompanyList e o dial).
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { abrir, empurrar, esperarComando, mudarEstado, segurarCpp, semViolacoesSerias, soltarCpp, verTextos, vezes } from './helpers';
+import { abrir, depoisDoQueChegou, empurrar, esperarComando, mudarEstado, segurarCpp, semViolacoesSerias, soltarCpp, verTextos, vezes } from './helpers';
 
 // Só de teste: nenhum link de cliente de verdade.
 const LINK = 'https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit#gid=456';
@@ -437,10 +437,13 @@ test.describe('Configurações → Contatos', () => {
     await campo(page).fill(LINK);
     await salvar(page).click();
     await esperarComando(page, { cmd: 'setCompanyList', link: LINK });
+    // O eco do Salvar (entregue por um setTimeout(0)) reescreve o campo: o próximo fill espera por ele.
+    await depoisDoQueChegou(page);
     // O Enter no campo.
     await campo(page).fill(CAMINHO);
     await campo(page).press('Enter');
     await esperarComando(page, { cmd: 'setCompanyList', link: CAMINHO });
+    await depoisDoQueChegou(page);
     // Vazio: tira a lista.
     await campo(page).fill('');
     await salvar(page).click();

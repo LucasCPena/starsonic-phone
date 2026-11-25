@@ -95,6 +95,7 @@ test('the conversation shows the bubbles with the time and the day, mine on the 
   await page.clock.install({ time: mensagens[0].criadaEm + DIA });
   await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
   await abrirAConversa(page, 'Ana Souza');
+  await pararORelogio(page);
 
   const log = conversaCom(page, 'Ana Souza');
   await expect(log.locator('.balao-texto')).toHaveText([

@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { createServer, type AddressInfo, type Socket } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { capturar, comandos, depoisDoQueChegou, empurrar, esperarComando, semViolacoesSerias, verTextos } from '../helpers';
-import { abrirNoChat } from './abrir';
+import { abrirNoChat, abrirOMais, chatDentro, pararORelogio } from './abrir';
 import { ApiDeTeste, baseDoChat, empresaComPessoas, ligarComputador } from './servidor';
 
 // O CSP da página só deixa falar com o endereço do chat de verdade; o servidor de teste fica no 127.0.0.1:4180.
@@ -222,6 +222,7 @@ test('the first time shows Nenhuma conversa ainda and the + menu', async ({ page
   // Sem nenhuma conversa, sem a busca (o quadro Vazio).
   await expect(page.getByRole('searchbox', { name: 'Procurar conversa' })).toHaveCount(0);
 
+  await chatDentro(page);
   const mais = page.getByRole('button', { name: 'Nova conversa ou novo grupo' });
   await expect(mais).toHaveAttribute('aria-expanded', 'false');
   await mais.click();
@@ -276,6 +277,7 @@ test('a computer taken out shows the message and stops trying', async ({ page })
   await esperarComando(page, { cmd: 'chatBadge', n: 0 });
 
   // Dois minutos depois, nenhum pedido ao servidor: nem ligar os eventos de novo, nem reler, nem entrar.
+  await pararORelogio(page);
   const antes = pedidos;
   await page.clock.runFor(120_000);
   await page.waitForTimeout(500);
@@ -296,11 +298,40 @@ test('a request with no answer gives up after 20 s and tries again', async ({ pa
   const faixa = page.getByRole('status').filter({ hasText: 'Sem conexão com o chat. Tentando de novo…' });
   await expect(faixa).toHaveCount(0);
 
+  await pararORelogio(page);
   await page.clock.runFor(20_000);
   await expect(faixa).toBeVisible();
   // Depois da espera da vez (no máximo 1,5 s na primeira), o entrar vai de novo.
   await page.clock.runFor(1_500);
   await expect.poll(() => presos.length).toBe(2);
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+
+test('chatDentro waits for the chat to finish entering, and then the + menu stays open', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO]);
+  // O entrar fica preso: o chat está entrando, e o "+" já está na tela.
+  const presos: Route[] = [];
+  await page.route(`${baseDoChat()}/api/v1/pessoas/eu`, (rota) => {
+    presos.push(rota);
+  });
+  await abrirNoChat(page, { chave: pessoas[0].chave, ...RECEPCAO });
+  await expect.poll(() => presos.length).toBe(1);
+  await expect(page.getByRole('button', { name: 'Nova conversa ou novo grupo' })).toBeVisible();
+
+  let dentro = false;
+  const espera = chatDentro(page).then(() => {
+    dentro = true;
+  });
+  await depoisDoQueChegou(page);
+  expect(dentro).toBe(false);
+
+  await presos[0].continue();
+  await espera;
+  await expect(page.getByRole('heading', { name: 'Nenhuma conversa ainda' })).toBeVisible();
+  // Com o chat dentro, a lista não é mais recriada: o menu aberto fica aberto.
+  await abrirOMais(page);
+  await depoisDoQueChegou(page);
+  await expect(page.getByRole('menu', { name: 'Nova conversa ou novo grupo' }).getByRole('menuitem')).toHaveCount(2);
   await page.unrouteAll({ behavior: 'ignoreErrors' });
 });
 
@@ -334,6 +365,7 @@ test('a WebSocket that never opens gives up after 20 s and connects again', asyn
     const faixa = page.getByRole('status').filter({ hasText: 'Sem conexão com o chat. Tentando de novo…' });
     await expect(faixa).toHaveCount(0);
 
+    await pararORelogio(page);
     await page.clock.runFor(20_000);
     await expect(faixa).toBeVisible();
     // Uma queda: depois da espera da vez, um bilhete novo e outra conexão.
@@ -519,7 +551,7 @@ for (const tema of ['light', 'dark'] as const) {
       await semViolacoesSerias(page);
       await capturar(page, 'chat-lista', nomeDoTema(tema));
 
-      await page.getByRole('button', { name: 'Nova conversa ou novo grupo' }).click();
+      await abrirOMais(page);
       await expect(page.getByRole('menu', { name: 'Nova conversa ou novo grupo' })).toBeVisible();
       await semViolacoesSerias(page);
       await capturar(page, 'chat-lista-menu', nomeDoTema(tema));
@@ -542,7 +574,7 @@ for (const tema of ['light', 'dark'] as const) {
       await expect(faixa).toHaveCount(0);
       await semViolacoesSerias(page);
       await capturar(page, 'chat-vazio', nomeDoTema(tema));
-      await page.getByRole('button', { name: 'Nova conversa ou novo grupo' }).click();
+      await abrirOMais(page);
       await expect(page.getByRole('menu', { name: 'Nova conversa ou novo grupo' })).toBeVisible();
       await capturar(page, 'chat-vazio-menu', nomeDoTema(tema));
     });

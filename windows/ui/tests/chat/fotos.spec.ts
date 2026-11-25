@@ -9,7 +9,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { capturar, entrarNaAdmin, semViolacoesSerias } from '../helpers';
 import { conferirOTeclado } from '../teclado';
-import { abrirAConversa, abrirNoChat, esperarOsEventos } from './abrir';
+import { abrirAConversa, abrirNoChat, abrirOMais, esperarOsEventos } from './abrir';
 import { arrastar, imagemDaPagina } from './anexar';
 import { ApiDeTeste, baseDoChat, empresaComPessoas, ligarComputador } from './servidor';
 
@@ -72,7 +72,7 @@ const botaoEnviar = (page: Page) => page.getByRole('button', { name: 'Enviar', e
 
 /** Da aba Chat para a Nova conversa ou o Novo grupo, pelo "+". */
 async function peloMais(page: Page, item: 'Nova conversa' | 'Novo grupo'): Promise<void> {
-  await page.getByRole('button', { name: 'Nova conversa ou novo grupo' }).click();
+  await abrirOMais(page);
   await page.getByRole('menuitem', { name: item }).click();
   await expect(page.getByRole('heading', { name: item, level: 1 })).toBeVisible();
 }
@@ -165,7 +165,7 @@ const TELAS: Tela[] = [
       const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO]);
       await abrirNoChat(page, { chave: pessoas[0].chave, ...RECEPCAO });
       await expect(page.getByText('Nenhuma conversa ainda', { exact: true })).toBeVisible();
-      await page.getByRole('button', { name: 'Nova conversa ou novo grupo' }).click();
+      await abrirOMais(page);
       await expect(page.getByRole('menu', { name: 'Nova conversa ou novo grupo' }).getByRole('menuitem')).toHaveText(['Nova conversa', 'Novo grupo']);
     },
   },
