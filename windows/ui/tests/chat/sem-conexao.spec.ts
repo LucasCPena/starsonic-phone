@@ -347,6 +347,7 @@ test('a 429 limite waits the time asked and tries again', async ({ page }) => {
   await expect(minha.locator('.balao-hora')).toHaveText(['Enviando…']);
   expect(corpos).toHaveLength(1);
 
+  await pararORelogio(page);
   await page.clock.runFor(3_000);
   await expect.poll(async () => (await enviosDaPagina()).map((e) => e.status)).toEqual([429, 201]);
   const [limite, deNovo] = await enviosDaPagina();
