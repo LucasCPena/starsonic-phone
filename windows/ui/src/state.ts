@@ -361,6 +361,8 @@ export interface AppState {
   empresa: CompanyList;
   /** (0.2.0) Só no Windows: o estado do iPhone vem sem o campo. */
   chat?: ChatSummary;
+  /** (reuniões, só no Windows) O pedido para entrar que o aviso do canto mostra: só enquanto há um. */
+  reuniao?: { pedido: PedidoDoAviso; escondida: boolean };
   /** (0.3.0) As escolhas do vídeo; sempre vem do núcleo (neutro no iPhone), o `?` protege o estado montado à mão. */
   video?: VideoSettings;
   /** (iPhone) Os campos abaixo só vêm no modo iPhone. */
@@ -369,6 +371,10 @@ export interface AppState {
   /** A saída de som de agora: "iPhone", "Viva-voz" ou o nome do fone; "" sem saber. */
   rotaAudio?: string;
 }
+
+/** O `assunto`: o texto; "" numa reunião sem assunto; null quando o app não sabe. */
+export interface PedidoDoAviso { id: string; nome: string; assunto: string | null }
+export type RespostaDoAviso = 'aceitar' | 'recusar' | 'fechar';
 
 /** C++ → interface. */
 export type IncomingMessage =
@@ -390,7 +396,11 @@ export type IncomingMessage =
    *  conectada): depois do estado a cada `ready` e a cada mudança. Antes da primeira, `false`. */
   | { v: number; type: 'janela'; frente: boolean }
   /** (0.2.0) A pessoa clicou no aviso do chat: a conversa dele (0: a aba Chat). */
-  | { v: number; type: 'abrir'; tela: 'chat'; conversa: number };
+  | { v: number; type: 'abrir'; tela: 'chat'; conversa: number }
+  /** (reuniões) A resposta da página do aviso ao pedido que ela mostrava (o aviso → a janela principal). */
+  | { v: number; type: 'reuniaoResposta'; pedido: string; resposta: RespostaDoAviso }
+  /** (reuniões) O clique fora dos botões do aviso: a janela vai para a aba Reuniões. */
+  | { v: number; type: 'abrir'; tela: 'reunioes' };
 
 /** Interface → C++ (sem o `v`, que a ponte acrescenta). */
 export type Command =
@@ -483,6 +493,12 @@ export type Command =
   | { cmd: 'chatNotify'; conversa: number; titulo: string; texto: string }
   | { cmd: 'chatBadge'; n: number }
   | { cmd: 'chatDownload'; arquivo: string; nome: string }
+  /** (reuniões; o iPhone recusa) Abrir a reunião no navegador (o passe é opcional), o pedido que o aviso mostra
+   *  (sem o `pedido`, nenhum), a resposta da página do aviso e o clique fora dos botões do aviso. */
+  | { cmd: 'reuniaoNavegador'; codigo: string; passe?: string }
+  | { cmd: 'reuniaoPedido'; pedido?: PedidoDoAviso; escondida?: boolean }
+  | { cmd: 'reuniaoResposta'; pedido: string; resposta: RespostaDoAviso }
+  | { cmd: 'reuniaoMostrar' }
   /** (0.3.0; o iPhone recusa) O vídeo: a nossa câmera na ligação, a câmera e o H.264 das Configurações, o teste da câmera,
    *  as vistas à vista de cada página, o modo da janela, o novo download do H.264 e a altura do aviso. */
   | { cmd: 'camera'; on: boolean }

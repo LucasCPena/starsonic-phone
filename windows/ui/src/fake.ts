@@ -48,6 +48,7 @@ import type {
   CallCard,
   CallState,
   CompanyContact,
+  PedidoDoAviso,
   CompanyList,
   CodecDeVideo,
   Contact,
@@ -70,6 +71,16 @@ const MAXIMO_DE_PORTEIROS = 20;
 const CODIGO_DE_PUXAR = /^(?:[0-9*#+]|\{ramal\})*$/;
 /** (0.2.0) A chave do chat que o chatLink aceita (docs/ponte-windows.md, "Os comandos do chat"). */
 const CHAVE_DO_CHAT = /^[A-Za-z0-9_-]{43}$/;
+/** (reuniões) O pedido que o núcleo aceita no `reuniaoPedido`: o id (16 hexa), o nome e o assunto. */
+// eslint-disable-next-line no-control-regex
+const COM_CONTROLE = /[\u0000-\u001f\u007f-\u009f]/;
+function pedidoValido(p: unknown): p is PedidoDoAviso {
+  if (typeof p !== 'object' || p === null) return false;
+  const { id, nome, assunto } = p as Record<string, unknown>;
+  if (typeof id !== 'string' || !/^[0-9a-f]{16}$/.test(id)) return false;
+  if (typeof nome !== 'string' || nome.length < 1 || nome.length > 120 || COM_CONTROLE.test(nome)) return false;
+  return assunto === null || (typeof assunto === 'string' && assunto.length <= 120 && !COM_CONTROLE.test(assunto));
+}
 
 type Listener = (event: { data: unknown }) => void;
 type OuvinteDeMemoria = (event: SharedBufferEventLike) => void;
@@ -591,6 +602,42 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
       }
       case 'noticeHeight':
         // A altura do aviso é do executável: as specs só olham o comando.
+        break;
+      case 'reuniaoNavegador':
+        // (reuniões) A reunião no navegador é do executável: as specs só olham o comando.
+        break;
+      case 'reuniaoPedido': {
+        // (reuniões) Como o núcleo: o pedido que o aviso mostra entra no estado (sem o `pedido`, sai); um pedido sem o
+        // `assunto` (texto ou null) ou sem o `escondida`, ou com o `pedido: null`, é recusado. No iPhone, nada.
+        if (ios) break;
+        const { pedido, escondida } = command;
+        if (!('pedido' in command)) {
+          if (state.reuniao) {
+            const { reuniao: _tira, ...resto } = state;
+            state = resto;
+            publish();
+          }
+          break;
+        }
+        if (!pedidoValido(pedido) || typeof escondida !== 'boolean') break;
+        change({ reuniao: { pedido: { id: pedido.id, nome: pedido.nome, assunto: pedido.assunto }, escondida } });
+        break;
+      }
+      case 'reuniaoResposta': {
+        // (reuniões) A resposta do pedido do estado chega à janela principal e o núcleo o esquece; a de outro id, nada.
+        if (ios || !state.reuniao || command.pedido !== state.reuniao.pedido.id) break;
+        if (command.resposta !== 'aceitar' && command.resposta !== 'recusar' && command.resposta !== 'fechar') break;
+        const { pedido, resposta } = command;
+        deliver({ v: 1, type: 'reuniaoResposta', pedido, resposta } satisfies IncomingMessage);
+        const { reuniao: _esquece, ...semPedido } = state;
+        state = semPedido;
+        publish();
+        break;
+      }
+      case 'reuniaoMostrar':
+        // (reuniões) O clique fora dos botões do aviso: a janela principal vai para a aba Reuniões.
+        if (ios) break;
+        deliver({ v: 1, type: 'abrir', tela: 'reunioes' } satisfies IncomingMessage);
         break;
       case 'chatNotify':
       case 'chatBadge':

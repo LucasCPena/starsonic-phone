@@ -13,8 +13,17 @@ import { useEffect, useState } from 'preact/hooks';
 import { createBridge } from './bridge';
 import { contactNumberLine, initials, nameOrNumber } from './format';
 import { VistaDeVideo } from './components/VistaDeVideo';
-import { IconPhone, IconVideo } from './icons';
-import type { AppState, CallCard } from './state';
+import { IconClose, IconPhone, IconVideo } from './icons';
+import {
+  ACEITAR,
+  AVISO_REUNIOES,
+  FECHAR_O_AVISO,
+  querEntrar,
+  querEntrarNaReuniao,
+  RECUSAR,
+  SEM_ASSUNTO,
+} from './reunioes/textos';
+import type { AppState, CallCard, PedidoDoAviso, RespostaDoAviso } from './state';
 import { ALTURA_DO_AVISO, alturaDoAviso } from './video/alturaDoAviso';
 import { oferecerAtenderComVideo, videoDe } from './video/estado';
 import { ATENDER_COM_VIDEO, rotuloDoVideo } from './video/textos';
@@ -41,6 +50,54 @@ function ringingCard(state: AppState): CallCard | null {
   return null;
 }
 
+/**
+ * (reuniões, a tela 11) O pedido para entrar numa reunião: o aviso do canto, quando nenhuma ligação toca. Os três
+ * botões respondem àquele pedido (o núcleo ignora uma resposta de outro); um clique em qualquer outro ponto traz
+ * a janela.
+ */
+function AvisoDoPedido({ pedido }: { pedido: PedidoDoAviso }) {
+  const responder = (resposta: RespostaDoAviso) => bridge.send({ cmd: 'reuniaoResposta', pedido: pedido.id, resposta });
+  const assunto = pedido.assunto === null ? null : pedido.assunto === '' ? SEM_ASSUNTO : pedido.assunto;
+  return (
+    <div
+      class="aviso aviso-reuniao"
+      role="alertdialog"
+      aria-label={querEntrarNaReuniao(pedido.nome, pedido.assunto)}
+      onClick={(e) => {
+        if (!(e.target as Element).closest('button')) bridge.send({ cmd: 'reuniaoMostrar' });
+      }}
+    >
+      <div class="aviso-reuniao-topo">
+        <span class="aviso-reuniao-marca" aria-hidden="true">
+          <IconVideo size="sm" />
+        </span>
+        <span>{AVISO_REUNIOES}</span>
+      </div>
+      <div class="aviso-reuniao-texto">
+        <span class="aviso-reuniao-nome">{querEntrar(pedido.nome)}</span>
+        {assunto !== null && <span class="aviso-reuniao-assunto">{assunto}</span>}
+      </div>
+      <div class="aviso-reuniao-botoes">
+        <button type="button" class="aviso-reuniao-recusar" onClick={() => responder('recusar')}>
+          {RECUSAR}
+        </button>
+        <button type="button" class="aviso-reuniao-aceitar" onClick={() => responder('aceitar')}>
+          {ACEITAR}
+        </button>
+      </div>
+      {/* Por último na ordem do Tab (Recusar, Aceitar, fechar); o CSS o põe no canto de cima. */}
+      <button
+        type="button"
+        class="aviso-reuniao-fechar"
+        aria-label={FECHAR_O_AVISO}
+        onClick={() => responder('fechar')}
+      >
+        <IconClose size="sm" />
+      </button>
+    </div>
+  );
+}
+
 function Aviso() {
   const [state, setState] = useState<AppState | null>(null);
   const [reinstalar, setReinstalar] = useState(false);
@@ -60,6 +117,8 @@ function Aviso() {
   }, [state !== null]);
 
   const card = state ? ringingCard(state) : null;
+  // Com uma ligação tocando, o aviso é o dela; sem ela, o do pedido para entrar numa reunião.
+  const pedido = state && !card ? (state.reuniao?.pedido ?? null) : null;
   // A altura que o aviso pede: no primeiro desenho e a cada mudança (sem ninguém tocando, 168: o executável guarda a
   // última, mesmo com o aviso escondido).
   const altura = state && card ? alturaDoAviso(state, card) : ALTURA_DO_AVISO.voz;
@@ -74,6 +133,7 @@ function Aviso() {
       </div>
     );
   }
+  if (pedido) return <AvisoDoPedido pedido={pedido} />;
   if (!state || !card) return <div class="aviso aviso-vazio" />;
   const conta = state.conta ? state.conta.nome || state.conta.ramal : '';
   const nome = nameOrNumber(card);

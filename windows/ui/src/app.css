@@ -557,6 +557,34 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .aviso .aviso-video .ic { color: var(--cyan); }
 /* A imagem do porteiro, em cima de tudo: 344×194. */
 .aviso-imagem { width: 344px; height: 194px; flex: none; border-radius: 12px; z-index: 1; }
+/* (reuniões, a tela 11) O aviso de quem quer entrar: o cartão escuro do quadro, nos 380×168 do aviso. O "×" fica
+   por último no DOM (a ordem do Tab) e vai para o canto de cima. */
+.aviso.aviso-reuniao { gap: 12px; padding: 14px 14px 16px; background: #1d2333; justify-content: flex-start; }
+.aviso-reuniao::before { display: none; }
+.aviso-reuniao-topo { display: flex; align-items: center; gap: 8px; min-height: 24px; padding-right: 32px;
+  font-size: 12px; color: #b9c4e6; }
+.aviso-reuniao-marca { width: 18px; height: 18px; border-radius: 5px; background: #0c2671; color: var(--cyan);
+  display: grid; place-items: center; flex: none; }
+.aviso-reuniao-marca .ic { width: 11px; height: 11px; stroke-width: 2.6; }
+.aviso-reuniao-texto { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.aviso-reuniao-nome { font-size: 15.5px; font-weight: 800; line-height: 1.2; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.aviso-reuniao-assunto { font-size: 13.5px; line-height: 1.45; color: #dfe5f5; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.aviso-reuniao-botoes { display: flex; gap: 10px; margin-top: auto; }
+.aviso-reuniao-botoes button { flex: 1; height: 40px; border-radius: 999px; font: 700 14px/1 var(--font-sans);
+  cursor: pointer; }
+.aviso-reuniao-recusar { border: 1px solid rgba(255, 255, 255, 0.24); background: rgba(255, 255, 255, 0.06);
+  color: #ffffff; }
+.aviso-reuniao-recusar:hover { background: rgba(255, 255, 255, 0.14); }
+.aviso-reuniao-aceitar { border: 0; background: var(--cyan); color: #03222a; }
+.aviso-reuniao-aceitar:hover { filter: brightness(1.08); }
+.aviso-reuniao-fechar { position: absolute; top: 14px; right: 14px; z-index: 1; width: 24px; height: 24px; padding: 0;
+  border: 0; border-radius: 6px; background: transparent; color: #b9c4e6; display: grid; place-items: center;
+  cursor: pointer; }
+.aviso-reuniao-fechar:hover { background: rgba(255, 255, 255, 0.1); color: #ffffff; }
+.aviso-reuniao-fechar .ic { width: 14px; height: 14px; }
+.aviso-reuniao button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
 .aviso-erro { display: grid; place-items: center; text-align: center; font-size: 14px; font-weight: 700; }
 
 /* ---------------------------------------------------------------------------------------------------------

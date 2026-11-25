@@ -115,7 +115,7 @@ export function entrarVazio(): AppState['entrar'] {
 export function estadoDoIphone(state: AppState, permissao: AgendaPermission): AppState {
   const concedida = permissao === 'concedida';
   // O estado do iPhone não tem o chat.
-  const { chat: _semChat, ...doPC } = state;
+  const { chat: _semChat, reuniao: _semReuniao, ...doPC } = state;
   return {
     ...doPC,
     plataforma: 'ios',
@@ -605,6 +605,17 @@ export function createScenario(nome: string): Scenario | undefined {
       return { state: principal(), view: 'sobre' };
     case 'nao-perturbe':
       return { state: { ...principal(), naoPerturbe: true } };
+    case 'aviso-pedido':
+      // (reuniões) O aviso do canto (aviso.html) com um pedido para entrar na reunião, sem ligação tocando.
+      return {
+        state: {
+          ...principal(),
+          reuniao: {
+            pedido: { id: '8899aabbccddeeff', nome: 'Maria Lima', assunto: 'Planejamento de dezembro' },
+            escondida: true,
+          },
+        },
+      };
     case 'contatos-empresa':
       return comPlanilhaDaEmpresa();
     case 'empresa-antes-do-estado':
@@ -634,6 +645,7 @@ export const SCENARIO_NAMES = [
   'consulta',
   'conferencia',
   'aviso',
+  'aviso-pedido',
   'tocando-antes-de-carregar',
   'video',
   'video-voz-camera',
