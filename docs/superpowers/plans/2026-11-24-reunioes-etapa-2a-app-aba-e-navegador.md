@@ -16,6 +16,8 @@
 
 **Aprovado pelo responsável em 25/11/2026, às 08:49 ("segue"):** o plano, as escolhas da seção "As escolhas deste plano" e o método, o mesmo dos outros planos desta etapa: um agente novo constrói cada tarefa, e outro a revisa antes da próxima; no fim, uma revisão de tudo (superpowers:subagent-driven-development). Antes da Task 1 vem o acerto pequeno da página que ele aprovou na mesma resposta (`docs/superpowers/plans/2026-11-25-reunioes-etapa-2a-aviso-do-link-vencido.md`).
 
+**Emenda de 25/11/2026, depois da aprovação (não muda o que o app faz):** a Task 1 ganhou um terceiro acerto de teste. O `build` do GitHub no commit `5d563c0`, só de documentos, falhou uma vez num teste de tela do chat: o "+" da lista clicado antes de o chat acabar de entrar. A causa e o acerto estão na Task 1; só arquivos de `windows/ui/tests` mudam. O detalhe do app que o teste mostrou (o menu do "+" aberto no primeiro instante fecha sozinho) fica como está, e vai ao responsável como um ponto pequeno, para o plano 3b.
+
 ## Global Constraints
 
 - **O lugar:** a branch `reunioes-etapa-2`. Cada tarefa dá commit, por caminho. Quem envia ao GitHub é quem conduz o plano.
@@ -87,7 +89,7 @@ O que a spec pede e os testes das tarefas poderiam deixar passar, do mais prová
   | O C++ portátil | `cmake -S tests/desktop -B work/build-desktop -DCMAKE_BUILD_TYPE=Release && cmake --build work/build-desktop -j2 && work/build-desktop/desktop_tests` | 500 casos (510 depois da Task 3, que traz para cá os 10 do `tests/win/test_shell_state.cpp`) |
   | Um caso só do C++ | `work/build-desktop/desktop_tests -tc="*meeting*"` | — |
   | Os tipos da interface | `cd windows/ui && npm run typecheck` | sem erro |
-  | A interface | `cd windows/ui && npm run build && npx playwright test` | 1413 testes, uns 9 minutos |
+  | A interface | `cd windows/ui && npm run build && npx playwright test` | 1413 testes hoje (1414 depois da Task 1), uns 9 minutos |
   | Um arquivo da interface | `cd windows/ui && npm run build && npx playwright test tests/reunioes/<arquivo>` | — |
   | Os textos do código | `python3 build/check_source_text.py` | `ok` |
   | O Windows | o workflow `build` do GitHub, depois do push de quem conduz | verde no `4bca909` (na segunda tentativa) |
@@ -120,7 +122,7 @@ O que a spec deixa para quem constrói e este plano decide. O responsável as co
 17. **Uma resposta do aviso só vale para o pedido que ele mostra:** uma resposta atrasada, de um pedido que já saiu, é ignorada.
 18. **O servidor não avisa o computador que saiu da reunião** (os eventos vão só a quem ficou nela). Por isso o app confere, a cada 10 s, cada reunião aberta no navegador em que o computador está (o `participantes`): o pedido que ficou no aviso do Windows sai em até 10 s depois de a pessoa sair da reunião, e o app fica sabendo que ela saiu.
 19. **O app fechado e aberto de novo com a reunião aberta no navegador** só volta a cuidar dela (o aviso e a pausa) quando algo muda nela (alguém entra, sai ou pede para entrar). É o que a spec diz (7.9): o app não guarda no disco as reuniões que abriu.
-20. **Os dois testes do app que falharam uma vez no GitHub em 24/11** são acertados na Task 1, antes de qualquer teste novo (a seção 5 das entradas tem a causa de cada um). O terceiro teste intermitente de lá (a contagem das não lidas na lista do chat) pode ser do app, e não do teste: fica para o plano 3b, antes do `0.5.0`.
+20. **Os dois testes do app que falharam uma vez no GitHub em 24/11** são acertados na Task 1, antes de qualquer teste novo (a seção 5 das entradas tem a causa de cada um). O terceiro teste intermitente de lá (a contagem das não lidas na lista do chat) pode ser do app, e não do teste: fica para o plano 3b, antes do `0.5.0`. Um quarto teste intermitente, achado em 25/11 depois da aprovação (o "+" da lista do chat clicado antes de o chat entrar), é acertado na mesma Task 1, só nos testes.
 21. **O que fica para o plano 3b:** o "Entrar" e a reunião dentro da janela do app, com o que a prova no WebView2 deixou para decidir (a seção 7.2 das entradas); o `starsonic://` e o instalador; o link de reunião numa conversa do chat; as faixas, o cartão da ligação e o "Telefone"; o aviso com a reunião do app escondida; a fumaça do Windows com a aba; a versão `0.5.0`, o roteiro de testes e as notas.
 
 ## Os nomes novos da ponte
@@ -177,22 +179,25 @@ Valem para todas as tarefas. O `docs/ponte-windows.md` os ganha na Task 13.
 
 ---
 
-### Task 1: Os testes do app que dirigem o relógio o pausam antes, e o teste da planilha espera o eco
+### Task 1: Os testes do app que dirigem o relógio o pausam antes, o teste da planilha espera o eco, e o "+" do chat espera o chat entrar
 
-Dois testes de tela do app falharam uma vez no GitHub em 24/11/2026, num commit que não mexe no app. As causas (a seção 5 das entradas):
+Três testes de tela do app falharam uma vez cada no GitHub, em commits que não mexem no app: dois em 24/11/2026 e um em 25/11. As causas (as duas primeiras estão na seção 5 das entradas):
 
 - **O relógio de mentira do Playwright `1.56.1`, com o tempo correndo, pode voltar para trás.** Depois do `page.clock.install()`, o tique de tempo real do próprio Playwright roda ao mesmo tempo que o `runFor` do teste, e cada rodada termina pondo o relógio na hora-alvo dela, sem conferir se isso é voltar (o `_runTo` e o `_advanceNow` do `node_modules/playwright-core/lib/generated/clockSource.js`). Um timer de 1,5 s armado depois de um `runFor(20000)` fica a 20 s de distância. Reproduzido fora do repositório: 202 de 300 rodadas com o relógio correndo, nenhuma de 200 com ele pausado antes.
 - **O teste da planilha da empresa digita dentro da janela do eco de um Salvar:** o `fill('')` seleciona o texto e aperta Delete em dois passos, e o eco do Salvar anterior (entregue por um `setTimeout(0)` e aplicado num `useEffect`) reescreve o campo entre os dois.
+- **A lista do chat é recriada quando o chat acaba de entrar, e um menu do "+" aberto antes disso fecha** (achado em 25/11, depois de o plano aprovado). O `windows/ui/src/main.tsx` desenha a lista com `key={vistaChat.eu?.id ?? 0}`: a chave vai de 0 para o id da pessoa quando o entrar termina, e o `useState` do menu, que mora no `src/chat/telas/Lista.tsx`, se perde. O "+" é o único controle da lista que já existe com o chat entrando. No `tests/chat/fotos.spec.ts` ("chat-nova-conversa", em 400×720, no escuro), o clique no "+" saiu 38 ms depois do `body[data-pronto]`, e o item "Nova conversa" não veio em 60 s. Lido no rastro e no código, não reproduzido. O acerto é dos testes: eles esperam o chat entrar antes de clicar no "+". O app fica como está (mudar o que a tela mostra é do responsável; o plano 3b leva a pergunta).
 
 **Files:**
-- Modify: `windows/ui/tests/chat/lista.spec.ts` (os três testes que chamam o `page.clock.install()`)
+- Modify: `windows/ui/tests/chat/lista.spec.ts` (os três testes que chamam o `page.clock.install()`; o teste novo do `chatDentro`; os cliques no "+")
 - Modify: `windows/ui/tests/chat/admin.spec.ts` (o teste que chama o `page.clock.install()`)
 - Modify: `windows/ui/tests/chat/conversa.spec.ts` (o teste que instala o relógio e não chama o `pararORelogio`)
 - Modify: `windows/ui/tests/contatos.spec.ts` (o teste "the company sheet field saves the link")
+- Modify: `windows/ui/tests/chat/abrir.ts` (o `chatDentro` e o `abrirOMais`, novos)
+- Modify: `windows/ui/tests/chat/fotos.spec.ts`, `windows/ui/tests/chat/grupo.spec.ts`, `windows/ui/tests/chat/nova-conversa.spec.ts`, `windows/ui/tests/chat/ponta-a-ponta.spec.ts` (os cliques no "+" da lista do chat)
 
 **Interfaces:**
 - Consumes: o `pararORelogio(page)` do `tests/chat/abrir.ts` (o `page.clock.pauseAt` um segundo adiante) e o `depoisDoQueChegou(page)` do `tests/helpers.ts`.
-- Produces: a regra para todas as tarefas seguintes: um teste que usa o `page.clock` chama o `pararORelogio(page)` depois de a página carregar e antes do primeiro `runFor` ou `fastForward`.
+- Produces: duas regras para todas as tarefas seguintes. Um teste que usa o `page.clock` chama o `pararORelogio(page)` depois de a página carregar e antes do primeiro `runFor` ou `fastForward`. E um teste abre o menu do "+" da lista do chat pelo `abrirOMais(page)`. No `tests/chat/abrir.ts`: `chatDentro(page: Page): Promise<void>` e `abrirOMais(page: Page): Promise<void>`.
 
 Nenhum arquivo de `windows/ui/src` muda nesta tarefa.
 
@@ -209,19 +214,73 @@ Em cada teste achado: `await pararORelogio(page);` depois de a página carregar 
 
 No `tests/contatos.spec.ts`, em "the company sheet field saves the link": depois de cada `esperarComando(page, { cmd: 'setCompanyList', … })` que é seguido de outro `fill`, chame `await depoisDoQueChegou(page);`. As conferências não mudam.
 
-- [ ] **Step 4: Rode os quatro arquivos quinze vezes cada**
+- [ ] **Step 4: Escreva o teste do `chatDentro` e veja falhar**
 
-Run: `cd windows/ui && npm run build && npx playwright test tests/chat/lista.spec.ts tests/chat/admin.spec.ts tests/chat/conversa.spec.ts tests/contatos.spec.ts --repeat-each=15`
+No `tests/chat/lista.spec.ts`, ao lado de "a request with no answer gives up after 20 s and tries again" (o mesmo jeito de segurar o entrar), com o `chatDentro` e o `abrirOMais` importados do `./abrir`:
+
+```ts
+test('chatDentro waits for the chat to finish entering, and then the + menu stays open', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO]);
+  // O entrar fica preso: o chat está entrando, e o "+" já está na tela.
+  const presos: Route[] = [];
+  await page.route(`${baseDoChat()}/api/v1/pessoas/eu`, (rota) => {
+    presos.push(rota);
+  });
+  await abrirNoChat(page, { chave: pessoas[0].chave, ...RECEPCAO });
+  await expect.poll(() => presos.length).toBe(1);
+  await expect(page.getByRole('button', { name: 'Nova conversa ou novo grupo' })).toBeVisible();
+
+  let dentro = false;
+  const espera = chatDentro(page).then(() => {
+    dentro = true;
+  });
+  await depoisDoQueChegou(page);
+  expect(dentro).toBe(false);
+
+  await presos[0].continue();
+  await espera;
+  await expect(page.getByRole('heading', { name: 'Nenhuma conversa ainda' })).toBeVisible();
+  // Com o chat dentro, a lista não é mais recriada: o menu aberto fica aberto.
+  await abrirOMais(page);
+  await depoisDoQueChegou(page);
+  await expect(page.getByRole('menu', { name: 'Nova conversa ou novo grupo' }).getByRole('menuitem')).toHaveCount(2);
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+```
+
+Run: `cd windows/ui && npm run build && npx playwright test tests/chat/lista.spec.ts -g "chatDentro"`
+Expected: FAIL (o `chatDentro` e o `abrirOMais` não existem no `abrir.ts`).
+
+- [ ] **Step 5: Os dois ajudantes, e os cliques no "+" por eles**
+
+No `tests/chat/abrir.ts`:
+
+- `export async function chatDentro(page: Page): Promise<void>`: espera à vista o título "Nenhuma conversa ainda" ou a busca "Procurar conversa" (um `locator.or`). Um dos dois só existe com o chat dentro (a situação `pronto` do `src/chat/telas/Lista.tsx`).
+- `export async function abrirOMais(page: Page): Promise<void>`: o `chatDentro` e o clique no botão "Nova conversa ou novo grupo".
+
+O comentário de cada um diz por quê (a lista é recriada quando o chat entra, e o menu aberto antes fecha).
+
+Os cliques no "+" passam pelo `abrirOMais`: o `peloMais` do `fotos.spec.ts`, o `irParaONovoGrupo` do `grupo.spec.ts`, o `irParaANovaConversa` do `nova-conversa.spec.ts` e os cliques diretos (`grep -n "Nova conversa ou novo grupo' })" tests/chat/*.spec.ts`: no `lista.spec.ts`, no `ponta-a-ponta.spec.ts` e no `fotos.spec.ts`). No teste do `lista.spec.ts` que confere o `aria-expanded` do "+" antes de clicar, o `chatDentro(page)` vem antes dessa conferência, e o clique continua sendo o do teste. As conferências dos testes não mudam.
+
+Run: `cd windows/ui && npx playwright test tests/chat/lista.spec.ts -g "chatDentro"`
+Expected: PASS.
+
+- [ ] **Step 6: Rode os arquivos mexidos quinze vezes cada**
+
+Run: `cd windows/ui && npm run build && npx playwright test tests/chat/lista.spec.ts tests/chat/admin.spec.ts tests/chat/conversa.spec.ts tests/contatos.spec.ts tests/chat/grupo.spec.ts tests/chat/nova-conversa.spec.ts tests/chat/ponta-a-ponta.spec.ts --repeat-each=15`
 Expected: todos passam, nas quinze vezes.
 
-- [ ] **Step 5: Rode a suíte inteira da interface e dê o commit**
+Run: `cd windows/ui && npx playwright test tests/chat/fotos.spec.ts -g "chat-vazio-menu|chat-nova-conversa|chat-novo-grupo" --repeat-each=15`
+Expected: todos passam, nas quinze vezes (as três telas do livro de fotos que abrem o "+").
+
+- [ ] **Step 7: Rode a suíte inteira da interface e dê o commit**
 
 Run: `cd windows/ui && npm run typecheck && npx playwright test`
-Expected: 1413 passam.
+Expected: 1414 passam (os 1413 de antes e o teste do `chatDentro`).
 
 ```bash
-git add windows/ui/tests/chat/lista.spec.ts windows/ui/tests/chat/admin.spec.ts windows/ui/tests/chat/conversa.spec.ts windows/ui/tests/contatos.spec.ts
-git commit -m "test(ui): o relógio pausado antes do runFor, e o eco do Salvar"
+git add windows/ui/tests/chat/lista.spec.ts windows/ui/tests/chat/admin.spec.ts windows/ui/tests/chat/conversa.spec.ts windows/ui/tests/contatos.spec.ts windows/ui/tests/chat/abrir.ts windows/ui/tests/chat/fotos.spec.ts windows/ui/tests/chat/grupo.spec.ts windows/ui/tests/chat/nova-conversa.spec.ts windows/ui/tests/chat/ponta-a-ponta.spec.ts
+git commit -m "test(ui): relógio pausado, eco do Salvar e o \"+\" com o chat dentro"
 ```
 
 ---
@@ -517,7 +576,7 @@ Expected: FAIL (o cenário `aviso-pedido` não existe).
 - [ ] **Step 4: Rode e veja passar**
 
 Run: `cd windows/ui && npm run typecheck && npm run build && npx playwright test`
-Expected: os 1413 de antes e os novos passam.
+Expected: os 1414 de antes e os novos passam.
 
 - [ ] **Step 5: Commit**
 
