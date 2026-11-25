@@ -80,6 +80,12 @@ std::optional<ShellStatus> ReadShellStatus(const std::string& message) {
         const auto server = account->find("servidor");
         if (server != account->end() && server->is_string()) status.server = server->get<std::string>();
     }
+    const auto meeting = state->find("reuniao");
+    if (meeting != state->end() && meeting->is_object()) {
+        const auto request = meeting->find("pedido");
+        status.meetingRequest = request != meeting->end() && request->is_object();
+        status.meetingHidden = Flag(*meeting, "escondida");
+    }
     const auto missed = state->find("perdidas");
     if (missed != state->end() && missed->is_number_integer()) status.missed = missed->get<int>();
     const auto admin = state->find("admin");
@@ -91,7 +97,8 @@ std::optional<ShellStatus> ReadShellStatus(const std::string& message) {
 }
 
 bool ShowsNotice(const ShellStatus& status, bool inFront) {
-    return status.ringing && (!inFront || status.doorphoneSecond);
+    return (status.ringing && (!inFront || status.doorphoneSecond)) ||
+           (status.meetingRequest && (!inFront || status.meetingHidden));
 }
 
 TrayIcon ChooseTrayIcon(const ShellStatus& status) {

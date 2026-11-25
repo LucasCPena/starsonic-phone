@@ -348,3 +348,75 @@ TEST_CASE("only the microphone and the autoplay of the app origin are allowed") 
     CHECK_FALSE(AllowWebPermission(WebPermission::Microphone, "https://starsonic.com.br/"));
     CHECK_FALSE(AllowWebPermission(WebPermission::Autoplay, ""));
 }
+
+TEST_CASE("a meeting request shows the notice out of front, or with the meeting hidden") {
+    const std::string request = R"("pedido":{"id":"8899aabbccddeeff","nome":"Maria Lima","assunto":null})";
+    auto with = [&](const std::string& meeting) {
+        return ReadShellStatus(State(std::string(kConnected) + R"(,"ligacao":null)" + meeting));
+    };
+    // O pedido com a reuniao no navegador do app (escondida false): so fora da frente.
+    std::optional<ShellStatus> s = with(R"(,"reuniao":{)" + request + R"(,"escondida":false})");
+    REQUIRE(s.has_value());
+    CHECK(s->meetingRequest);
+    CHECK_FALSE(s->meetingHidden);
+    CHECK(ShowsNotice(*s, false));
+    CHECK_FALSE(ShowsNotice(*s, true));
+    // Com a reuniao escondida: tambem com a janela na frente.
+    s = with(R"(,"reuniao":{)" + request + R"(,"escondida":true})");
+    REQUIRE(s.has_value());
+    CHECK(s->meetingRequest);
+    CHECK(s->meetingHidden);
+    CHECK(ShowsNotice(*s, false));
+    CHECK(ShowsNotice(*s, true));
+    // O assunto de texto.
+    s = with(R"(,"reuniao":{"pedido":{"id":"8899aabbccddeeff","nome":"Maria Lima","assunto":"Planejamento"},)"
+             R"("escondida":true})");
+    REQUIRE(s.has_value());
+    CHECK(s->meetingRequest);
+    // Sem o "reuniao", com o "reuniao" sem o "pedido" e com o "pedido" que nao e objeto: nenhum pedido.
+    for (const std::string& meeting : {std::string(), std::string(R"(,"reuniao":{"escondida":true})"),
+                                       std::string(R"(,"reuniao":{"pedido":null,"escondida":true})"),
+                                       std::string(R"(,"reuniao":{"pedido":"x","escondida":true})"),
+                                       std::string(R"(,"reuniao":{"pedido":[1],"escondida":true})"),
+                                       std::string(R"(,"reuniao":null)"), std::string(R"(,"reuniao":"x")")}) {
+        s = with(meeting);
+        REQUIRE(s.has_value());
+        CHECK_FALSE(s->meetingRequest);
+        CHECK_FALSE(ShowsNotice(*s, false));
+        CHECK_FALSE(ShowsNotice(*s, true));
+    }
+}
+
+TEST_CASE("a ringing call still shows as before, with or without a meeting request") {
+    const std::string ringing = R"(,"ligacao":{"top":{"id":4,"phase":"ringing"},"second":null,"secondKind":"none",)"
+                                R"("conference":false})";
+    const std::string doorphone =
+        R"(,"ligacao":{"top":{"id":4,"phase":"active"},"second":{"id":5,"phase":"ringing","video":{"cedo":true}},)"
+        R"("secondKind":"ringing","conference":false})";
+    const std::string request = R"(,"reuniao":{"pedido":{"id":"8899aabbccddeeff","nome":"Maria Lima","assunto":null},)"
+                                R"("escondida":false})";
+    const std::string hiddenRequest = R"(,"reuniao":{"pedido":{"id":"8899aabbccddeeff","nome":"Maria Lima",)"
+                                      R"("assunto":"Planejamento"},"escondida":true})";
+    // Sem pedido: como hoje.
+    std::optional<ShellStatus> s = ReadShellStatus(State(std::string(kConnected) + ringing));
+    REQUIRE(s.has_value());
+    CHECK_FALSE(s->meetingRequest);
+    CHECK(ShowsNotice(*s, false));
+    CHECK_FALSE(ShowsNotice(*s, true));
+    s = ReadShellStatus(State(std::string(kConnected) + doorphone));
+    REQUIRE(s.has_value());
+    CHECK(ShowsNotice(*s, false));
+    CHECK(ShowsNotice(*s, true));
+    // Com as duas coisas: o aviso aparece fora da frente; na frente, so com a reuniao escondida (a pagina do aviso
+    // escolhe o que desenhar).
+    s = ReadShellStatus(State(std::string(kConnected) + ringing + request));
+    REQUIRE(s.has_value());
+    CHECK(s->ringing);
+    CHECK(s->meetingRequest);
+    CHECK(ShowsNotice(*s, false));
+    CHECK_FALSE(ShowsNotice(*s, true));
+    s = ReadShellStatus(State(std::string(kConnected) + ringing + hiddenRequest));
+    REQUIRE(s.has_value());
+    CHECK(ShowsNotice(*s, false));
+    CHECK(ShowsNotice(*s, true));
+}

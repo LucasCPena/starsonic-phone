@@ -54,7 +54,8 @@ target_link_libraries(desktop_tests PRIVATE miniz SQLite::SQLite3 BZip2::BZip2 T
 # monitor de rede (o teste em tests/win/test_network_monitor.cpp) e o canal de atualizacao, (0.2.0) as regras do chat
 # no executavel (ChatFiles: o numero no icone, o nome do arquivo baixado e o corte do aviso) e (0.3.0) o video no
 # executavel (a memoria de uma vista, o Bunzip2 do modulo H.264, a rota dos quadros, o VideoSink e a decisao da
-# privacidade da camera): C++ portatil, testado tambem no Linux.
+# privacidade da camera), (0.5.0) o endereco de uma reuniao no navegador (MeetingLinks) e a regra do aviso e da
+# bandeja (ShellState): C++ portatil, testado tambem no Linux.
 target_sources(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src/WindowFit.cpp
   ${STARSONIC_DIR}/../windows/app/src/Links.cpp
   ${STARSONIC_DIR}/../windows/app/src/BrowserRestarts.cpp
@@ -68,7 +69,11 @@ target_sources(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src/WindowF
   ${STARSONIC_DIR}/../windows/app/src/FrameRouter.cpp
   ${STARSONIC_DIR}/../windows/app/src/VideoSink.cpp
   ${STARSONIC_DIR}/../windows/app/src/CameraPrivacy.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_network_monitor.cpp)
+  ${STARSONIC_DIR}/../windows/app/src/MeetingLinks.cpp
+  ${STARSONIC_DIR}/../windows/app/src/ShellState.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_network_monitor.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_meeting_links.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_shell_state.cpp)
 target_include_directories(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src)
 
 if(MSVC)
@@ -89,14 +94,12 @@ if(WIN32)
     ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_diag_log.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_links.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_single_instance.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_shell_state.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_autostart.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_diagnostics.cpp
     ${WINDOWS_APP_SRC}/DpapiCipher.cpp
     ${WINDOWS_APP_SRC}/WinFiles.cpp
     ${WINDOWS_APP_SRC}/DiagLog.cpp
     ${WINDOWS_APP_SRC}/SingleInstance.cpp
-    ${WINDOWS_APP_SRC}/ShellState.cpp
     ${WINDOWS_APP_SRC}/Autostart.cpp
     ${WINDOWS_APP_SRC}/Diagnostics.cpp
     ${WINDOWS_APP_SRC}/ChatSave.cpp)

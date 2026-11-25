@@ -61,6 +61,7 @@
 #include "LegacyCrypto.h"
 #include "Links.h"
 #include "MainWindow.h"
+#include "MeetingLinks.h"
 #include "NetworkMonitor.h"
 #include "OpenH264Pin.h"
 #include "OpenH264Shim.h"
@@ -529,6 +530,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     hooks.post = [&window](const std::string& json) { window.PostToWeb(json); };
     hooks.log = log;
     hooks.openUrl = [&window](const std::string& url) { window.RunOnWindow([url] { OpenUrl(url); }); };
+    // (0.5.0) A reuniao no navegador padrao. Nada dela (o codigo, o passe) vai ao diagnostico.
+    hooks.openMeeting = [&window](const std::string& code, const std::string& pass) {
+        const std::string url = MeetingBrowserUrl(code, pass);
+        if (url.empty()) return;
+        window.RunOnWindow([url] { OpenUrl(url); });
+    };
     hooks.minimize = [&window] { window.RunOnWindow([&window] { window.Minimize(); }); };
     hooks.closeToTray = [&window] { window.RunOnWindow([&window] { window.CloseToTray(); }); };
     // (0.3.0) O modo da janela do video ("normal", "grande", "telaCheia"): da thread de comandos para a da janela.

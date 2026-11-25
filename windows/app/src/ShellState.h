@@ -25,6 +25,10 @@ struct ShellStatus {
     // (0.3.0-rc.2) A recebida tocando e a segunda (secondKind "ringing", fora da conferencia, com a de cima sem
     // tocar) e o second.video.cedo e true: a imagem de um Porteiro chegando antes do atender.
     bool doorphoneSecond = false;
+    // (0.5.0) Um pedido de quem quer entrar numa reuniao para o aviso mostrar (reuniao.pedido e um objeto), e se a
+    // reuniao esta escondida (reuniao.escondida: aberta no navegador, o app nao a ve).
+    bool meetingRequest = false;
+    bool meetingHidden = false;
 };
 
 // O estado de uma mensagem {"v":1,"type":"state",...}; nada para as outras (toast, ring, update) e texto invalido.
@@ -32,7 +36,8 @@ std::optional<ShellStatus> ReadShellStatus(const std::string& message);
 
 // O aviso de ligacao recebida aparece: com uma recebida tocando e a janela fora da frente; (0.3.0-rc.2) com a janela na
 // frente, so com o porteiro tocando como a segunda ligacao, com a imagem dele chegando (o doorphoneSecond; decisao do
-// responsavel de 11/11/2026).
+// responsavel de 11/11/2026). (0.5.0) Tambem com um pedido para entrar numa reuniao e a janela fora da frente, ou com a
+// reuniao escondida (aberta no navegador).
 bool ShowsNotice(const ShellStatus& status, bool inFront);
 
 // Os icones da bandeja (spec da W1, 7.4; rc.2: o conectado com o ponto verde e o "em ligacao" com o vermelho).

@@ -179,6 +179,9 @@ bool MainWindow::Create(HINSTANCE instance, const Options& options, Callbacks ca
     noticeCallbacks.command = [this](const std::string& json) {
         // O Atender do aviso traz a janela para a frente, na ligacao (spec da W1, 7.2).
         if (IsCommand(json, "answer")) BringToFront();
+        // (0.5.0) O clique fora dos botoes do aviso de um pedido para entrar traz a janela para a frente; o nucleo
+        // abre a aba Reunioes. O Aceitar, o Recusar e o fechar (reuniaoResposta) nao trazem.
+        if (IsCommand(json, "reuniaoMostrar")) BringToFront();
         // (0.3.0) O aviso carregou (a abertura, o recarregar ou o navegador refeito): a memoria do porteiro vai a ele.
         if (videoSink_ && IsCommand(json, "ready")) videoSink_->PageReady(true);
         if (callbacks_.noticeCommand) callbacks_.noticeCommand(json);
