@@ -9,7 +9,7 @@
 // pergunta do Encerrar para todos) ficam desligadas, e a linha do alto diz que os pedidos voltam. Quem deixou de cuidar
 // da reunião vê o aviso no lugar das listas e do pé. Antes de a primeira lista chegar, a parte de quem está na reunião
 // não diz zero: ela fica escondida, e o Encerrar para todos, desligado.
-import { AVISO_SEM_CUIDAR, fraseDoEncerrar, nomeNaLista } from './colega.js';
+import { AVISO_DO_LINK_VENCIDO, AVISO_SEM_CUIDAR, fraseDoEncerrar, nomeNaLista } from './colega.js';
 import { podeResponder } from './estado.js';
 
 /** O painel ao lado é do PC: a janela de 900 px ou mais, com ponteiro de mouse (a regra do painel do chat). */
@@ -112,9 +112,6 @@ export function criarParticipantes({ raiz, fundo, relogio, aoClique }) {
     arrumar();
     if (aberto && raiz.dataset.modo === 'cobre' && !raiz.contains(document.activeElement)) titulo.focus();
   });
-
-  // O aviso inteiro, letra por letra, é o que o leitor de tela também ouve: ele vem do colega.js, sempre como texto.
-  semCuidar.textContent = AVISO_SEM_CUIDAR;
 
   // ---- As linhas. ----
 
@@ -284,6 +281,8 @@ export function criarParticipantes({ raiz, fundo, relogio, aoClique }) {
     // Sem o canal, com a página tentando voltar; quem deixou de cuidar tem o aviso, e não a linha.
     const desligadas = doColega && !podeResponder(e);
     semCanal.hidden = !desligadas || e.semCuidar;
+    // O aviso inteiro (o do link ou o de sempre) vem do colega.js, sempre como texto.
+    semCuidar.textContent = e.linkVenceu ? AVISO_DO_LINK_VENCIDO : AVISO_SEM_CUIDAR;
     semCuidar.hidden = !(doColega && e.semCuidar);
     pe.hidden = doColega && e.semCuidar;
     encerrar.disabled = desligadas || e.lista.participantes.length === 0;

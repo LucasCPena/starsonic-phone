@@ -3,7 +3,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  AVISO_DO_LINK_VENCIDO,
+  AVISO_SEM_CUIDAR,
   LISTA_VAZIA,
+  TEXTO_DO_LINK_VENCIDO,
+  TITULO_DO_LINK_VENCIDO,
   ditoDaResposta,
   ehWindows,
   fraseDoEncerrar,
@@ -206,4 +210,24 @@ test('ehWindows', () => {
   ]) {
     assert.equal(ehWindows(navegador), esperado, qual);
   }
+});
+
+test('o aviso do link que deixou de valer é o texto aprovado', () => {
+  assert.equal(TITULO_DO_LINK_VENCIDO, 'O link desta reunião deixou de valer');
+  assert.equal(
+    TEXTO_DO_LINK_VENCIDO,
+    'Você continua na reunião, mas não pode mais aceitar pedidos nem encerrar. Se sair, não consegue voltar.',
+  );
+  assert.equal(
+    AVISO_DO_LINK_VENCIDO,
+    'O link desta reunião deixou de valer. Você continua na reunião, mas não pode mais aceitar pedidos nem ' +
+      'encerrar. Se sair, não consegue voltar.',
+  );
+});
+
+test('o aviso de sempre segue com o texto de sempre', () => {
+  assert.equal(
+    AVISO_SEM_CUIDAR,
+    'Você deixou de cuidar desta reunião. Para aceitar pedidos ou encerrar, saia e abra a reunião de novo pelo app.',
+  );
 });

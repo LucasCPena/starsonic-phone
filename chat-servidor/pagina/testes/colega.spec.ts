@@ -284,6 +284,35 @@ test('sem o canal o Aceitar desliga, e a chave recusada mostra o aviso de quem d
   expect(volta.tipos()).toEqual(['voltar']);
 });
 
+test('o link que deixou de valer mostra o aviso do link, e não o de sempre', async ({ page }) => {
+  const rede = await RedeFalsa.instalar(page, MARCADA);
+  const canal = await entrarComoColega(page, rede);
+  mandarLista(canal, { pedidos: [pedidoDe(MARIA)] });
+  await expect(tituloDoCartao(page)).toHaveText('Maria Lima quer entrar');
+  // O canal cai, a página tenta religar, e a resposta do voltar é o linkInvalido.
+  await canal.fechar(1006);
+  await page.clock.runFor(2_000);
+  const volta = await rede.canalNumero(2);
+  await expect.poll(() => volta.tipos()).toEqual(['voltar']);
+  volta.mandar({ tipo: 'linkInvalido' });
+  await expect.poll(() => volta.fechadoPelaPagina).not.toBeUndefined();
+  // No lugar do cartão: a região com o nome do título, o título e o texto; o leitor de tela ouve os dois.
+  const titulo = 'O link desta reunião deixou de valer';
+  const texto =
+    'Você continua na reunião, mas não pode mais aceitar pedidos nem encerrar. Se sair, não consegue voltar.';
+  const noLugar = page.getByRole('region', { name: titulo });
+  await expect(noLugar.getByRole('heading', { level: 2, name: titulo })).toBeVisible();
+  await expect(noLugar.getByText(texto, { exact: true })).toBeVisible();
+  await expect(anuncio(page)).toHaveText(`${titulo}. ${texto}`);
+  await expect(cartao(page)).toBeHidden();
+  // Nada do aviso de sempre está à vista.
+  await expect(page.getByText('saia e abra a reunião de novo pelo app')).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Você deixou de cuidar desta reunião' })).toHaveCount(0);
+  // Nada foi pelos canais.
+  expect(respostas(canal)).toEqual([]);
+  expect(respostas(volta)).toEqual([]);
+});
+
 test('o nome não vira HTML', async ({ page }) => {
   const canal = await colegaNaReuniao(page);
   const nome = '<img src=x onerror=alert(1)>';

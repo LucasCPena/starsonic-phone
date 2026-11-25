@@ -80,7 +80,9 @@
 // é de fora segue na reunião sem o canal, como hoje. O colega, com a ligação no ar, deixa de cuidar da reunião (o
 // semCuidar): o canal dele não volta mais, e sem ele não há como aceitar, recusar, tirar nem encerrar. A lista sai, as
 // perguntas fecham, e o leitor de tela ouve o aviso; a ligação e o painel aberto ficam. O mesmo vale para a chave
-// recusada no religar e para o link que deixou de valer no voltar (a resposta, ou o 404 do abrir). Com o semCuidar, o
+// recusada no religar. O link que deixou de valer no voltar (a resposta, ou o 404 do abrir) é o semCuidar também, mas
+// com o motivo dele (o linkVenceu) e o aviso dele: a pessoa continua na reunião e, se sair, não consegue voltar. Com o
+// semCuidar, o
 // Encerrar para todos não abre a pergunta, como antes de a primeira lista chegar. Ele acaba com a saída da tela da
 // reunião, por qualquer fim, e onde o canal volta a ser o da pessoa: o voltou da volta das duas (o link que deixou de
 // valer guarda a chave) e o começo da entrada de novo.
@@ -122,7 +124,14 @@
 // valem na hora, e a pausa fica guardada até ela entrar; fora da reunião e da entrada nela, a pausa e o bloqueio não
 // fazem nada, e a saída (por qualquer fim) os desfaz.
 
-import { AVISO_SEM_CUIDAR, LISTA_VAZIA, ditoDaResposta, lerLista, tituloDoCartao } from './colega.js';
+import {
+  AVISO_DO_LINK_VENCIDO,
+  AVISO_SEM_CUIDAR,
+  LISTA_VAZIA,
+  ditoDaResposta,
+  lerLista,
+  tituloDoCartao,
+} from './colega.js';
 import { MAX_MENSAGENS, textoLimpo } from './mensagens.js';
 import { lerPalco } from './palco.js';
 
@@ -319,6 +328,7 @@ export function inicial() {
     cheiaAoAceitar: false,
     respondendo: Object.freeze([]),
     semCuidar: false, // o colega continua na reunião, mas o canal dele não volta mais: o aviso está à vista
+    linkVenceu: false, // o motivo do semCuidar é o link que deixou de valer: o aviso é o do link
     // A entrada de novo sozinha, dentro do app: passe (o pronta saiu), abrindo (o abrir com o passe saiu, ou o canal
     // abre) ou entrando (o entrar saiu); fora dela, null.
     reentrando: null,
@@ -487,7 +497,7 @@ function soNaReuniao(e) {
     f = { ...f, gente: false, tirando: null, encerrando: false, cheiaAoAceitar: false };
   }
   // O deixou de cuidar é da tela da reunião: a próxima entrada começa sem ele.
-  if (f.tela !== 'reuniao' && f.semCuidar) f = { ...f, semCuidar: false };
+  if (f.tela !== 'reuniao' && f.semCuidar) f = { ...f, semCuidar: false, linkVenceu: false };
   // A entrada de novo sozinha também: a saída (a pessoa saiu, a ligação caiu) a interrompe, e o passe que ela esperava
   // é esquecido, para o prazo dele não levar ninguém à entrada de quem é de fora.
   if (f.tela !== 'reuniao' && f.reentrando !== null) f = { ...f, reentrando: null, esperandoPasse: false };
@@ -1249,7 +1259,8 @@ function entrouDeNovo(e, m) {
 // O voltou: o canal é de novo o da pessoa, com a chave nova, e o colega volta a cuidar da reunião (o semCuidar sai). Na
 // volta depois da conexão caída, a tentativa segue com o senha; no religar, ele acabou.
 function voltou(e, volta) {
-  const mudancas = { canal: 'aberto', chave: chaveDe(e.chave.participante, volta), semCuidar: false };
+  const chave = chaveDe(e.chave.participante, volta);
+  const mudancas = { canal: 'aberto', chave, semCuidar: false, linkVenceu: false };
   if (e.reconectando > 0) return com(e, { ...mudancas, principal: 'pedindo' }, mandar({ tipo: 'senha' }));
   return com(e, { ...mudancas, religando: 0 });
 }
@@ -1267,7 +1278,7 @@ function chaveRecusada(e) {
 // de cuidar dela), e a ligação decide o fim; a chave fica para a volta das duas. Sem a ligação, é o fim.
 function linkInvalidoDoVoltar(e) {
   if (e.principal !== 'noAr') return terminar(e, 'linkInvalido');
-  return e.colega !== null ? deixarDeCuidar(e) : pararDeReligar(e);
+  return e.colega !== null ? deixarDeCuidar(e, true) : pararDeReligar(e);
 }
 
 // A senha da principal chegou: liga, ou a guarda até a mídia chegar. O ligar sobe com a câmera de agora, que fica
@@ -1405,22 +1416,25 @@ const SEM_O_CANAL_DO_COLEGA = Object.freeze({
 
 // O colega deixa de cuidar da reunião: o religar para, como no pararDeReligar, e o que só o canal servia sai com ele.
 // A entrada de novo sozinha, se havia uma, acaba, e o passe esperado é esquecido. O leitor de tela ouve o aviso, depois
-// do fechar do canal. A ligação segue, e o painel aberto fica aberto.
-function deixarDeCuidar(e) {
+// do fechar do canal. A ligação segue, e o painel aberto fica aberto. O motivo do link que deixou de valer (o
+// linkVenceu) tem o aviso dele; e, com ele já em vigor, outro motivo não o desfaz: o link continua vencido.
+function deixarDeCuidar(e, linkVenceu = false) {
   const { mudancas, efeitos } = fecharCanalDoVoltar(e);
   const semReentrar = { reentrando: null, esperandoPasse: false, passe: null };
+  const doLink = linkVenceu || e.linkVenceu;
   return com(
     e,
-    { ...mudancas, ...SEM_O_CANAL_DO_COLEGA, ...semReentrar, semCuidar: true },
+    { ...mudancas, ...SEM_O_CANAL_DO_COLEGA, ...semReentrar, semCuidar: true, linkVenceu: doLink },
     ...efeitos,
-    dizer(AVISO_SEM_CUIDAR),
+    dizer(doLink ? AVISO_DO_LINK_VENCIDO : AVISO_SEM_CUIDAR),
   );
 }
 
 // Dentro do app, o colega entra de novo sozinho: o que só o canal servia sai, como no deixarDeCuidar, mas sem o aviso
 // (o de antes, se havia, sai também), e a página pede outro passe ao app. O canal já está fechado: o voltar não saiu.
 function reentrar(e) {
-  return pedirOPasse(e, { ...SEM_O_CANAL_DO_COLEGA, reentrando: 'passe', passeRecusado: false, semCuidar: false });
+  const mudancas = { ...SEM_O_CANAL_DO_COLEGA, reentrando: 'passe', passeRecusado: false };
+  return pedirOPasse(e, { ...mudancas, semCuidar: false, linkVenceu: false });
 }
 
 // O voltar começa pelo abrir, que dá o bilhete do canal novo, e o prazo da tentativa começa junto.

@@ -11,7 +11,15 @@
 // (o paraOApp) quando ele muda, dá ao midia.js os nomes dos aparelhos do app, e o link do chat da reunião vai ao app,
 // que o abre no navegador padrão, em vez de abrir uma janela. O passe, os nomes e as origens não vão ao console. Na
 // pausa, ela cala o som da reunião (o calar) e, na pausa que chega pelo canal, mostra o cartão dela, um diálogo modal.
-import { iniciais, rotuloDoBotao, tituloDoCartao } from './colega.js';
+import {
+  TEXTO_DO_LINK_VENCIDO,
+  TEXTO_SEM_CUIDAR,
+  TITULO_DO_LINK_VENCIDO,
+  TITULO_SEM_CUIDAR,
+  iniciais,
+  rotuloDoBotao,
+  tituloDoCartao,
+} from './colega.js';
 import { cabecalho, inicial, nomeValido, paraOApp, podeEscrever, podeResponder, quando, transicao } from './estado.js';
 import { contagem as numeroDoBotao, dito, escreveu, falha, nomeDoBotao, numaLinha } from './mensagens.js';
 import { criarPainel } from './painel.js';
@@ -449,6 +457,10 @@ export function iniciar(raiz, servicos) {
 
     const atras = e.gente || e.reconectando > 0;
     avisoSemCuidar.hidden = !(doColega && e.semCuidar) || atras;
+    // O motivo do aviso é o link que deixou de valer, ou o de sempre; o nome da região segue o título.
+    const titulo = e.linkVenceu ? TITULO_DO_LINK_VENCIDO : TITULO_SEM_CUIDAR;
+    texto(avisoSemCuidar.querySelector('.sem-cuidar-titulo'), titulo);
+    texto(avisoSemCuidar.querySelector('.sem-cuidar-texto'), e.linkVenceu ? TEXTO_DO_LINK_VENCIDO : TEXTO_SEM_CUIDAR);
     cartaoDoPedido.hidden = n === 0 || atras;
     if (cartaoDoPedido.hidden) return;
     // Com um pedido, o Recusar e o Aceitar dele; com mais, o Ver os pedidos.

@@ -711,6 +711,34 @@ test.describe('sem o canal', () => {
     await expect(painel(page)).toHaveCount(0);
   });
 
+  test('o link que deixou de valer: o painel mostra o aviso do link no lugar das listas', async ({ page }) => {
+    const rede = await RedeFalsa.instalar(page, MARCADA);
+    const canal = await entrarComoColega(page, rede);
+    mandarLista(canal, { participantes: CINCO, pedidos: [pedidoDe(MARIA)] });
+    await oBotao(page).click();
+    await expect(painel(page)).toBeVisible();
+    await canal.fechar(1006);
+    await page.clock.runFor(2_000);
+    const volta = await rede.canalNumero(2);
+    await expect.poll(() => volta.tipos()).toEqual(['voltar']);
+    volta.mandar({ tipo: 'linkInvalido' });
+    await expect.poll(() => volta.fechadoPelaPagina).not.toBeUndefined();
+    // O aviso inteiro do link: o título, um ponto, um espaço e o texto; sem as listas e sem o Encerrar para todos.
+    const inteiro =
+      'O link desta reunião deixou de valer. Você continua na reunião, mas não pode mais aceitar pedidos nem ' +
+      'encerrar. Se sair, não consegue voltar.';
+    await expect(painel(page).getByText(inteiro, { exact: true })).toBeVisible();
+    await expect(painel(page).getByText(AVISO, { exact: true })).toBeHidden();
+    await expect(painel(page).getByRole('heading', { level: 3 })).toHaveCount(0);
+    await expect(pedidos(page)).toHaveCount(0);
+    await expect(pessoas(page)).toHaveCount(0);
+    await expect(encerrar(page)).toBeHidden();
+    await expect(semCanal(page)).toBeHidden();
+    // O cartão continua escondido atrás do painel aberto.
+    await expect(page.getByRole('region', { name: 'O link desta reunião deixou de valer' })).toBeHidden();
+    await expect(cartao(page)).toBeHidden();
+  });
+
   test('antes de a lista chegar, o painel não diz zero', async ({ page }) => {
     const canal = await colegaNaReuniao(page);
     await oBotao(page).click();

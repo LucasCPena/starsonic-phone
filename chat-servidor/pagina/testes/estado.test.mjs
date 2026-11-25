@@ -185,6 +185,7 @@ test('o carregar abre', () => {
     cheiaAoAceitar: false,
     respondendo: [],
     semCuidar: false,
+    linkVenceu: false,
     reentrando: null,
     queda: false,
     noApp: false,
@@ -3091,22 +3092,54 @@ test('o chat reiniciou e a ligação também caiu: é o saiu, sem o voltar', () 
   }
 });
 
-test('a chave recusada e o link que deixou de valer, no religar do colega, são o deixou de cuidar', () => {
+test('a chave recusada, no religar do colega, é o deixou de cuidar', () => {
   const voltando = [canalFechou(1006), tempo('religar:1'), abriu(3), CANAL_ABRIU];
-  for (const resposta of [RECUSADA_NO_RELIGAR, mensagem({ tipo: 'linkInvalido' })]) {
-    const r = rodar(colegaComLista(), ...voltando, resposta);
-    assert.deepEqual(r.efeitos, [FECHAR_CANAL, dizer(SEM_CUIDAR)]);
-    assert.equal(r.estado.semCuidar, true);
-    assert.deepEqual(r.estado.lista, { participantes: [], pedidos: [] });
-    // Quem é de fora segue como hoje.
-    const fora = rodar(naReuniaoComChave(), ...voltando, resposta);
-    assert.deepEqual(fora.efeitos, [FECHAR_CANAL]);
-    assert.equal(fora.estado.semCuidar, false);
-  }
+  const r = rodar(colegaComLista(), ...voltando, RECUSADA_NO_RELIGAR);
+  assert.deepEqual(r.efeitos, [FECHAR_CANAL, dizer(SEM_CUIDAR)]);
+  assert.equal(r.estado.semCuidar, true);
+  assert.deepEqual(r.estado.lista, { participantes: [], pedidos: [] });
+  // Quem é de fora segue como hoje.
+  const fora = rodar(naReuniaoComChave(), ...voltando, RECUSADA_NO_RELIGAR);
+  assert.deepEqual(fora.efeitos, [FECHAR_CANAL]);
+  assert.equal(fora.estado.semCuidar, false);
+});
+
+const LINK_VENCIDO =
+  'O link desta reunião deixou de valer. Você continua na reunião, mas não pode mais aceitar pedidos nem encerrar. ' +
+  'Se sair, não consegue voltar.';
+
+test('o link que deixou de valer, no religar do colega, mostra o aviso do link', () => {
+  const voltando = [canalFechou(1006), tempo('religar:1'), abriu(3), CANAL_ABRIU];
+  // A resposta linkInvalido do voltar.
+  const r = rodar(colegaComLista(), ...voltando, mensagem({ tipo: 'linkInvalido' }));
+  assert.deepEqual(r.efeitos, [FECHAR_CANAL, dizer(LINK_VENCIDO)]);
+  assert.equal(r.estado.semCuidar, true);
+  assert.equal(r.estado.linkVenceu, true);
+  assert.deepEqual(r.estado.lista, { participantes: [], pedidos: [] });
   // O 404 do abrir do voltar é o mesmo link que deixou de valer.
   const semLink = rodar(colegaComLista(), canalFechou(1006), tempo('religar:1'), abrirFalhou(3, 404));
-  assert.deepEqual(semLink.efeitos, [dizer(SEM_CUIDAR)]);
-  assert.equal(semLink.estado.semCuidar, true);
+  assert.deepEqual(semLink.efeitos, [dizer(LINK_VENCIDO)]);
+  assert.equal(semLink.estado.linkVenceu, true);
+  // Dentro do app é igual: a página não tenta a entrada de novo.
+  const noApp = rodar(noAppComPartida(), canalFechou(1006), tempo('religar:1'), abrirFalhou(3, 404));
+  assert.deepEqual(noApp.efeitos, [dizer(LINK_VENCIDO)]);
+  assert.equal(noApp.estado.linkVenceu, true);
+  assert.equal(noApp.estado.reentrando, null);
+  // Quem é de fora segue como hoje.
+  const fora = rodar(naReuniaoComChave(), ...voltando, mensagem({ tipo: 'linkInvalido' }));
+  assert.deepEqual(fora.efeitos, [FECHAR_CANAL]);
+  assert.equal(fora.estado.semCuidar, false);
+  assert.equal(fora.estado.linkVenceu, false);
+});
+
+test('os outros motivos continuam com o aviso de sempre', () => {
+  const voltando = [canalFechou(1006), tempo('religar:1'), abriu(3), CANAL_ABRIU];
+  const recusada = rodar(colegaComLista(), ...voltando, RECUSADA_NO_RELIGAR);
+  assert.deepEqual(recusada.efeitos, [FECHAR_CANAL, dizer(SEM_CUIDAR)]);
+  assert.equal(recusada.estado.linkVenceu, false);
+  const reiniciou = rodar(colegaComPartida(), ...REINICIOU);
+  assert.deepEqual(reiniciou.efeitos, [dizer(SEM_CUIDAR)]);
+  assert.equal(reiniciou.estado.linkVenceu, false);
 });
 
 // O link que deixou de valer no religar guarda a chave: a ligação que cai depois volta com ela.
@@ -3126,6 +3159,30 @@ test('o deixou de cuidar acaba com o voltou: o canal é de novo o da pessoa', ()
   assert.deepEqual(r.efeitos, [SENHA, camera(true)]);
   assert.equal(r.estado.semCuidar, false);
   assert.equal(r.estado.canal, 'aberto');
+});
+
+test('o aviso do link acaba onde o deixou de cuidar acaba', () => {
+  const sem = rodar(colegaComLista(), ...LINK_DO_RELIGAR).estado;
+  assert.equal(sem.linkVenceu, true);
+  // O voltou da volta das duas.
+  assert.equal(rodar(sem, ...VOLTA_DA_LIGACAO).estado.linkVenceu, false);
+  // A saída da reunião.
+  assert.equal(passo(sem, clique('sair')).estado.linkVenceu, false);
+  // A ligação que cai: a volta das duas sai com a chave guardada, e o 404 do abrir dela é o fim.
+  const fim = rodar(sem, SEM_CONEXAO, tempo('reconectar:2'), abrirFalhou(4, 404)).estado;
+  assert.equal(fim.aviso, 'linkInvalido');
+  assert.equal(fim.semCuidar, false);
+  assert.equal(fim.linkVenceu, false);
+});
+
+test('o aviso do link não volta a ser o de sempre', () => {
+  // Um deixarDeCuidar por outro motivo, com o do link já em vigor: o estado montado à mão, porque nenhuma sequência
+  // de hoje chega aqui (o canal de quem deixou de cuidar não volta).
+  const sem = rodar(colegaComLista(), ...LINK_DO_RELIGAR).estado;
+  const r = passo({ ...sem, reentrando: 'entrando', canal: 'aberto' }, canalFechou(1006));
+  assert.equal(r.estado.semCuidar, true);
+  assert.equal(r.estado.linkVenceu, true);
+  assert.deepEqual(r.efeitos.filter((x) => x.tipo === 'dizer'), [dizer(LINK_VENCIDO)]);
 });
 
 test('dentro do app, o deixou de cuidar acaba também na entrada de novo', () => {
