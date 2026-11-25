@@ -14,7 +14,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-23-starsonic-phone-reunioes-etapa-2a-design.md`: as seções 4.2, 4.3 e 4.5 (o que é da aba, do navegador e do aviso), 7.6, 7.7 e 7.9, 8, 10, 11, 12 e 15, com as notas datadas. O protocolo é o `docs/chat-protocolo.md`, seções 9, 11 e 12. A ponte é o `docs/ponte-windows.md`. A lista de onde este plano saiu são as seções 2, 5, 8 e 9 do `reunioes-etapa-2-entrega-2-entradas.md` (no Project; a cópia de trabalho fica em `work/projeto/`, fora do git).
 
-**O método:** a confirmar com o responsável. A recomendação é a mesma dos outros planos desta etapa: um agente novo constrói cada tarefa, e outro a revisa antes da próxima; no fim, uma revisão de tudo (superpowers:subagent-driven-development).
+**Aprovado pelo responsável em 25/11/2026, às 08:49 ("segue"):** o plano, as escolhas da seção "As escolhas deste plano" e o método, o mesmo dos outros planos desta etapa: um agente novo constrói cada tarefa, e outro a revisa antes da próxima; no fim, uma revisão de tudo (superpowers:subagent-driven-development). Antes da Task 1 vem o acerto pequeno da página que ele aprovou na mesma resposta (`docs/superpowers/plans/2026-11-25-reunioes-etapa-2a-aviso-do-link-vencido.md`).
 
 ## Global Constraints
 
