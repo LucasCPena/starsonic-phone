@@ -65,7 +65,10 @@ const aviso = (page: Page) => page.locator('.aviso-curto');
 const quemEscreveu = (page: Page) => aviso(page).locator('.aviso-curto-quem');
 const linhaDoAviso = (page: Page) => aviso(page).locator('.aviso-curto-linha');
 const abrirOChat = (page: Page) => aviso(page).getByRole('button', { name: 'Abrir o chat', exact: true });
-const anuncio = (page: Page) => page.locator('[data-campo="anuncio"]');
+/** O aviso mais novo da região que os leitores de tela anunciam. */
+const anuncio = (page: Page) => page.locator('[data-campo="anuncio"] > :last-child');
+/** A região inteira, a que os leitores de tela anunciam. */
+const regiaoFalada = (page: Page) => page.locator('[data-campo="anuncio"]');
 
 /** O texto do elemento, letra por letra, com as quebras de linha. */
 const letras = (page: Page, n: number) => balao(page, n).evaluate((e) => e.textContent);
@@ -1004,7 +1007,7 @@ test('o leitor de tela ouve cada mensagem dos outros, também a repetida', async
 
   // Quem fala é a região de sempre; o aviso que aparece não é uma região falada, para a mensagem não ser dita duas
   // vezes.
-  await expect(anuncio(page)).toHaveAttribute('aria-live', 'polite');
+  await expect(regiaoFalada(page)).toHaveAttribute('aria-live', 'polite');
   expect(
     await aviso(page).evaluate((el) => [
       el.getAttribute('role'),

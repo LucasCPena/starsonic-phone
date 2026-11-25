@@ -112,7 +112,8 @@ const escolha = (page: Page) => page.locator('section[data-tela="escolha"]');
 const entrada = (page: Page) => page.locator('section[data-tela="entrada"]');
 const abrirNoApp = (page: Page) => page.getByRole('link', { name: 'Abrir no app', exact: true });
 const peloNavegador = (page: Page) => botao(page, 'Entrar pelo navegador');
-const anuncio = (page: Page) => page.locator('[data-campo="anuncio"]');
+/** O aviso mais novo da região que os leitores de tela anunciam. */
+const anuncio = (page: Page) => page.locator('[data-campo="anuncio"] > :last-child');
 
 /** O estilo calculado de um elemento. */
 const estilo = (page: Page, seletor: string, propriedade: string) =>

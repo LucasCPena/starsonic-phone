@@ -647,7 +647,7 @@ test('a espera', async ({ page }) => {
   const aguardando = titulo(page, 'Aguardando ser aceito…');
   await expect(aguardando).toBeVisible();
   await expect(aguardando).toBeFocused();
-  await expect(page.getByRole('status')).toHaveText('Aguardando ser aceito…');
+  await expect(page.getByRole('status').locator(':scope > :last-child')).toHaveText('Aguardando ser aceito…');
   const linha = page.getByText('Planejamento de dezembro · Hoje, 14:00', { exact: true });
   await expect(linha.filter({ visible: true })).toBeVisible();
   const canal = await rede.canalNumero(1);
@@ -1415,7 +1415,7 @@ test.describe('a reunião', () => {
     await expect(
       page.getByText('Espere um instante: a página volta sozinha para a reunião.', { exact: true }),
     ).toBeVisible();
-    await expect(page.getByRole('status')).toHaveText('A conexão caiu. Entrando de novo…');
+    await expect(page.getByRole('status').locator(':scope > :last-child')).toHaveText('A conexão caiu. Entrando de novo…');
     await expect(botao(page, 'Compartilhar a tela')).toBeDisabled();
 
     await expect(botao(page, 'Sair')).toBeEnabled();

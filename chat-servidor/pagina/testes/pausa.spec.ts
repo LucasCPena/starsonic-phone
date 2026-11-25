@@ -64,6 +64,8 @@ const faixas = (onde: Page | Frame) =>
     });
 const LIGADAS = { microfone: [true], cameras: 1 };
 const DESLIGADAS = { microfone: [false], cameras: 0 };
+/** O aviso mais novo da região que os leitores de tela anunciam. */
+const anuncio = (page: Page) => page.locator('[data-campo="anuncio"] > :last-child');
 /** O som da reunião está calado. */
 const calado = (onde: Page | Frame) => onde.locator('#som').evaluate((a: HTMLAudioElement) => a.muted);
 
@@ -181,7 +183,7 @@ test('o foco e o leitor de tela', async ({ page }) => {
   canal.mandar(pausa(true));
   // O foco vai ao botão do cartão, e o leitor de tela ouve a frase.
   await expect(voltar(page)).toBeFocused();
-  await expect(page.locator('[data-campo="anuncio"]')).toHaveText(FRASE);
+  await expect(anuncio(page)).toHaveText(FRASE);
   // O foco fica preso nele: o Tab, o Shift+Tab e o Esc não o tiram dali, e o cartão fica.
   for (const tecla of ['Tab', 'Shift+Tab', 'Tab', 'Escape']) {
     await page.keyboard.press(tecla);

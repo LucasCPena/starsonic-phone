@@ -10,12 +10,15 @@ import {
   ACEITO,
   BIA,
   MARIA,
+  SEM_CONEXAO,
   abrirComoColega,
   abrirNaEntrada,
   area,
   botao,
   caixa,
+  cartaoDaQueda,
   conferir,
+  darNaLigacao,
   doConsole,
   entrarComoColega,
   esperadoNoConsole,
@@ -61,7 +64,8 @@ const pessoas = (page: Page) => page.locator('.gente-pessoa');
 const pessoa = (page: Page, nome: string) => pessoas(page).filter({ hasText: nome });
 const encerrar = (page: Page) => painel(page).getByRole('button', { name: 'Encerrar para todos', exact: true });
 const dialogo = (page: Page) => page.getByRole('alertdialog', { name: 'Encerrar a reunião para todos?' });
-const anuncio = (page: Page) => page.locator('[data-campo="anuncio"]');
+/** O aviso mais novo da região que os leitores de tela anunciam. */
+const anuncio = (page: Page) => page.locator('[data-campo="anuncio"] > :last-child');
 const cartao = (page: Page) => page.locator('.pedido');
 /** O que fica atrás do painel que cobre a tela. */
 const FUNDO = ['.reuniao-topo', '.palco', '.controles'];
@@ -626,6 +630,82 @@ test.describe('sem o canal', () => {
     await pedidos(page).getByRole('button', { name: 'Aceitar' }).click();
     await expect.poll(() => respostas(volta)).toEqual([{ tipo: 'aceitar', pedido: MARIA.quem }]);
     expect(respostas(canal)).toEqual([]);
+  });
+
+  /** Cada trecho que entra na região que os leitores de tela anunciam, daqui em diante. */
+  const ouvirARegiao = async (page: Page) => {
+    await page.evaluate(() => {
+      const w = window as unknown as { ditos: string[] };
+      w.ditos = [];
+      const regiao = document.querySelector('[data-campo="anuncio"]') as HTMLElement;
+      new MutationObserver((mudancas) => {
+        for (const m of mudancas) for (const no of m.addedNodes) w.ditos.push(no.textContent ?? '');
+      }).observe(regiao, { childList: true });
+    });
+    return () => page.evaluate(() => (window as unknown as { ditos: string[] }).ditos);
+  };
+  const vezes = async (ditos: () => Promise<string[]>) => (await ditos()).filter((t) => t === PEDIDOS_VOLTAM).length;
+
+  test('sem o canal, o leitor de tela ouve por que as respostas desligaram, uma vez', async ({ page }) => {
+    const rede = await RedeFalsa.instalar(page, MARCADA);
+    const canal = await entrarComoColega(page, rede);
+    const lista = { participantes: CINCO, pedidos: [pedidoDe(MARIA)] };
+    mandarLista(canal, lista);
+    await oBotao(page).click();
+    await expect(painel(page)).toBeVisible();
+    await botao(page, 'Tirar Pedro Nunes da reunião').click();
+    const ditos = await ouvirARegiao(page);
+    expect(await vezes(ditos)).toBe(0);
+
+    // O canal cai, e a página tenta voltar: o aviso mais novo diz por que as respostas desligaram.
+    await canal.fechar(1006);
+    await expect(semCanal(page)).toBeVisible();
+    await expect(anuncio(page)).toHaveText(PEDIDOS_VOLTAM);
+    // Outros desenhos (fechar a pergunta do Tirar, o Microfone) não a repetem.
+    await pessoa(page, 'Pedro Nunes').getByRole('button', { name: 'Voltar' }).click();
+    await botao(page, 'Microfone').click();
+    await expect(botao(page, 'Microfone')).toHaveAttribute('aria-pressed', 'false');
+    expect(await vezes(ditos)).toBe(1);
+
+    // O canal volta, e cai de novo: ela entra de novo.
+    await page.clock.runFor(2_000);
+    const volta = await rede.canalNumero(2);
+    await expect.poll(() => volta.tipos()).toEqual(['voltar']);
+    volta.mandar({ tipo: 'voltou', volta: 'volta-2' });
+    mandarLista(volta, lista);
+    await expect(semCanal(page)).toBeHidden();
+    expect(await vezes(ditos)).toBe(1);
+    await volta.fechar(1006);
+    await expect(semCanal(page)).toBeVisible();
+    await expect.poll(() => vezes(ditos)).toBe(2);
+  });
+
+  test('sem nada para responder à vista, a frase não é dita, e ao abrir o painel ela é', async ({ page }) => {
+    const rede = await RedeFalsa.instalar(page, MARCADA);
+    const canal = await entrarComoColega(page, rede);
+    const ditos = await ouvirARegiao(page);
+    await canal.fechar(1006);
+    await page.clock.runFor(2_000);
+    await expect.poll(async () => (await rede.canalNumero(2)).tipos()).toEqual(['voltar']);
+    // O painel fechado e nenhum pedido esperando: nada para responder.
+    await expect(oBotao(page)).toBeVisible();
+    expect(await vezes(ditos)).toBe(0);
+    await oBotao(page).click();
+    await expect(semCanal(page)).toBeVisible();
+    await expect(anuncio(page)).toHaveText(PEDIDOS_VOLTAM);
+    expect(await vezes(ditos)).toBe(1);
+  });
+
+  test('com a conexão caída, quem fala é o aviso da queda', async ({ page }) => {
+    const canal = await comOPainel(page);
+    const ditos = await ouvirARegiao(page);
+    // A ligação cai, e o canal com ela: as respostas desligam, mas o que se ouve é a queda.
+    await darNaLigacao(page, SEM_CONEXAO);
+    await expect(cartaoDaQueda(page)).toBeVisible();
+    await canal.fechar(1006);
+    await expect(semCanal(page)).toBeVisible();
+    await expect(anuncio(page)).toHaveText('A conexão caiu. Entrando de novo…');
+    expect(await vezes(ditos)).toBe(0);
   });
 
   test('sem o canal, o Encerrar da pergunta desliga, e volta com ele', async ({ page }) => {

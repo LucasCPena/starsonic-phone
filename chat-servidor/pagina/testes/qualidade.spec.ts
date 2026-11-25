@@ -54,7 +54,10 @@ const gravado = (page: Page) => page.getByText('Nada é gravado', { exact: true 
 const aviso = (page: Page) => page.locator('.aviso-curto');
 const linhaDoAviso = (page: Page) => aviso(page).locator('.aviso-curto-linha');
 const verOsDetalhes = (page: Page) => aviso(page).getByRole('button', { name: 'Ver os detalhes', exact: true });
-const anuncio = (page: Page) => page.locator('[data-campo="anuncio"]');
+/** O aviso mais novo da região que os leitores de tela anunciam. */
+const anuncio = (page: Page) => page.locator('[data-campo="anuncio"] > :last-child');
+/** A região inteira, a que os leitores de tela anunciam. */
+const regiaoFalada = (page: Page) => page.locator('[data-campo="anuncio"]');
 const painel = (page: Page) => page.getByRole('complementary', { name: 'Chat da reunião' });
 
 // As redes de mentira: cada uma leva a um estado.
@@ -525,7 +528,7 @@ test('o leitor de tela ouve a conexão ruim uma vez só', async ({ page }) => {
   await expect(aviso(page)).toBeHidden();
   expect(await ditos()).toEqual(['Sua conexão está ruim']);
   // Quem fala é a região de sempre: o aviso que aparece não é uma região falada, para não ser dito duas vezes.
-  await expect(anuncio(page)).toHaveAttribute('aria-live', 'polite');
+  await expect(regiaoFalada(page)).toHaveAttribute('aria-live', 'polite');
   expect(
     await aviso(page).evaluate((el) => [
       el.getAttribute('role'),

@@ -30,6 +30,9 @@ import { AVISO_DA_CONEXAO_RUIM, criarMedidor, numerosDoCartao, textosDoSinal } f
 /** A espera do ligar da principal pela câmera que a pessoa acabou de ligar e que ainda está sendo pedida, em ms. */
 const PRAZO_DA_CAMERA_MS = 3000;
 
+/** Quantos avisos a região que os leitores de tela anunciam guarda: ao entrar mais um, o mais velho sai. */
+const MAX_AVISOS = 4;
+
 // Os cliques que levam à reunião: o silêncio do midia.js nasce, ou acorda, dentro deles. O entrar é o do colega.
 const DE_ENTRAR = new Set(['pedir', 'entrar', 'entrarDeNovo', 'tentarDeNovo']);
 
@@ -462,6 +465,12 @@ export function iniciar(raiz, servicos) {
     texto(avisoSemCuidar.querySelector('.sem-cuidar-titulo'), titulo);
     texto(avisoSemCuidar.querySelector('.sem-cuidar-texto'), e.linkVenceu ? TEXTO_DO_LINK_VENCIDO : TEXTO_SEM_CUIDAR);
     cartaoDoPedido.hidden = n === 0 || atras;
+    // As respostas desligadas, na tela da reunião, com a conexão de pé e algo para responder à vista (o painel aberto
+    // ou um pedido esperando): o leitor de tela ouve por quê, uma vez a cada vez que isso começa. Com a conexão
+    // caída, quem fala é o aviso da queda; quem deixou de cuidar ouve o aviso dele; fora da reunião, recomeça.
+    const mudas = doColega && !podeResponder(e) && !e.semCuidar && e.reconectando === 0 && (e.gente || n > 0);
+    if (mudas && !respostasDitas) dizer(textoDasRespostas);
+    respostasDitas = mudas;
     if (cartaoDoPedido.hidden) return;
     // Com um pedido, o Recusar e o Aceitar dele; com mais, o Ver os pedidos.
     const so = n === 1;
@@ -483,6 +492,9 @@ export function iniciar(raiz, servicos) {
   let falhasDitas = new Set();
   let semCanalDito = false;
   const textoSemCanal = um('.painel-sem-canal').textContent;
+  // Se o leitor de tela já ouviu que as respostas do colega estão desligadas, e o texto disso (o do painel).
+  let respostasDitas = false;
+  const textoDasRespostas = um('.gente-sem-canal').textContent;
 
   // O chat: o botão apertado com o painel aberto, o número das mensagens novas, o painel com as mensagens do cérebro,
   // e o que o leitor de tela ouve.
@@ -582,20 +594,25 @@ export function iniciar(raiz, servicos) {
     }
   }
 
-  // Põe o texto na região que os leitores de tela anunciam. O nó de texto é sempre outro: o mesmo texto, dito de novo,
-  // é anunciado de novo.
+  // Tudo o que a página diz ao leitor de tela entra na região que ele anuncia, como um trecho próprio (um span, com o
+  // texto como texto) no fim dela. Os trechos de antes ficam, para um aviso não atropelar o outro, e o mesmo texto dito
+  // de novo é um trecho novo, anunciado de novo. A região guarda os MAX_AVISOS mais novos: ao entrar mais um, o mais
+  // velho sai. Um texto vazio não é dito.
   function dizer(oQue) {
-    anuncio.textContent = '';
-    anuncio.append(oQue);
+    if (oQue === '') return;
+    const trecho = document.createElement('span');
+    trecho.textContent = oQue;
+    anuncio.append(trecho);
+    while (anuncio.childElementCount > MAX_AVISOS) anuncio.firstElementChild.remove();
   }
 
-  // A mudança de tela (e do aviso) vai para a região que os leitores de tela anunciam, como a conexão caída.
+  // A mudança de tela (e do aviso) também é dita, como a conexão caída.
   function anunciar(secao, e) {
     const caiu = e.tela === 'reuniao' && e.reconectando > 0;
     if (caiu && !anunciado.caiu) {
-      texto(anuncio, um('.caiu h2').textContent);
+      dizer(um('.caiu h2').textContent);
     } else if (secao !== anunciado.secao || e.aviso !== anunciado.aviso) {
-      texto(anuncio, tituloVisivel()?.textContent ?? '');
+      dizer(tituloVisivel()?.textContent ?? '');
     }
     anunciado = { secao, aviso: e.aviso, caiu };
   }

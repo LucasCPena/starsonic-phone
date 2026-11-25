@@ -1058,9 +1058,8 @@ export function podeResponder(estado) {
 // A lista inteira chegou (a mensagem participantes): ela toma o lugar da anterior. Ela não diz o resultado das
 // respostas da página: o pedido que sai dela pode ter sido respondido por outro colega, e quem diz que a resposta deu
 // certo é o feito. O pedido que a lista anterior não tinha, o leitor de tela ouve que chegou. Tudo o que a lista diz
-// sai num dizer só, os textos na ordem: a região que o leitor de tela ouve guarda um texto de cada vez, e dois dizer no
-// mesmo passo deixariam só o último. A pergunta do Tirar de quem já saiu se desfaz, e a reunião cheia do último aceitar
-// sai.
+// sai num dizer só, os textos na ordem: o leitor de tela ouve a lista como um aviso só. A pergunta do Tirar de quem já
+// saiu se desfaz, e a reunião cheia do último aceitar sai.
 function lista(e, m) {
   if (!colegaNaReuniao(e)) return nada(e);
   const nova = lerLista(m);

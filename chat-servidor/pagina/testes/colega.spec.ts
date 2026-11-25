@@ -43,7 +43,8 @@ const participantes = (page: Page) => page.locator('button[data-botao="participa
 const numero = (page: Page) => participantes(page).locator('.contagem');
 const cartao = (page: Page) => page.locator('.pedido');
 const tituloDoCartao = (page: Page) => cartao(page).locator('.pedido-titulo');
-const anuncio = (page: Page) => page.locator('[data-campo="anuncio"]');
+/** O aviso mais novo da região que os leitores de tela anunciam. */
+const anuncio = (page: Page) => page.locator('[data-campo="anuncio"] > :last-child');
 const aviso = (page: Page) => page.locator('.aviso-curto');
 const CHEIA = 'A reunião está cheia: ninguém mais entra agora.';
 const DE_FORA = 'É de fora da empresa, e espera até um colega responder.';
@@ -362,6 +363,68 @@ test('o leitor de tela ouve dois pedidos que chegam juntos', async ({ page }) =>
   const canal = await colegaNaReuniao(page);
   mandarLista(canal, { pedidos: [pedidoDe(MARIA), pedidoDe(BIA)] });
   await expect(anuncio(page)).toHaveText('Maria Lima quer entrar. Bia Ramos quer entrar');
+});
+
+/** Os textos dos trechos que estão na região que os leitores de tela anunciam, na ordem. */
+const trechos = (page: Page) => page.locator('[data-campo="anuncio"] > *').allTextContents();
+
+test('dois avisos no mesmo passo ficam os dois na região', async ({ page }) => {
+  const canal = await colegaNaReuniao(page);
+  mandarLista(canal, { pedidos: [pedidoDe(MARIA)] });
+  await expect(anuncio(page)).toHaveText('Maria Lima quer entrar');
+  await botao(page, 'Aceitar').click();
+  await expect.poll(() => respostas(canal)).toHaveLength(1);
+  // O feito do aceitar e a lista com um pedido novo chegam um atrás do outro, sem espera entre eles.
+  canal.mandar({ tipo: 'feito', de: 'aceitar', id: MARIA.quem });
+  mandarLista(canal, { pedidos: [pedidoDe(BIA)] });
+  await expect.poll(async () => (await trechos(page)).slice(-2)).toEqual([
+    'O pedido de Maria Lima foi aceito',
+    'Bia Ramos quer entrar',
+  ]);
+  // Nenhum dos dois some sozinho.
+  await page.clock.runFor(30_000);
+  expect((await trechos(page)).slice(-2)).toEqual(['O pedido de Maria Lima foi aceito', 'Bia Ramos quer entrar']);
+});
+
+test('a região guarda só os quatro avisos mais novos', async ({ page }) => {
+  const canal = await colegaNaReuniao(page);
+  const pessoas = [1, 2, 3, 4, 5, 6].map((n) => ({ id: `a00000000000000${n}`, nome: `Pessoa ${n}` }));
+  for (let n = 1; n <= 6; n++) {
+    // Cada lista traz um pedido novo a mais: o aviso é só o do novo.
+    mandarLista(canal, { pedidos: pessoas.slice(0, n) });
+    await expect(anuncio(page)).toHaveText(`Pessoa ${n} quer entrar`);
+  }
+  expect(await trechos(page)).toEqual([
+    'Pessoa 3 quer entrar',
+    'Pessoa 4 quer entrar',
+    'Pessoa 5 quer entrar',
+    'Pessoa 6 quer entrar',
+  ]);
+});
+
+test('o mesmo aviso dito de novo entra de novo', async ({ page }) => {
+  const canal = await colegaNaReuniao(page);
+  mandarLista(canal, { pedidos: [pedidoDe(MARIA)] });
+  await expect(anuncio(page)).toHaveText('Maria Lima quer entrar');
+  // Cada trecho que entra na região que os leitores de tela anunciam.
+  await page.evaluate(() => {
+    const w = window as unknown as { ditos: string[] };
+    w.ditos = [];
+    const regiao = document.querySelector('[data-campo="anuncio"]') as HTMLElement;
+    new MutationObserver((mudancas) => {
+      for (const m of mudancas) for (const no of m.addedNodes) w.ditos.push(`${no.nodeName}:${no.textContent ?? ''}`);
+    }).observe(regiao, { childList: true });
+  });
+  const ditos = () => page.evaluate(() => (window as unknown as { ditos: string[] }).ditos);
+  const NAO_RESPONDEU = 'SPAN:O servidor de reuniões não respondeu';
+  await botao(page, 'Aceitar').click();
+  await expect.poll(() => respostas(canal)).toHaveLength(1);
+  canal.mandar({ tipo: 'recusa', de: 'aceitar', motivo: 'servidorVideo' });
+  await expect.poll(ditos).toEqual([NAO_RESPONDEU]);
+  await botao(page, 'Aceitar').click();
+  await expect.poll(() => respostas(canal)).toHaveLength(2);
+  canal.mandar({ tipo: 'recusa', de: 'aceitar', motivo: 'servidorVideo' });
+  await expect.poll(ditos).toEqual([NAO_RESPONDEU, NAO_RESPONDEU]);
 });
 
 // ---- O celular. ----
