@@ -73,8 +73,8 @@ export async function marcar(
 /**
  * Marca cada leitura da lista com o número dela: o assunto da primeira reunião chega como "Leitura N". Assim o teste
  * sabe que o app TRATOU a resposta da leitura N (o assunto está na tela), e não só que o pedido saiu. O relógio da
- * página só deve andar depois disso: a leitura arma o relógio dos 30 s quando trata a resposta. `atraso`: espera, em tempo
- * real, antes de entregar cada resposta (a máquina lenta do GitHub, de propósito).
+ * página só deve andar depois disso: a leitura arma o relógio dos 30 s quando trata a resposta. `atraso`: espera, em
+ * tempo real, antes de entregar cada resposta (a máquina lenta do GitHub, de propósito).
  */
 export async function numerarAsLeituras(page: Page, atraso = 0): Promise<{ lidas(): number }> {
   let n = 0;

@@ -2,7 +2,18 @@
 // ponte falsa: o teste manda o estado `empresa` e a mensagem `contatosEmpresa` pela mesma ponte de mentira e confere os
 // textos exatos e os comandos que saem (importContacts, exportContacts, setCompanyList, refreshCompanyList e o dial).
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { abrir, depoisDoQueChegou, empurrar, esperarComando, mudarEstado, segurarCpp, semViolacoesSerias, soltarCpp, verTextos, vezes } from './helpers';
+import {
+  abrir,
+  depoisDoQueChegou,
+  empurrar,
+  esperarComando,
+  mudarEstado,
+  segurarCpp,
+  semViolacoesSerias,
+  soltarCpp,
+  verTextos,
+  vezes,
+} from './helpers';
 
 // Só de teste: nenhum link de cliente de verdade.
 const LINK = 'https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit#gid=456';
