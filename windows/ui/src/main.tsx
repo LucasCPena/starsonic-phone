@@ -855,7 +855,12 @@ function App() {
           />
         )}
         {tab === 'reunioes' && (
-          <AbaReunioes vista={vistaReunioes} onNova={() => setView({ kind: 'reuniaoNova', back: view })} />
+          <AbaReunioes
+            vista={vistaReunioes}
+            onNova={() => setView({ kind: 'reuniaoNova', back: view })}
+            onCopiar={(r) => void reunioesCliente.copiar(r)}
+            onCancelar={(codigo) => reunioesCliente.cancelar(codigo)}
+          />
         )}
       </main>
       <Nav tabs={abas} tab={tab} onSelect={(t) => setView({ kind: 'tab', tab: t })} keyShortcuts={!ios} naoLidas={vistaChat.naoLidas} />

@@ -155,6 +155,28 @@ export const IconMore = svg(
     <circle cx="12" cy="19" r="1.2" />
   </>,
 );
+/** O "Copiar link" da linha de uma reunião. */
+export const IconCopiar = svg(
+  <>
+    <rect x="9" y="9" width="11" height="11" rx="2" />
+    <path d="M5 15V6a2 2 0 0 1 2-2h9" />
+  </>,
+);
+/** O "Mais opções" da linha de uma reunião (três pontos na horizontal). */
+export const IconReticencias = svg(
+  <>
+    <circle cx="5" cy="12" r="1.2" />
+    <circle cx="12" cy="12" r="1.2" />
+    <circle cx="19" cy="12" r="1.2" />
+  </>,
+);
+/** O "Cancelar a reunião" do menu. */
+export const IconCancelarReuniao = svg(
+  <>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M9 9l6 6M15 9l-6 6" />
+  </>,
+);
 export const IconCheck = svg(<path d="M5 12.5l4.5 4.5L19 7.5" />);
 export const IconAlert = svg(
   <>

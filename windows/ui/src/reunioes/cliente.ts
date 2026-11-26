@@ -10,7 +10,8 @@
 //   (as reuniões são da empresa, e o computador continua nela). A lista da pessoa seguinte vem da primeira leitura
 //   dela.
 // - O `criar` (a Nova reunião) cria como a pessoa da vez, lê a lista de novo e copia o link; o `copiar` escreve o link
-//   no clipboard e faz a vista dizer o `copiado` (a linha da reunião diz "Link copiado") por 2 s.
+//   no clipboard e faz a vista dizer o `copiado` (a linha da reunião diz "Link copiado") por 2 s; o `cancelar` cancela
+//   a reunião e relê a lista (o 404, ela já não existe, também resolve).
 // Nada de uma reunião vai ao console.
 import type { Bridge } from '../bridge';
 import { ErroChat } from '../chat/api';
@@ -127,6 +128,19 @@ export class ReunioesCliente {
     }, LINK_COPIADO_MS);
     this.publicar();
     return true;
+  }
+
+  /**
+   * Cancela a reunião como a pessoa da vez e relê a lista. O 404 (ela já não existe) também resolve, com a lista
+   * relida. Rejeita com o ErroChat nas outras falhas (o diálogo diz a falha).
+   */
+  async cancelar(codigo: string): Promise<void> {
+    try {
+      await this.chat.pedir((api) => api.cancelarReuniao(codigo));
+    } catch (e) {
+      if (!(e instanceof ErroChat && e.status === 404)) throw e;
+    }
+    await this.ler();
   }
 
   private montar(): VistaReunioes {

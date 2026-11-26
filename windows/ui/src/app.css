@@ -1745,12 +1745,44 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .adm-video-situacao > p { align-self: stretch; }
 .adm-video-situacao .btn .ic { margin-right: 6px; }
 
-/* O "Link copiado" da linha que acabou de ter o link copiado. */
-.reun-copiado { display: inline-flex; align-items: center; gap: 5px; height: 20px; font-size: 12px; font-weight: 700;
+/* As ações de uma linha: o "Copiar link" (que diz "Link copiado" por 2 s) e o botão do menu, no fim. */
+.reun-acoes { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
+.reun-folga { flex: 1; }
+.reun-copiar { height: 34px; padding: 0 14px 0 11px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--card); color: var(--text-strong); display: inline-flex; align-items: center; gap: 6px;
+  font: 700 13px/1 var(--font-sans); }
+.reun-copiar:hover { border-color: var(--cyan); }
+.reun-copiar .ic { color: var(--icon); }
+.reun-mais-caixa { position: relative; flex: none; }
+.reun-mais { width: 34px; height: 34px; padding: 0; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--card); color: var(--text-strong); display: grid; place-items: center; }
+.reun-mais:hover, .reun-mais[aria-expanded="true"] { border-color: var(--cyan); background: var(--icon-tile); }
+.reun-menu { top: calc(100% + 4px); right: 0; width: 248px; min-width: 0; gap: 2px; }
+.reun-menu-vale { padding: 8px 10px 6px; font-size: 12px; line-height: 1.4; color: var(--text-muted); }
+.reun-menu-cancelar, .reun-menu-cancelar .ic { color: #b02a2a; }
+@media (prefers-color-scheme: dark) { .reun-menu-cancelar, .reun-menu-cancelar .ic { color: #ff8f8f; } }
+/* O cancelar (o quadro Cancelar): um diálogo modal como o Encerrar, no tema do app. */
+.reun-cancelar { box-sizing: border-box; width: calc(100% - 48px); max-width: 352px; padding: 22px; border-radius: 24px;
+  background: var(--popover); color: var(--text); border: 1px solid var(--border);
+  box-shadow: 0 40px 100px -30px rgba(7, 11, 24, 0.6); }
+.reun-cancelar::backdrop { top: 32px; background: rgba(10, 14, 26, 0.62); }
+.win-tela-cheia .reun-cancelar::backdrop { top: 0; }
+.reun-cancelar h2 { margin: 0 0 10px; font-size: 19px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.2;
   color: var(--text-strong); }
-.reun-copiado .ic { color: var(--ao-vivo); }
+.reun-cancelar p { margin: 0 0 10px; font-size: 14px; line-height: 1.55; color: var(--text-muted);
+  overflow-wrap: anywhere; }
+.reun-cancelar .reun-cancelar-quem { line-height: 1.4; font-weight: 700; color: var(--text-strong); }
+.reun-cancelar .reun-cancelar-erro { font-weight: 600; color: #b02a2a; }
+@media (prefers-color-scheme: dark) { .reun-cancelar .reun-cancelar-erro { color: #ff8f8f; } }
+.reun-cancelar-botoes { display: flex; gap: 10px; margin-top: 8px; }
+.reun-cancelar-botoes button { flex: 1; min-width: 0; height: 46px; border-radius: 999px;
+  font: 700 15px/1 var(--font-sans); transition: background var(--ease), border-color var(--ease); }
+.reun-cancelar-voltar { background: transparent; color: var(--text-strong); border: 1.5px solid var(--border); }
+.reun-cancelar-voltar:hover { border-color: var(--cyan); }
+.reun-cancelar-ok { background: #c23b3b; color: #ffffff; border: 0; }
+.reun-cancelar-ok:hover { background: #ad3333; }
+.reun-cancelar-ok:disabled { background: #ad3333; opacity: 0.7; }
 
-/* A Nova reunião (o quadro NovaReuniao): os campos, a nota dos colegas e o botão embaixo (rola por dentro). */
 .reun-form { gap: 14px; padding: 16px; }
 .reun-form > * { flex: none; }
 .reun-rotulo { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
