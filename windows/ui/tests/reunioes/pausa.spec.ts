@@ -353,19 +353,32 @@ test('a dúvida acaba 12 horas depois', async ({ page }) => {
   await expect(frase(page)).toHaveCount(0);
 });
 
-test('a troca de conta para a pausa', async ({ page }) => {
-  const { codigo, eventos, pausas } = await abrir(page, { cenario: 'chat-duas-contas', semRelogio: true });
+test('a troca de conta para a pausa que está rodando', async ({ page }) => {
+  const { codigo, eventos, pausas } = await abrir(page, { cenario: 'chat-duas-contas' });
   await eventos.mandar(naReuniao(codigo));
-  await page.getByRole('button', { name: /Trocar de conta/ }).click();
-  await page.getByRole('menuitemradio', { name: /Caixa 2/ }).click();
-  await expect(page.locator('.account-name')).toHaveText('Caixa 2 · 2015');
-  // O relógio só entra depois da troca (o menu da conta precisa dele andando).
-  await page.clock.install({ time: Date.now() });
-  await pararORelogio(page);
   await chegaALigacao(page, ligacao());
-  await expect(page.getByRole('main', { name: 'Ligação' })).toBeVisible();
+  await expect.poll(() => pausas.corpos.length).toBe(1);
+  expect(pausas.corpos[0]).toMatchObject({ codigo, pausada: true });
+  await dandoTempo(page);
+  // A tela da ligação não tem o menu das contas: a troca é a do selectAccount da ponte falsa, pelo estado.
+  await mudarEstado(page, (s) => {
+    const conta = s.contas.find((c: { ramal: string }) => c.ramal === CAIXA.ramal);
+    return {
+      ...s,
+      contas: s.contas.map((c: { id: string }) => ({ ...c, emUso: c.id === conta.id })),
+      conta: { ...conta, status: 'conectado', texto: `Conectado · ${conta.servidor}`, internet: true },
+    };
+  });
+  await page.clock.runFor(1);
   await dandoTempo(page);
   await page.clock.runFor(30_000);
   await dandoTempo(page);
-  expect(pausas.corpos).toEqual([]);
+  expect(pausas.corpos).toHaveLength(1);
+  // O fim da ligação, depois do parou, também não manda o pausada falso.
+  await chegaALigacao(page, null);
+  await expect(page.locator('.account-name')).toHaveText('Caixa 2 · 2015');
+  await dandoTempo(page);
+  await page.clock.runFor(10_000);
+  await dandoTempo(page);
+  expect(pausas.corpos).toHaveLength(1);
 });
