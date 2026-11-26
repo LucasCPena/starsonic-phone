@@ -442,7 +442,7 @@ export function Aba({
   const { lista, conectado, copiado } = vista;
   const agora = Date.now();
   const minimo = useLayout() === 'minimo';
-  // Sem o campo (a conexão caiu entre a decisão do main e este desenho), o link não tem onde entrar e não fica guardado.
+  // Sem o campo (a conexão caiu entre a decisão do main e este desenho), o link não tem onde entrar nem fica guardado.
   useEffect(() => {
     if (!conectado && linkDoApp !== null) onLinkDoApp(linkDoApp.vez);
   }, [conectado, linkDoApp]);

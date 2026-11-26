@@ -176,7 +176,8 @@ function App() {
   const [view, setView] = useState<View>(initialView);
   const [toast, setToast] = useState<{ texto: string; vez: number } | null>(null);
   // (Reuniões) O link do app que espera a aba Reuniões pôr no campo e entrar.
-  // Ele espera no App até o chat responder (`pronto` falso) e então vai à aba, que o serve uma vez. A `vez` nunca volta.
+  // Ele espera no App até o chat responder (`pronto` falso) e então vai à aba, que o serve uma vez. A `vez` nunca
+  // volta.
   const [linkDoApp, setLinkDoApp] = useState<(LinkDoApp & { conta: string | null; pronto: boolean }) | null>(null);
   const contadorDoLink = useRef(0);
   // O último toast e quantos chegaram (nunca volta a zero): a edição do atalho sabe que o C++ recusou (o motivo vem num
@@ -249,8 +250,8 @@ function App() {
           // a mesma regra). Sem ela, a pessoa fica onde estava.
           if (atual.current?.chat?.ligado && reunioesCliente.vista().aba) setView(ABA_REUNIOES);
         } else if (!noIphone.current && msg.tela === 'reuniao') {
-          // (Reuniões) O link do app (starsonic://reuniao/<código>): espera o chat responder (o efeito do `linkDoApp`) e
-          // então vai à aba Reuniões, com o link no campo e o "Entrar" dele. Um link novo toma o lugar do que espera.
+          // (Reuniões) O link do app (starsonic://reuniao/<código>): espera o chat responder (o efeito do `linkDoApp`)
+          // e então vai à aba Reuniões, com o link no campo e o "Entrar" dele. Um link novo toma o lugar do que espera.
           const conta = atual.current?.conta?.id ?? null;
           setLinkDoApp({ codigo: msg.codigo, vez: ++contadorDoLink.current, conta, pronto: false });
         }
@@ -350,7 +351,9 @@ function App() {
       setLinkDoApp((x) => (x?.vez === l.vez ? null : x));
     };
     if ((contaEmUso?.id ?? null) !== l.conta) return largar();
-    if (resumoDoChat?.ligado !== true || situacaoDoChat === 'precisaConta') return largar(SEM_CHAT_ENTRE_PELO_NAVEGADOR);
+    if (resumoDoChat?.ligado !== true || situacaoDoChat === 'precisaConta') {
+      return largar(SEM_CHAT_ENTRE_PELO_NAVEGADOR);
+    }
     if (situacaoDoChat === 'fora') return largar(SERVIDOR_NAO_RESPONDEU);
     if (situacaoDoChat !== 'pronto' || !vistaReunioes.respondeu) return;
     // A leitura que falhou (ou a lista sem conexão) é o chat que não respondeu; sem a aba e sem falha, é o chat sem as
