@@ -503,8 +503,8 @@ export type Command =
   | { cmd: 'reuniaoPedido'; pedido?: PedidoDoAviso; escondida?: boolean }
   | { cmd: 'reuniaoResposta'; pedido: string; resposta: RespostaDoAviso }
   | { cmd: 'reuniaoMostrar' }
-  /** (reuniões; o iPhone recusa) Um link do chat da reunião, no navegador padrão (só http e https, até 2.048 caracteres,
-   *  sem espaços nem caracteres de controle). */
+  /** (reuniões; o iPhone recusa) Um link do chat da reunião, no navegador padrão (só http e https, até 2.048
+   *  caracteres, sem espaços nem caracteres de controle). */
   | { cmd: 'reuniaoLink'; url: string }
   /** (0.3.0; o iPhone recusa) O vídeo: a nossa câmera na ligação, a câmera e o H.264 das Configurações, o teste da câmera,
    *  as vistas à vista de cada página, o modo da janela, o novo download do H.264 e a altura do aviso. */

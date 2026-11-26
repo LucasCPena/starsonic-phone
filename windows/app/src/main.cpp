@@ -536,8 +536,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         if (url.empty()) return;
         window.RunOnWindow([url] { OpenUrl(url); });
     };
-    // (0.5.0) Um link do chat da reuniao no navegador padrao: qualquer http ou https valido (o nucleo ja conferiu), fora da
-    // lista do openUrl. Nada dele vai ao diagnostico.
+    // (0.5.0) Um link do chat da reuniao no navegador padrao: qualquer http ou https valido (o nucleo ja conferiu), fora
+    // da lista do openUrl. Nada dele vai ao diagnostico.
     hooks.openMeetingLink = [&window](const std::string& url) { window.RunOnWindow([url] { OpenUrl(url); }); };
     hooks.minimize = [&window] { window.RunOnWindow([&window] { window.Minimize(); }); };
     hooks.closeToTray = [&window] { window.RunOnWindow([&window] { window.CloseToTray(); }); };
