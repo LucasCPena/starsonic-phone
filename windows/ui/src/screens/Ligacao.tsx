@@ -740,11 +740,10 @@ export function Ligacao({
           sua
         )}
         {quem}
-        {ouvindoNoNavegador && (
-          <p class="call-ouvindo" role="status">
-            {NAVEGADOR_CONTINUA_OUVINDO}
-          </p>
-        )}
+        {/* Sempre na página, para o leitor de tela dizer o texto quando ele aparece. */}
+        <p class="call-ouvindo" role="status">
+          {ouvindoNoNavegador ? NAVEGADOR_CONTINUA_OUVINDO : ''}
+        </p>
         <div class="call-middle">{meio}</div>
         {baixo}
       </main>

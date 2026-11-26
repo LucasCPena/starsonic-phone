@@ -536,6 +536,8 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 .btn-complete { height: 54px; }
 .call-ouvindo { margin: 0; font-size: 12.5px; line-height: 1.45; color: #ffd9a0; text-align: center; }
 .win.call[data-layout="minimo"] .call-ouvindo { font-size: 12px; }
+/* Sem o texto, a região fica na página (o leitor de tela a conhece) e fora do fluxo: nenhum espaço entre os blocos. */
+.call-ouvindo:empty { position: absolute; width: 1px; height: 1px; overflow: hidden; }
 .consult-note { margin: 0; font-size: 12.5px; line-height: 1.45; color: #b9c4e6; text-align: center; }
 
 /* O aviso do canto (aviso.html): 380 de largura e 168 de altura (222 com o Atender com vídeo, 430 com a imagem do porteiro:

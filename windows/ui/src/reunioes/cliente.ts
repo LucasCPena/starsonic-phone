@@ -171,6 +171,12 @@ export class ReunioesCliente {
   /** A pausa de agora (null sem ela) e o relógio que a repete. */
   private pausa: Pausa | null = null;
   private relogioDaPausa: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * O último pedido da pausa de cada reunião, até terminar: o seguinte espera por ele. O servidor repassa à página na
+   * ordem em que os pedidos entram nele, e não na ordem em que o app os mandou: um falso que passasse na frente de um
+   * verdadeiro ainda no ar deixaria a página em pausa depois da ligação.
+   */
+  private readonly filaDaPausa = new Map<string, Promise<void>>();
   private v: VistaReunioes;
 
   constructor(o: { chat: ChatCliente; bridge: Bridge; base: string }) {
@@ -405,6 +411,7 @@ export class ReunioesCliente {
     this.conferindo = new Set();
     // Nada mais é mandado da pausa de antes: a de agora recomeça com a primeira reunião que um evento trouxer.
     this.pausa?.enviadas.clear();
+    this.filaDaPausa.clear();
     clearTimeout(this.relogioDaPausa);
     this.relogioDaPausa = undefined;
     this.mudou();
@@ -567,12 +574,47 @@ export class ReunioesCliente {
     clearTimeout(this.relogioDaPausa);
     this.relogioDaPausa = undefined;
     if (pausa) {
-      for (const codigo of pausa.enviadas) {
-        if (!this.abertas.has(codigo)) continue;
-        this.chat.pedir((api) => api.pausarReuniao(codigo, false, pausa.vez)).catch(() => undefined);
-      }
+      for (const codigo of pausa.enviadas) this.pausarOFim(codigo, pausa);
     }
     this.publicar();
+  }
+
+  /**
+   * O pausada falso de uma reunião que a pausa alcançou e que o cliente ainda tem; as falhas não são repetidas. A
+   * resposta vale como a da pausa: o 409 foraDaReuniao é a regra do "fora", o 404 tira a reunião, o 204 acaba a dúvida.
+   */
+  private pausarOFim(codigo: string, pausa: Pausa): void {
+    const a = this.abertas.get(codigo);
+    if (!a) return;
+    const vez = this.vez;
+    const epoca = a.epoca;
+    this.enviarAPausa(codigo, false, pausa).then(
+      () => this.pausaChegou(codigo, vez, false),
+      (e) => this.pausaSemResposta(codigo, e, vez, epoca, false),
+    );
+  }
+
+  /**
+   * Manda o `pausada` à reunião depois de o pedido anterior dela terminar (com resposta ou sem). Um verdadeiro que
+   * espera e já não tem pausa, ou que é de antes de uma parada da sessão, não sai (resolve sem mandar).
+   */
+  private enviarAPausa(codigo: string, pausada: boolean, pausa: Pausa): Promise<void> {
+    const vez = this.vez;
+    const anterior = this.filaDaPausa.get(codigo) ?? Promise.resolve();
+    const este = anterior.then(async () => {
+      if (vez !== this.vez) throw new Error('parou');
+      if (pausada && this.pausa !== pausa) return;
+      await this.chat.pedir((api) => api.pausarReuniao(codigo, pausada, pausa.vez));
+    });
+    const terminou = este.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.filaDaPausa.set(codigo, terminou);
+    void terminou.then(() => {
+      if (this.filaDaPausa.get(codigo) === terminou) this.filaDaPausa.delete(codigo);
+    });
+    return este;
   }
 
   /** Uma rodada da pausa: a todas as reuniões, e a próxima daqui a 10 s. */
@@ -600,20 +642,25 @@ export class ReunioesCliente {
     const vez = this.vez;
     const epoca = antes.epoca;
     try {
-      await this.chat.pedir((api) => api.pausarReuniao(codigo, true, pausa.vez));
+      await this.enviarAPausa(codigo, true, pausa);
     } catch (e) {
-      this.pausaSemResposta(codigo, e, vez, epoca);
+      this.pausaSemResposta(codigo, e, vez, epoca, true);
       return;
     }
+    if (this.pausa === pausa) this.pausaChegou(codigo, vez, true);
+  }
+
+  /** O 204: a pausa (ou o fim dela) chegou à reunião, e a dúvida dela acaba. */
+  private pausaChegou(codigo: string, vez: number, verdadeiro: boolean): void {
     const a = this.abertas.get(codigo);
-    if (vez !== this.vez || this.pausa !== pausa || !a) return;
-    // O 204: a pausa chegou, e a dúvida acaba.
-    a.falhou = false;
+    if (vez !== this.vez || !a) return;
+    if (verdadeiro) a.falhou = false;
     a.duvida = null;
     this.publicar();
   }
 
-  private pausaSemResposta(codigo: string, e: unknown, vez: number, epoca: number): void {
+  /** `conta`: a falha é da pausa que dura (o falso do fim não a conta, e não é repetido). */
+  private pausaSemResposta(codigo: string, e: unknown, vez: number, epoca: number, conta: boolean): void {
     const a = this.abertas.get(codigo);
     if (vez !== this.vez || ehParado(e) || !a) return;
     if (e instanceof ErroChat && e.status === 404) {
@@ -623,9 +670,9 @@ export class ReunioesCliente {
       this.mudou();
     } else if (e instanceof ErroChat && e.status === 409 && e.erro === 'foraDaReuniao') {
       // Não é uma falha, e não é para sempre: a rodada seguinte tenta de novo.
-      a.falhou = false;
+      if (conta) a.falhou = false;
       this.foraDaReuniao(codigo, epoca);
-    } else {
+    } else if (conta) {
       a.falhou = true;
     }
     this.publicar();

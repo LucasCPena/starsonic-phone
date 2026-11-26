@@ -1,9 +1,11 @@
 // A pausa da reunião aberta no navegador numa ligação (Task 12; a spec, 7.8 e 7.9): a regra pura, no Node; o resto na
 // tela, com os eventos pelo comEventos e a rota da pausa respondida pelo page.route (ela guarda os corpos). O relógio
-// da página fica parado e só anda pelo runFor, depois de o app tratar a leitura da lista e de a reunião abrir; antes de
-// cada runFor, um pedido de verdade ao servidor da página dá tempo de o app tratar o que ainda estava no ar.
-import { expect, test, type Page } from '@playwright/test';
-import { comandos, mudarEstado } from '../helpers';
+// da página fica parado e só anda pelo runFor, depois de o app tratar a leitura da lista e de a reunião abrir. O fim de
+// uma ligação traz a aba Reuniões de volta à vista, e ela lê a lista na hora (as leituras demoram 150 ms de propósito):
+// o fimDaLigacao espera a resposta dela e dá tempo de o app tratá-la antes de o relógio andar. Antes dos outros runFor,
+// um pedido de verdade ao servidor da página dá tempo de o app tratar o que ainda estava no ar.
+import { expect, test, type Page, type Response } from '@playwright/test';
+import { comandos, mudarEstado, semViolacoesSerias } from '../helpers';
 import { empresaComReunioes } from '../chat/servidor';
 import { esperarOsEventos, pararORelogio } from '../chat/abrir';
 import { haPausa, novaVez } from '../../src/reunioes/pausa';
@@ -59,6 +61,21 @@ async function chegaALigacao(page: Page, l: Record<string, unknown> | null): Pro
   await mudarEstado(page, (s) => ({ ...s, ligacao: l }));
   await page.clock.runFor(1);
 }
+const eALista = (r: Response) => new URL(r.url()).pathname === '/api/v1/reunioes' && r.request().method() === 'GET';
+
+/**
+ * A ligação acaba. Se a aba Reuniões ainda está à vista (o app volta ao Teclado num efeito, que com o relógio parado só
+ * roda quando ele anda), ela lê a lista na hora, e a leitura demora 150 ms de propósito: o teste espera a resposta
+ * chegar e dá tempo de o app tratá-la antes de o relógio andar.
+ */
+async function fimDaLigacao(page: Page): Promise<void> {
+  const leitura = page.waitForResponse(eALista, { timeout: 10_000 }).catch(() => null);
+  await chegaALigacao(page, null);
+  if (await page.getByRole('heading', { name: 'Reuniões', level: 1 }).isVisible()) {
+    expect(await leitura, 'a leitura da lista no fim da ligação').not.toBeNull();
+    await dandoTempo(page);
+  }
+}
 const frase = (page: Page) => page.getByText(FRASE, { exact: true });
 const eAConferencia = (url: URL) => /\/reunioes\/[^/]+\/participantes$/.test(url.pathname);
 
@@ -73,20 +90,37 @@ async function dandoTempo(page: Page): Promise<void> {
 async function respondendoAPausa(page: Page, inicial: Resposta) {
   let resposta = inicial;
   const corpos: Corpo[] = [];
+  /** Os corpos que chegaram e o "liberada" do momento em que o teste soltou os pedidos presos. */
+  const ordem: Array<Corpo | 'liberada'> = [];
+  let preso: Promise<void> | null = null;
+  let soltar = () => {};
   await page.route(
     (url) => /\/reunioes\/[^/]+\/pausa$/.test(url.pathname),
-    (rota) => {
+    async (rota) => {
       const pedido = rota.request();
       if (pedido.method() !== 'POST') return rota.continue();
       const codigo = new URL(pedido.url()).pathname.split('/')[4];
-      corpos.push({ codigo, ...pedido.postDataJSON() });
+      const corpo = { codigo, ...pedido.postDataJSON() };
+      corpos.push(corpo);
+      ordem.push(corpo);
+      if (preso) await preso;
       return resposta === 'abortar' ? rota.abort() : rota.fulfill(resposta);
     },
   );
   return {
     corpos,
+    ordem,
     responder(r: Resposta) {
       resposta = r;
+    },
+    /** Daqui em diante os pedidos chegam e ficam sem resposta, até o `liberar`. */
+    prender() {
+      preso = new Promise((r) => (soltar = r));
+    },
+    liberar() {
+      ordem.push('liberada');
+      preso = null;
+      soltar();
     },
   };
 }
@@ -98,12 +132,12 @@ async function respondendoAPausa(page: Page, inicial: Resposta) {
  */
 async function abrir(
   page: Page,
-  o: { cenario?: 'chat-duas-contas'; valeAte?: number; pausa?: Resposta; semRelogio?: boolean } = {},
+  o: { cenario?: 'chat-duas-contas'; valeAte?: number; pausa?: Resposta } = {},
 ) {
   const { pessoas } = await empresaComReunioes(EMPRESA, o.cenario ? [RECEPCAO, CAIXA] : [RECEPCAO]);
   const criada = await marcar(pessoas[0].api, noRelogioDaPagina(1, 10, 0), 'Planejamento de dezembro');
-  if (!o.semRelogio) await page.clock.install({ time: Date.now() });
-  const leituras = o.semRelogio ? null : await numerarAsLeituras(page, 150);
+  await page.clock.install({ time: Date.now() });
+  const leituras = await numerarAsLeituras(page, 150);
   const eventos = await comEventos(page);
   if (o.valeAte !== undefined) {
     const valeAte = o.valeAte;
@@ -120,14 +154,14 @@ async function abrir(
   const pausas = await respondendoAPausa(page, o.pausa ?? OK);
   await abrirNasReunioes(page, { chave: pessoas[0].chave, ...RECEPCAO, ...(o.cenario ? { cenario: o.cenario } : {}) });
   await esperarOsEventos(page);
-  if (leituras) await esperarALeitura(page, leituras, 2);
+  await esperarALeitura(page, leituras, 2);
   const antes = (await comandos(page)).filter((c) => c.cmd === 'reuniaoNavegador').length;
   await page.getByRole('button', { name: /^Mais opções de / }).click();
   await page.getByRole('menu').getByRole('menuitem', { name: 'Abrir no navegador' }).click();
   await expect
     .poll(async () => (await comandos(page)).filter((c) => c.cmd === 'reuniaoNavegador').length)
     .toBe(antes + 1);
-  if (leituras) await pararORelogio(page);
+  await pararORelogio(page);
   return { codigo: criada.codigo, eventos, pausas };
 }
 
@@ -167,7 +201,7 @@ test('a regra da pausa: uma ligação só tocando não pausa nada', () => {
   expect(haPausa(l(cartao(true, 'ringing'), cartao(true, 'ringing')))).toBe(false);
   expect(haPausa(l(cartao(true, 'ringing'), cartao(false, 'active')))).toBe(true);
   const sala = { id: 1, fora: false, cheia: false, participantes: [] };
-  expect(haPausa({ ...l(cartao(false, 'active')), sala })).toBe(true);
+  expect(haPausa({ ...l(cartao(true, 'ringing')), sala })).toBe(true);
 });
 
 test('o vez tem 12 caracteres de letras e números, e muda a cada pausa', () => {
@@ -202,7 +236,7 @@ test('o fim da ligação manda o pausada falso com o mesmo vez, e as repetiçõe
   await expect.poll(() => pausas.corpos.length).toBe(1);
   const vez = pausas.corpos[0].vez;
   await dandoTempo(page);
-  await chegaALigacao(page, null);
+  await fimDaLigacao(page);
   await expect.poll(() => pausas.corpos.length).toBe(2);
   expect(pausas.corpos[1]).toEqual({ codigo, pausada: false, vez });
   await dandoTempo(page);
@@ -334,17 +368,17 @@ test('a dúvida acaba 12 horas depois', async ({ page }) => {
   await dandoTempo(page);
   await chegaALigacao(page, ligacao());
   await expect(frase(page)).toBeVisible();
-  await chegaALigacao(page, null);
+  await fimDaLigacao(page);
   await expect(frase(page)).toHaveCount(0);
-  await dandoTempo(page);
   await page.clock.fastForward(11 * HORA);
   let n = pausas.corpos.length;
   await chegaALigacao(page, ligacao());
   await expect.poll(() => pausas.corpos.length).toBeGreaterThan(n);
-  await expect(frase(page)).toBeVisible();
-  await chegaALigacao(page, null);
-  await expect(frase(page)).toHaveCount(0);
+  // Só depois de o app tratar o 409 dessa pausa: a frase continua lá.
   await dandoTempo(page);
+  await expect(frase(page)).toBeVisible();
+  await fimDaLigacao(page);
+  await expect(frase(page)).toHaveCount(0);
   await page.clock.fastForward(2 * HORA);
   n = pausas.corpos.length;
   await chegaALigacao(page, ligacao());
@@ -361,6 +395,8 @@ test('a troca de conta para a pausa que está rodando', async ({ page }) => {
   expect(pausas.corpos[0]).toMatchObject({ codigo, pausada: true });
   await dandoTempo(page);
   // A tela da ligação não tem o menu das contas: a troca é a do selectAccount da ponte falsa, pelo estado.
+  const novaConexao = page.waitForEvent('websocket');
+  const listaDaNova = page.waitForResponse(eALista);
   await mudarEstado(page, (s) => {
     const conta = s.contas.find((c: { ramal: string }) => c.ramal === CAIXA.ramal);
     return {
@@ -370,15 +406,102 @@ test('a troca de conta para a pausa que está rodando', async ({ page }) => {
     };
   });
   await page.clock.runFor(1);
+  // A sessão da Caixa 2: os eventos no ar de novo e a lista dela lida.
+  await novaConexao;
+  await esperarOsEventos(page);
+  await listaDaNova;
   await dandoTempo(page);
   await page.clock.runFor(30_000);
   await dandoTempo(page);
   expect(pausas.corpos).toHaveLength(1);
   // O fim da ligação, depois do parou, também não manda o pausada falso.
-  await chegaALigacao(page, null);
-  await expect(page.locator('.account-name')).toHaveText('Caixa 2 · 2015');
-  await dandoTempo(page);
+  await fimDaLigacao(page);
   await page.clock.runFor(10_000);
+  await expect(page.locator('.account-name')).toHaveText('Caixa 2 · 2015');
   await dandoTempo(page);
   expect(pausas.corpos).toHaveLength(1);
 });
+
+test('o falso do fim da ligação não passa na frente de um verdadeiro ainda no ar', async ({ page }) => {
+  const { codigo, pausas } = await abrir(page);
+  pausas.prender();
+  await chegaALigacao(page, ligacao());
+  await expect.poll(() => pausas.corpos.length).toBe(1);
+  const vez = pausas.corpos[0].vez;
+  await fimDaLigacao(page);
+  await dandoTempo(page);
+  // O falso espera: o servidor o repassaria à página antes do verdadeiro, e ela ficaria em pausa depois da ligação.
+  expect(pausas.corpos).toHaveLength(1);
+  pausas.liberar();
+  await expect.poll(() => pausas.corpos.length).toBe(2);
+  expect(pausas.ordem).toEqual([
+    { codigo, pausada: true, vez },
+    'liberada',
+    { codigo, pausada: false, vez },
+  ]);
+});
+
+test('o 404 do falso do fim tira a reunião da lista: a pausa seguinte não a tenta', async ({ page }) => {
+  const { pausas } = await abrir(page);
+  await chegaALigacao(page, ligacao());
+  await expect.poll(() => pausas.corpos.length).toBe(1);
+  await dandoTempo(page);
+  pausas.responder({ status: 404, json: { erro: 'naoEncontrado' } });
+  await fimDaLigacao(page);
+  await expect.poll(() => pausas.corpos.length).toBe(2);
+  expect(pausas.corpos[1].pausada).toBe(false);
+  await dandoTempo(page);
+  await chegaALigacao(page, ligacao());
+  await dandoTempo(page);
+  await page.clock.runFor(10_000);
+  await dandoTempo(page);
+  expect(pausas.corpos).toHaveLength(2);
+});
+
+test('a região da frase fica na página, vazia sem a frase', async ({ page }) => {
+  const { codigo, eventos, pausas } = await abrir(page, { pausa: 'abortar' });
+  await eventos.mandar(naReuniao(codigo));
+  await chegaALigacao(page, ligacao());
+  const regiao = page.getByRole('status').and(page.locator('.call-ouvindo'));
+  await expect(regiao).toHaveText(FRASE);
+  await dandoTempo(page);
+  pausas.responder(OK);
+  await page.clock.runFor(10_000);
+  await expect(regiao).toHaveText('');
+  await expect(regiao).toHaveCount(1);
+});
+
+const TAMANHOS: Array<[number, number, string]> = [
+  [400, 720, 'normal'],
+  [360, 600, 'compacto'],
+  [300, 440, 'minimo'],
+];
+for (const tema of ['light', 'dark'] as const) {
+  test.describe(`tema ${tema}`, () => {
+    test.use({ colorScheme: tema });
+
+    test('a frase na tela da ligação: sem violação séria, e inteira nos três tamanhos', async ({ page }) => {
+      const { codigo, eventos } = await abrir(page, { pausa: 'abortar' });
+      await eventos.mandar(naReuniao(codigo));
+      await chegaALigacao(page, ligacao());
+      await expect(frase(page)).toBeVisible();
+      // O axe usa timers: com o relógio parado ele não termina. A frase fica (a rota continua abortando a pausa).
+      await page.clock.resume();
+      for (const [largura, altura, layout] of TAMANHOS) {
+        const onde = `${largura}×${altura}`;
+        await page.setViewportSize({ width: largura, height: altura });
+        await expect(page.locator('.win')).toHaveAttribute('data-layout', layout);
+        await expect(frase(page), onde).toBeVisible();
+        const caixa = (await frase(page).boundingBox())!;
+        expect(caixa.x, onde).toBeGreaterThanOrEqual(0);
+        expect(caixa.x + caixa.width, onde).toBeLessThanOrEqual(largura);
+        expect(caixa.y + caixa.height, onde).toBeLessThanOrEqual(altura);
+        const cortada = await frase(page).evaluate((e) => e.scrollWidth > e.clientWidth + 0.5);
+        expect(cortada, `a frase cortada em ${onde}`).toBe(false);
+        const rola = await page.evaluate(() => document.scrollingElement!.scrollWidth);
+        expect(rola, `a página rola na horizontal em ${onde}`).toBeLessThanOrEqual(largura);
+        await semViolacoesSerias(page);
+      }
+    });
+  });
+}
