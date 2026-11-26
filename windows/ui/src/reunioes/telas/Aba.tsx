@@ -5,7 +5,8 @@
 // `status` que o leitor de tela lê) e o botão do menu: até quando o link vale e o "Cancelar a reunião", que pergunta
 // antes (Cancelar.tsx). No tamanho Mínimo, a linha só tem o botão do menu, e o "Copiar link" é o primeiro item dele. A
 // hora de agora é lida a cada desenho, e a aba é desenhada de novo a cada leitura da lista. No alto da lista fica o
-// campo do link de uma reunião (de qualquer pessoa): com um texto, o "Abrir no navegador" (o Enter é o botão); o que
+// campo do link de uma reunião (de qualquer pessoa): com um texto, o "Entrar" (o botão principal; o Enter é ele) e o
+// "Abrir no navegador" (3b: o Entrar abre a reunião dentro do app); o que
 // o `codigoDoTexto` não aceita diz "Este não é um link de reunião do Starsonic." sem pedido nenhum; os erros ficam
 // num `alert` embaixo do campo, e o da outra empresa traz o "Abrir no navegador" sem o passe. Deu certo: o campo
 // esvazia. O "Abrir no navegador" do menu da linha manda o erro dele ao aviso curto do app.
@@ -14,7 +15,7 @@
 // o foco o jogaria para o fundo. O erro do passe fica na linha, num `alert` sempre montado; o da reunião de outra
 // empresa traz o "Abrir no navegador" sem o passe. Com a vista da reunião aberta, a aba fica embaixo dela, sem o foco.
 import type { JSX } from 'preact';
-import { useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { Menu } from '../../components/Menu';
 import {
   IconAbrirNoNavegador,
@@ -73,6 +74,16 @@ interface Props {
   onAbrirComoConvidado(codigo: string): void;
   /** O "Entrar" da linha (e o do menu, no tamanho Mínimo): a reunião abre dentro do app, ou diz por que não. */
   onEntrar(codigo: string): Promise<ResultadoDoEntrar>;
+  /** O link do app (starsonic://reuniao/<código>) que chegou: a aba o põe no campo e faz o "Entrar" dele. */
+  linkDoApp: LinkDoApp | null;
+  /** O campo tratou o link do app de `vez`: o main não o guarda mais. */
+  onLinkDoApp(vez: number): void;
+}
+
+/** O link do app que espera a aba. A `vez` muda a cada link, mesmo com o mesmo código. */
+export interface LinkDoApp {
+  codigo: string;
+  vez: number;
 }
 
 interface LinhaProps
@@ -293,10 +304,14 @@ function Linha({
   );
 }
 
-interface CampoProps extends Pick<Props, 'base' | 'onAbrirDoCampo' | 'onAbrirComoConvidado'> {}
+interface CampoProps
+  extends Pick<
+    Props,
+    'base' | 'onAbrirDoCampo' | 'onAbrirComoConvidado' | 'onEntrar' | 'linkDoApp' | 'onLinkDoApp'
+  > {}
 
 /** O campo do link de uma reunião, no alto da lista. */
-function CampoDoLink({ base, onAbrirDoCampo, onAbrirComoConvidado }: CampoProps) {
+function CampoDoLink({ base, onAbrirDoCampo, onAbrirComoConvidado, onEntrar, linkDoApp, onLinkDoApp }: CampoProps) {
   const [texto, setTexto] = useState('');
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -315,9 +330,12 @@ function CampoDoLink({ base, onAbrirDoCampo, onAbrirComoConvidado }: CampoProps)
     setErro(null);
     setConvidado(null);
   };
-  const abrir = async () => {
+  // O "Entrar" (o botão principal e o Enter): a reunião dentro do app. O "Abrir no navegador": o navegador, como no 3a.
+  // Com o pedido no ar, os dois ficam `aria-disabled` e ignoram o clique (um `disabled` com o foco o jogaria para o
+  // fundo).
+  const abrir = async (como: 'entrar' | 'navegador', doApp: string | null = null) => {
     if (ocupado) return;
-    const codigo = codigoDoTexto(texto, base);
+    const codigo = doApp ?? codigoDoTexto(texto, base);
     if (codigo === null) {
       if (texto.trim() !== '') setErro(NAO_E_LINK_DE_REUNIAO);
       return;
@@ -325,7 +343,7 @@ function CampoDoLink({ base, onAbrirDoCampo, onAbrirComoConvidado }: CampoProps)
     setErro(null);
     setConvidado(null);
     setOcupado(true);
-    const r = await onAbrirDoCampo(codigo);
+    const r = await (como === 'entrar' ? onEntrar(codigo) : onAbrirDoCampo(codigo));
     if (!viva.current) return;
     setOcupado(false);
     if (r.ok) {
@@ -335,6 +353,15 @@ function CampoDoLink({ base, onAbrirDoCampo, onAbrirComoConvidado }: CampoProps)
       setConvidado(r.outraEmpresa ? codigo : null);
     }
   };
+  // O link do app: o link da reunião no campo e o "Entrar" dele, uma vez por `vez`.
+  const jaTratado = useRef(0);
+  useEffect(() => {
+    if (linkDoApp === null || linkDoApp.vez === jaTratado.current) return;
+    jaTratado.current = linkDoApp.vez;
+    onLinkDoApp(linkDoApp.vez);
+    setTexto(`${base.replace(/\/+$/, '')}/r/${linkDoApp.codigo}`);
+    void abrir('entrar', linkDoApp.codigo);
+  }, [linkDoApp]);
   const comoConvidado = () => {
     if (convidado === null) return;
     onAbrirComoConvidado(convidado);
@@ -351,7 +378,7 @@ function CampoDoLink({ base, onAbrirDoCampo, onAbrirComoConvidado }: CampoProps)
         e.preventDefault();
         // O Enter faz o que o botão à vista faz: com o erro da outra empresa, é o "Abrir no navegador" do convidado.
         if (convidado !== null) comoConvidado();
-        else void abrir();
+        else void abrir('entrar');
       }}
     >
       <div class="reun-link-linha">
@@ -369,7 +396,17 @@ function CampoDoLink({ base, onAbrirDoCampo, onAbrirComoConvidado }: CampoProps)
           />
         </label>
         {texto.trim() !== '' && convidado === null && (
-          <button type="submit" class="btn btn-cyan reun-link-abrir" disabled={ocupado}>
+          <button type="submit" class="btn btn-cyan reun-link-abrir" aria-disabled={ocupado ? 'true' : undefined}>
+            {ENTRAR}
+          </button>
+        )}
+        {texto.trim() !== '' && convidado === null && (
+          <button
+            type="button"
+            class="btn reun-link-navegador"
+            aria-disabled={ocupado ? 'true' : undefined}
+            onClick={() => void abrir('navegador')}
+          >
             {ABRIR_NO_NAVEGADOR}
           </button>
         )}
@@ -398,10 +435,16 @@ export function Aba({
   onAbrirDoCampo,
   onAbrirComoConvidado,
   onEntrar,
+  linkDoApp,
+  onLinkDoApp,
 }: Props) {
   const { lista, conectado, copiado } = vista;
   const agora = Date.now();
   const minimo = useLayout() === 'minimo';
+  // Sem o campo (sem conexão), o link do app não tem onde entrar: a frase da falta de conexão já está na tela.
+  useEffect(() => {
+    if (!conectado && linkDoApp !== null) onLinkDoApp(linkDoApp.vez);
+  }, [conectado, linkDoApp]);
   return (
     <div class="body scroll chat reun">
       <div class="reun-cabeca">
@@ -415,7 +458,14 @@ export function Aba({
         </button>
       </div>
       {conectado && (
-        <CampoDoLink base={base} onAbrirDoCampo={onAbrirDoCampo} onAbrirComoConvidado={onAbrirComoConvidado} />
+        <CampoDoLink
+          base={base}
+          onAbrirDoCampo={onAbrirDoCampo}
+          onAbrirComoConvidado={onAbrirComoConvidado}
+          onEntrar={onEntrar}
+          linkDoApp={linkDoApp}
+          onLinkDoApp={onLinkDoApp}
+        />
       )}
       {!conectado ? (
         <div class="chat-vazio">

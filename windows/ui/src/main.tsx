@@ -56,7 +56,8 @@ import type { Conversa as ConversaDaLista } from './chat/tipos';
 import { useAcao, useVistaChat } from './chat/usarChat';
 import { ReunioesCliente } from './reunioes/cliente';
 import { ReuniaoNoApp } from './reunioes/vista';
-import { Aba as AbaReunioes } from './reunioes/telas/Aba';
+import { Aba as AbaReunioes, type LinkDoApp } from './reunioes/telas/Aba';
+import { SEM_CHAT_ENTRE_PELO_NAVEGADOR } from './reunioes/textos';
 import { Nova as NovaReuniao } from './reunioes/telas/Nova';
 import { Reuniao, useVistaDaReuniao } from './reunioes/telas/Reuniao';
 import { useVistaReunioes } from './reunioes/usarReunioes';
@@ -174,6 +175,8 @@ function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [view, setView] = useState<View>(initialView);
   const [toast, setToast] = useState<{ texto: string; vez: number } | null>(null);
+  // (Reuniões) O link do app que espera a aba Reuniões pôr no campo e entrar.
+  const [linkDoApp, setLinkDoApp] = useState<LinkDoApp | null>(null);
   // O último toast e quantos chegaram (nunca volta a zero): a edição do atalho sabe que o C++ recusou (o motivo vem num
   // toast, com o texto da loja) e distingue essa resposta de um aviso de outra coisa.
   const [toasts, setToasts] = useState({ n: 0, texto: '' });
@@ -243,6 +246,18 @@ function App() {
           // (Reuniões) O clique fora dos botões do aviso do pedido: a aba Reuniões, se ela existe (a tecla Ctrl + 6 tem
           // a mesma regra). Sem ela, a pessoa fica onde estava.
           if (atual.current?.chat?.ligado && reunioesCliente.vista().aba) setView(ABA_REUNIOES);
+        } else if (!noIphone.current && msg.tela === 'reuniao') {
+          // (Reuniões) O link do app (starsonic://reuniao/<código>): a aba Reuniões, com o link no campo e o "Entrar"
+          // dele.
+          // Sem o chat ou sem a aba, só o aviso curto. Com uma ligação a aba não aparece: o Entrar recusa direto.
+          if (!atual.current?.chat?.ligado || !reunioesCliente.vista().aba) {
+            reunioesCliente.avisar(SEM_CHAT_ENTRE_PELO_NAVEGADOR);
+          } else if (atual.current.ligacao) {
+            void reuniaoNoApp.entrar(msg.codigo);
+          } else {
+            setView(ABA_REUNIOES);
+            setLinkDoApp((l) => ({ codigo: msg.codigo, vez: (l?.vez ?? 0) + 1 }));
+          }
         }
       } else if (msg.type === 'reuniaoResposta') {
         // (Reuniões) A resposta do aviso ao pedido que ele mostra: o cliente tira o pedido e chama a rota.
@@ -964,6 +979,8 @@ function App() {
             onAbrirDoCampo={(codigo) => reunioesCliente.abrirNoNavegador(codigo)}
             onAbrirComoConvidado={(codigo) => reunioesCliente.abrirComoConvidado(codigo)}
             onEntrar={(codigo) => reuniaoNoApp.entrar(codigo)}
+            linkDoApp={linkDoApp}
+            onLinkDoApp={(vez) => setLinkDoApp((l) => (l?.vez === vez ? null : l))}
           />
         )}
       </main>

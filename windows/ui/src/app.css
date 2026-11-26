@@ -1823,6 +1823,11 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
   font-size: 14px; font-weight: 500; color: var(--text-strong); }
 .reun-link-input::placeholder { color: var(--text-muted); opacity: 1; }
 .reun-link-abrir { height: 40px; padding: 0 16px; font-size: 14px; flex: none; align-self: flex-start; }
+.reun-link-navegador { height: 40px; padding: 0 16px; font-size: 14px; flex: none; border: 1px solid var(--border);
+  background: var(--card); color: var(--text-strong); }
+.reun-link-navegador:hover { border-color: var(--cyan); }
+.reun-link-abrir[aria-disabled="true"] { background: var(--cyan-d); box-shadow: none; }
+.reun-link-navegador[aria-disabled="true"] { opacity: 0.55; }
 .reun-link-erro { margin: 0; font-size: 13px; line-height: 1.45; font-weight: 600; color: #b02a2a; }
 @media (prefers-color-scheme: dark) { .reun-link-erro { color: #ff8f8f; } }
 

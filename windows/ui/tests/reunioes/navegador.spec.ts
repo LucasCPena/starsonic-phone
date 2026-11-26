@@ -3,7 +3,7 @@
 // passe não aparece no console, na tela nem em outro comando; a troca de pessoa no meio não abre nada; um pedido por
 // código de cada vez; a acessibilidade nos dois temas. O passe é de verdade: a página da reunião o aceita.
 import { expect, test, type Page, type Route } from '@playwright/test';
-import { capturar, comandos, semViolacoesSerias, type Comando } from '../helpers';
+import { capturar, comandos, esperarComando, semViolacoesSerias, type Comando } from '../helpers';
 import { baseDoChat, empresaComReunioes, type ApiDeTeste } from '../chat/servidor';
 import { abrirNasReunioes, meioDiaDeHoje, noRelogioDaPagina } from './abrir';
 
@@ -117,9 +117,9 @@ test('o campo aceita o link inteiro e só o código', async ({ page }) => {
   // Deu certo: o campo esvazia e o botão some.
   await expect(campo(page)).toHaveValue('');
   await expect(abrirNoNavegador(page)).toHaveCount(0);
-  // Só o código, com o Enter no campo (e em maiúsculas: o código é lido em minúsculas).
+  // Só o código, em maiúsculas (o código é lido em minúsculas).
   await campo(page).fill(criada.codigo.toUpperCase());
-  await campo(page).press('Enter');
+  await abrirNoNavegador(page).click();
   await expect.poll(async () => (await doNavegador(page)).length).toBe(2);
   await expect(campo(page)).toHaveValue('');
   const comandosDoNavegador = await doNavegador(page);
@@ -130,6 +130,12 @@ test('o campo aceita o link inteiro e só o código', async ({ page }) => {
   // Cada abrir pediu um passe novo.
   expect(comandosDoNavegador[0].passe).not.toBe(comandosDoNavegador[1].passe);
   await expect(alerta(page)).toHaveCount(0);
+  // O Enter no campo é o "Entrar" (plano 3b), e não mais o "Abrir no navegador": a reunião abre dentro do app.
+  await campo(page).fill(criada.codigo);
+  await campo(page).press('Enter');
+  await esperarComando(page, { cmd: 'videoWindow', modo: 'grande' });
+  await expect(page.locator('iframe[title="Reunião"]')).toHaveCount(1);
+  expect(await doNavegador(page)).toHaveLength(2);
 });
 
 test('um texto que não é um link diz Este não é um link de reunião do Starsonic, sem pedir nada', async ({ page }) => {
@@ -256,7 +262,7 @@ test('as muitas tentativas e o servidor que não responde dizem cada um a sua fr
   await expect(campo(page)).toHaveValue(criada.codigo);
   await page.unroute(ePasse);
   modo = 'segue';
-  await campo(page).press('Enter');
+  await abrirNoNavegador(page).click();
   await expect.poll(async () => (await doNavegador(page)).length).toBe(1);
   await expect(alerta(page)).toHaveCount(0);
 });
@@ -326,7 +332,7 @@ test('um segundo clique com o pedido no ar não pede outro passe', async ({ page
   await abrirNoNavegador(page).click();
   await expect.poll(() => segurado.pedidos()).toBe(1);
   // O botão espera, o Enter no campo e o item do menu da mesma reunião também.
-  await expect(abrirNoNavegador(page)).toBeDisabled();
+  await expect(abrirNoNavegador(page)).toHaveAttribute('aria-disabled', 'true');
   await campo(page).press('Enter');
   await botaoMais(page).click();
   await itemDoMenu(page).click();
@@ -339,7 +345,7 @@ test('um segundo clique com o pedido no ar não pede outro passe', async ({ page
   expect(segurado.pedidos()).toBe(1);
   // Terminado o pedido, um novo é permitido.
   await campo(page).fill(criada.codigo);
-  await campo(page).press('Enter');
+  await abrirNoNavegador(page).click();
   await expect.poll(async () => (await doNavegador(page)).length).toBe(2);
 });
 

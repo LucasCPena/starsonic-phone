@@ -12,13 +12,14 @@
 // - O `estado` da página muda a fase (`entrada`, `naReuniao`, `fora`) e o `microfone`. O `link` vai ao `reuniaoLink`
 //   (só http e https, até 2.048 caracteres; o núcleo confere de novo).
 // - Os `aparelhos` das Configurações vão no `passe` e, depois, a cada mudança deles.
+// - Com o WebView2 abaixo do mínimo (WEBVIEW2_MINIMO), o Entrar abre no navegador e diz por quê.
 // - As ligações de agora (o CallState) servem ao Entrar, que recusa com uma ligação (também tocando, ou a sala de vídeo
 //   de pé) e com outra reunião na vista; a reunião que já está na vista só é mostrada.
 // Nada da reunião (o código, o passe, o link, o assunto) vai ao console.
 import type { Bridge } from '../bridge';
 import type { CallState } from '../state';
 import type { ReunioesCliente, ResultadoSemPasse } from './cliente';
-import { DESLIGUE_PARA_ENTRAR, SAIA_PARA_ENTRAR_EM_OUTRA } from './textos';
+import { DESLIGUE_PARA_ENTRAR, SAIA_PARA_ENTRAR_EM_OUTRA, WEBVIEW2_ANTIGO } from './textos';
 
 export type FaseNoApp = 'nenhuma' | 'carregando' | 'naoAbriu' | 'entrada' | 'naReuniao' | 'fora';
 
@@ -47,8 +48,16 @@ export interface Aparelhos {
 export const PRONTA_MS = 15_000;
 /** Sem o `fim` neste tempo depois do `sair`, a vista fecha assim mesmo (a Task 7). */
 export const SAIR_MS = 2_000;
+/** O mínimo do WebView2 para a reunião dentro do app (a escolha 1 da spec). */
+export const WEBVIEW2_MINIMO = 131;
 /** O mais que o `reuniaoLink` aceita. */
 const LINK_MAXIMO = 2048;
+
+/** A versão do WebView2 pelo `Edg/<n>` do userAgent; null sem ele (o Chromium dos testes, por exemplo). */
+export function versaoDoWebView2(userAgent: string): number | null {
+  const m = /\bEdg\/(\d+)/.exec(userAgent);
+  return m === null ? null : Number(m[1]);
+}
 
 export type ResultadoDoEntrar = { ok: true } | ResultadoSemPasse;
 
@@ -108,6 +117,14 @@ export class ReuniaoNoApp {
 
   /** O "Entrar": confere se pode, pede o passe e, com ele, abre a vista e pede o tamanho grande. */
   async entrar(codigo: string): Promise<ResultadoDoEntrar> {
+    // O WebView2 antigo não abre a reunião dentro do app: ela abre no navegador (como o "Abrir no navegador"), e o
+    // aviso curto diz por quê. Os erros do passe voltam como os de quem abre no navegador.
+    const versao = versaoDoWebView2(navigator.userAgent);
+    if (versao !== null && versao < WEBVIEW2_MINIMO) {
+      const r = await this.reunioes.abrirNoNavegador(codigo);
+      if (r.ok) this.reunioes.avisar(WEBVIEW2_ANTIGO);
+      return r;
+    }
     if (this.ligacao !== null) {
       this.reunioes.avisar(DESLIGUE_PARA_ENTRAR);
       return SEM_RESULTADO;
