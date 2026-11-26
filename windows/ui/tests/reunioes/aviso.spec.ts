@@ -1,7 +1,9 @@
 // O aviso do canto com um pedido para entrar na reunião (aviso.html, a tela 11): o texto, os botões, as respostas, o
 // clique fora dos botões, a ligação que toma o aviso, o axe e o teclado, contra a ponte falsa (?fake=aviso-pedido).
 import { test, expect, type Page } from '@playwright/test';
-import { abrir, comandos, esperarComando, estado, mudarEstado, semViolacoesSerias, vezes } from '../helpers';
+import { abrir, capturar, comandos, esperarComando, estado, mudarEstado, semViolacoesSerias, vezes } from '../helpers';
+
+const nomeDoTema = (tema: 'light' | 'dark') => (tema === 'light' ? 'claro' : 'escuro');
 
 const ID = '8899aabbccddeeff';
 const NOME_DO_AVISO = 'Maria Lima quer entrar na reunião Planejamento de dezembro';
@@ -157,6 +159,7 @@ for (const tema of ['light', 'dark'] as const) {
       await abrirAviso(page);
       await expect(botao(page, 'Aceitar')).toBeVisible();
       await semViolacoesSerias(page);
+      await capturar(page, 'reunioes-aviso', nomeDoTema(tema));
     });
   });
 }

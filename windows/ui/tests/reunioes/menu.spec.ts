@@ -4,7 +4,7 @@
 // acessibilidade nos dois temas. As reuniões são criadas pela ApiDeTeste, com as horas do relógio da página
 // (noRelogioDaPagina).
 import { expect, test, type Page, type Route } from '@playwright/test';
-import { semViolacoesSerias } from '../helpers';
+import { capturar, semViolacoesSerias } from '../helpers';
 import { pararORelogio } from '../chat/abrir';
 import { empresaComReunioes, type ApiDeTeste } from '../chat/servidor';
 import { abrirNasReunioes, meioDiaDeHoje, noRelogioDaPagina } from './abrir';
@@ -366,9 +366,11 @@ for (const tema of ['light', 'dark'] as const) {
       await botaoMais(page).click();
       await expect(menu(page)).toBeVisible();
       await semViolacoesSerias(page);
+      await capturar(page, 'reunioes-menu', nomeDoTema(tema));
       await itemCancelar(page).click();
       await expect(pergunta(page)).toBeVisible();
       await semViolacoesSerias(page);
+      await capturar(page, 'reunioes-cancelar', nomeDoTema(tema));
       // A falha dentro do diálogo.
       await page.route(eOCancelar, (rota: Route) => rota.abort());
       await cancelarNoDialogo(page).click();

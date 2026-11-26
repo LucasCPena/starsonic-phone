@@ -3,7 +3,7 @@
 // aba à vista; a meia-noite; o semReunioes; a troca de pessoa; a acessibilidade e os três tamanhos da janela. As
 // reuniões são criadas pela ApiDeTeste, com as horas do relógio da página (noRelogioDaPagina).
 import { expect, test, type Page, type Route } from '@playwright/test';
-import { semViolacoesSerias } from '../helpers';
+import { capturar, semViolacoesSerias } from '../helpers';
 import { abrirNoChat, pararORelogio } from '../chat/abrir';
 import { empresaComPessoas, empresaComReunioes, liberarReunioes } from '../chat/servidor';
 import {
@@ -278,12 +278,14 @@ for (const tema of ['light', 'dark'] as const) {
       await abrirNasReunioes(page, { chave: pessoas[0].chave, ...RECEPCAO });
       await expect(linhas(page)).toHaveCount(2);
       await semViolacoesSerias(page);
+      await capturar(page, 'reunioes-aba', nomeDoTema(tema));
 
       // A primeira vez e a falta de conexão.
       const vazia = await empresaComReunioes(EMPRESA, [RECEPCAO]);
       await abrirNasReunioes(page, { chave: vazia.pessoas[0].chave, ...RECEPCAO });
       await expect(page.getByRole('heading', { name: 'Nenhuma reunião marcada' })).toBeVisible();
       await semViolacoesSerias(page);
+      await capturar(page, 'reunioes-primeira-vez', nomeDoTema(tema));
       await page.route(eAListaDasReunioes, (rota) => rota.abort());
       await abas(page).first().click();
       await abaReunioes(page).click();

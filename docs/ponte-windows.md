@@ -504,6 +504,8 @@ transferência.`, `Sem conexão com o servidor. Tente de novo em instantes.`) n�
   `config.bipeFim` está ligado. Duas que acabam juntas (a conferência) dão um bipe só. Não vem para a recusada, a
   perdida ou a que não completou, nem quando a outra ligação continua. Não muda o toque de agora e não volta no
   `ready`.
+- (0.5.0) O aviso do canto também mostra quem quer entrar numa reunião aberta no navegador, por uma regra própria (a
+  janela fora da frente, ou a reunião escondida): ver "O aviso do canto com um pedido", em "As reuniões (0.5.0)".
 
 ```json
 {"v":1,"type":"toast","texto":"A troca de conta fica para o fim da ligação."}
@@ -1022,6 +1024,101 @@ A página de uma reunião do chat abre num `iframe` da janela principal. A regra
 (`index.html`) deixa esse quadro com o `frame-src https://chat.starcloud-starsonic.com.br:8443`; a do aviso
 (`aviso.html`) não deixa quadro nenhum de fora.
 
+### Os comandos das reuniões
+
+Quatro comandos da interface para o núcleo, **só no Windows** (a aba Reuniões não existe no iPhone). Quem os trata é o
+`DesktopApp`; o formato do código, do passe e do id de um pedido é o do `starsonic/desktop/Reunioes.cpp`. Os limites
+contam pontos de código, como nos comandos do chat, e um campo fora da regra faz o comando ser ignorado inteiro.
+
+- **`reuniaoNavegador`**: `codigo` (texto: 10 caracteres de `abcdefghjkmnpqrstvwxyz23456789`) e `passe` (texto opcional:
+  43 de `[A-Za-z0-9_-]`). O núcleo chama o gancho `openMeeting` com o código e o passe, e o executável abre a reunião no
+  navegador padrão (ver "O navegador"). Um `passe` vazio vale como nenhum passe: `"passe": ""` e a falta do campo dão
+  o mesmo endereço, o sem passe.
+- **`reuniaoPedido`**: `pedido` (objeto opcional) e `escondida` (booleano, obrigatório quando há `pedido`). O `pedido`
+  leva o `id` (16 de `[0-9a-f]`), o `nome` (1 a 120 caracteres, sem caractere de controle) e o `assunto` (0 a 120
+  caracteres, sem caractere de controle, ou `null`). Com `pedido`, o núcleo guarda esse pedido como o que o aviso do
+  canto mostra; sem `pedido`, não há pedido para mostrar, e o que estava guardado sai. O `assunto` vazio quer dizer que
+  a reunião não tem assunto; o `null`, que o app não sabe. O `escondida` sozinho, sem `pedido`, não muda nada.
+- **`reuniaoResposta`**: `pedido` (o id, como acima) e `resposta` (`aceitar`, `recusar` ou `fechar`). Só vale para o
+  pedido que o aviso mostra: o núcleo o tira e manda à interface principal a mensagem `reuniaoResposta` (abaixo). Para
+  outro id, ou sem pedido guardado (uma resposta atrasada), não faz nada.
+- **`reuniaoMostrar`**: sem campos. É o clique do aviso fora dos botões: o núcleo manda à interface principal o `abrir`
+  com a `tela` `reunioes`, e o executável traz a janela principal para a frente.
+
+- Um `pedido` que não é um objeto, sem um dos três campos, ou com um deles fora da regra é recusado com o motivo
+  `pedido invalido`; um `escondida` que falta, com `falta o campo escondida`. O código e o passe fora da regra dão
+  `codigo invalido` e `passe invalido`, e a resposta, `resposta invalida`. O motivo diz o campo, nunca o valor.
+- A janela do aviso manda o `reuniaoResposta` e o `reuniaoMostrar`; a janela principal manda o `reuniaoNavegador` e o
+  `reuniaoPedido`. O Não perturbe não muda nada neste grupo: o aviso do pedido é da reunião em que a pessoa está.
+- **O diagnóstico** leva só o nome do comando, nunca o código, o passe, o id, o nome nem o assunto:
+  `reunioes: reuniaoNavegador`, `reunioes: reuniaoPedido`, `reunioes: reuniaoResposta`,
+  `reunioes: reuniaoResposta ignorada (outro pedido)` e `reunioes: reuniaoMostrar`. Um comando recusado deixa a linha de
+  sempre (`comando ignorado: <comando>: <motivo>`). No iPhone, os quatro são recusados como os do chat, com
+  `comando recusado no modo iPhone: <comando>`.
+
+```json
+{"v":1,"cmd":"reuniaoNavegador","codigo":"k7q49xwpht","passe":"Exemplo_de-passe-inventado-0123456789abcdef"}
+{"v":1,"cmd":"reuniaoNavegador","codigo":"k7q49xwpht"}
+{"v":1,"cmd":"reuniaoPedido","escondida":true,
+ "pedido":{"id":"8899aabbccddeeff","nome":"Maria Lima","assunto":"Planejamento de dezembro"}}
+{"v":1,"cmd":"reuniaoPedido"}
+{"v":1,"cmd":"reuniaoResposta","pedido":"8899aabbccddeeff","resposta":"aceitar"}
+{"v":1,"cmd":"reuniaoMostrar"}
+```
+
+### As mensagens das reuniões
+
+- `{"v":1,"type":"reuniaoResposta","pedido":"8899aabbccddeeff","resposta":"aceitar"}`: a resposta do aviso (`aceitar`,
+  `recusar` ou `fechar`) ao pedido que ele mostrava, para a janela principal, que chama a rota do servidor do chat. Só
+  vem uma vez por pedido, e só para o pedido que o núcleo ainda tinha guardado.
+- `{"v":1,"type":"abrir","tela":"reunioes"}`: a pessoa clicou fora dos botões do aviso de um pedido. A interface vai
+  para a aba Reuniões, se ela existe (sem a aba, a pessoa fica onde estava). Diferente do `abrir` do chat, não tem
+  `conversa`, e vem na hora, uma vez por clique.
+
+```json
+{"v":1,"type":"reuniaoResposta","pedido":"8899aabbccddeeff","resposta":"recusar"}
+{"v":1,"type":"abrir","tela":"reunioes"}
+```
+
+### O campo do estado
+
+```json
+"reuniao":{"pedido":{"id":"8899aabbccddeeff","nome":"Maria Lima","assunto":"Planejamento de dezembro"},
+           "escondida":true}
+```
+
+O campo **só vem** enquanto há um pedido para mostrar (no Windows; o estado do iPhone nunca o leva), e `assunto` é
+`null` quando o app não o sabe.
+
+- `reuniao.pedido.id` (texto): o id do pedido (16 de `[0-9a-f]`).
+- `reuniao.pedido.nome` (texto): quem quer entrar.
+- `reuniao.pedido.assunto` (texto ou `null`): o assunto da reunião; `""` quando ela não tem assunto; `null` quando o app
+  não sabe.
+- `reuniao.escondida` (booleano): a reunião está escondida da pessoa. Neste plano vai sempre `true` (a reunião está no
+  navegador).
+
+O pedido vive **só na memória do núcleo**: nada vai ao disco. Ele sai quando a resposta do aviso é repassada, quando
+chega um `reuniaoPedido` sem `pedido`, e quando a janela principal manda o `ready` (recarregou, ou o navegador foi
+refeito: ninguém mais saberia tirar o pedido do aviso). O `ready` da página do aviso não mexe nele.
+
+### O aviso do canto com um pedido
+
+O executável decide se o aviso do canto aparece pelo `ShowsNotice` (o `ShellState.cpp`, que lê o `reuniao` do estado):
+aparece com a ligação tocando como antes (a janela fora da frente, ou o porteiro tocando como a segunda ligação), **ou**
+com um pedido para mostrar e a janela fora da frente **ou** com a reunião escondida. Como o `escondida` vai `true`, um
+pedido de uma reunião do navegador aparece também com a janela do app na frente. Com as duas coisas valendo, a página do
+aviso desenha a ligação, e o pedido espera. O aviso não toma o foco da janela principal. O clique fora dos botões manda
+o `reuniaoMostrar`, e o executável traz a janela principal para a frente; o Aceitar, o Recusar e o fechar mandam o
+`reuniaoResposta`, que não traz a janela.
+
+### O navegador
+
+O `reuniaoNavegador` abre o navegador padrão num endereço que o executável monta (o `MeetingLinks.cpp`), a partir do
+endereço do chat que ele já traz (o `kChatOrigin`): o endereço do chat, `/r/` e o código; com o passe, `#p=` e o passe
+(`https://chat.starcloud-starsonic.com.br:8443/r/k7q49xwpht#p=<passe>`). O executável confere de novo o formato do
+código e do passe, e, se não servir, não abre nada. O passe vai no fragmento, que o navegador não manda ao servidor.
+Nada do endereço (o código, o passe) vai ao diagnóstico.
+
 ### Para o executável: o que a janela principal deixa
 
 As regras ficam no `WebPermissions.h`, e quem decide o que um quadro ganha é o endereço do **documento que ele mostra**
@@ -1246,6 +1343,8 @@ Recusados inteiros: nada muda, nenhum gancho é chamado, e o diagnóstico ganha 
   `answer` não é recusado: o comando vale, e o `DesktopApp` passa `false` ao motor;
 - (0.4.0) a sala de vídeo: `salaAdicionar`, `salaTirar`, `salaEncerrar` e `salaVoltar`. O `ligacao.sala` do iPhone é
   sempre `null`;
+- (0.5.0) as reuniões: `reuniaoNavegador`, `reuniaoPedido`, `reuniaoResposta` e `reuniaoMostrar`. O estado do iPhone não
+  tem o `reuniao`, e a aba Reuniões não existe nele;
 - (0.2.0) o chat: `chatKey`, `chatLink`, `chatUnlink`, `chatNotify`, `chatBadge` e `chatDownload`. O estado do iPhone
   não tem o `chat`, e o `DesktopApp::SetWindowInFront` e o `DesktopApp::OpenChat` só deixam uma linha no diagnóstico
   (`janela na frente: recusada no modo iPhone`, `abrir o chat: recusado no modo iPhone`): o `ready` do iPhone nunca leva

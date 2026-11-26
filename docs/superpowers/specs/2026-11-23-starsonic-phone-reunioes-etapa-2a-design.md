@@ -78,6 +78,9 @@ O quadro mostra a janela no tamanho Normal e no grande, no tema claro. A aba Reu
 - **Não existe editar.** Para trocar o dia ou a hora, a pessoa cancela e marca outra.
 - **Cancelar** pergunta antes (tela 5). O link para de valer na hora, e quem está na reunião sai.
 - **Sem conexão com o chat,** a aba diz isso no lugar da lista, como a aba Chat.
+- **Nota de 26/11 (a construção do app): nesta metade, a lista não tem o "Entrar"** (a escolha 1 do plano): ele abre a
+  reunião dentro da janela do app, que é o plano 3b. Cada linha tem o "Copiar link" e o menu, e o campo do link tem só
+  o "Abrir no navegador". No tamanho Mínimo da janela, o "Copiar link" vai para o menu (a escolha 2).
 
 ### 4.3 Entrar numa reunião
 
@@ -88,6 +91,9 @@ O quadro mostra a janela no tamanho Normal e no grande, no tema claro. A aba Reu
 - **No PC com Windows, a página pergunta primeiro** (a tela 1 do quadro da página): "Abrir no app" ou "Entrar pelo navegador". A reunião de teste da administração não pergunta.
 - **Um link de reunião deste servidor numa conversa do chat do app** vira um link, e o clique leva à entrada da reunião no app. Nenhum outro endereço vira link ali.
 - **Com uma ligação em andamento, ou com a sala de vídeo aberta,** o app não abre uma reunião: ele diz para desligar antes. Numa reunião, ele não abre outra.
+  - **Nota de 26/11 (a construção do app): o "Abrir no navegador" funciona com uma ligação em andamento** (a escolha
+    14 do plano). A reunião do navegador entra em pausa assim que a pessoa entra nela, e a página mostra "Você está
+    numa ligação no Starsonic Phone…". O "desligue antes" desta seção é da reunião dentro do app, do plano 3b.
 - **Os avisos da página** (a reunião cheia, o servidor de reuniões cheio ou sem resposta, o link que não vale mais) aparecem dentro da janela do app, como no navegador. O "Telefone" da barra de cima leva de volta ao app.
 
 ### 4.4 Na reunião, o colega
@@ -118,6 +124,10 @@ O quadro mostra a janela no tamanho Normal e no grande, no tema claro. A aba Reu
 - **Com a sessão do Windows bloqueada,** a câmera da reunião desliga, e volta ao desbloquear, como a da videochamada. Só vale para a reunião dentro do app.
 - **Sair do app** (a bandeja, o Alt+F4, o Windows desligando) com uma reunião aberta é como fechar a aba do navegador: não há pergunta, e a página desliga a ligação ao ir embora, como já faz. O "Atualizar agora" do app pergunta antes, como o fechar.
 - **Trocar de conta, ou desligar o computador do chat,** com uma reunião aberta no app: a página sai da reunião antes, e um aviso curto diz por quê. O app também esquece as reuniões abertas no navegador: não mostra mais os avisos delas nem as põe em pausa. Elas continuam no navegador, com a pessoa que entrou.
+  - **Nota de 26/11 (a construção do app): o servidor manda os eventos de uma reunião ao computador, seja quem for que
+    o use.** Por isso, na troca de conta, o app lembra das reuniões do navegador que conhecia com a pessoa que saiu,
+    e, na sessão de outra pessoa, ignora os eventos delas (nem aviso, nem pausa). Na volta daquela pessoa, um evento
+    traz a reunião de volta, como para um app que foi reaberto (7.9).
 
 ## 5. Fora do escopo
 
@@ -258,6 +268,13 @@ Mensagens `postMessage`, sempre um objeto com `"starsonic": 1` e o `tipo`. A pá
 - **Os pedidos** chegam ao app pelos eventos do chat (seção 11 do protocolo), com a pessoa na reunião pelo app ou pelo navegador. O app os usa só para o aviso do Windows; dentro da reunião, quem mostra o pedido é a página.
 - **A resposta do aviso** (o "Aceitar" e o "Recusar") é a rota `aceitar` ou `recusar` do app. Um `409 jaRespondido` não é erro: outro colega respondeu antes.
 - **O link numa conversa do chat:** só o texto que é exatamente o endereço deste servidor, seguido de `/r/` e de um código de 10 caracteres, vira link.
+- **Nota de 26/11 (a construção do app): a aba só depois da primeira resposta, e a conferência de 10 s.** A aba
+  Reuniões aparece depois que o chat responde que a empresa tem as reuniões liberadas (a escolha 8 do plano); com o
+  app aberto sem conexão, ela aparece quando a conexão volta. Depois de aparecer, ela fica, e uma queda mostra a frase
+  da falta de conexão, até o chat dizer que a empresa não tem mais as reuniões. O servidor não avisa o computador que
+  saiu de uma reunião (os eventos vão só a quem ficou nela). Por isso o app confere, a cada 10 s e a cada volta da
+  conexão dos eventos, cada reunião aberta no navegador em que o computador está, pelo `participantes` (a escolha 18):
+  o pedido que ficou no aviso do Windows sai em até 10 s depois de a pessoa sair.
 
 ### 7.7 O núcleo e o executável
 
@@ -272,6 +289,13 @@ Mensagens `postMessage`, sempre um objeto com `"starsonic": 1` e o `tipo`. A pá
 - **O aviso do canto** aparece com um pedido para mostrar e a janela principal fora da frente, ou com a reunião escondida. Uma ligação tocando tem a vez: o pedido espera.
 - **O link `starsonic://reuniao/<código>`.** O instalador registra o `starsonic:` como já registra o `tel:`, o `sip:` e o `callto:`, e o desinstalador o tira. O Windows abre o app com o link, a instância que já roda o recebe, e o app mostra a entrada daquela reunião. Só esse formato exato vale: qualquer outra coisa depois de `starsonic:` é ignorada.
 - **Os tamanhos da janela** são os de hoje: o normal, o grande e a tela cheia. Na tela cheia da reunião, a barra do app continua à vista, com o "Sair da tela cheia".
+- **Nota de 26/11 (a construção do app): os nomes, a cópia e o aviso com a reunião do navegador.** Os comandos da
+  ponte ganharam os nomes `reuniaoNavegador` (o código e o passe, opcional), `reuniaoPedido` (o pedido que o aviso
+  mostra, com o `escondida`, ou nenhum), `reuniaoResposta` (a resposta do aviso, que o núcleo repassa à interface) e
+  `reuniaoMostrar` (o clique fora dos botões), e o `docs/ponte-windows.md` os descreve. Copiar o link é da página do
+  app (o `navigator.clipboard.writeText`), e não um comando do executável. A regra do aviso do canto (a escolha 6 do
+  plano) vale também com a janela do app na frente: o app não vê a reunião do navegador, e o pedido dela vai com
+  `escondida` verdadeiro.
 
 ### 7.8 O som, a câmera e as ligações da central
 
@@ -294,6 +318,25 @@ Dentro do app, a pausa vai por mensagem ao `iframe`: é na hora, e não depende 
 - **Sem o chat no ar** naquele momento, a pausa do navegador não chega. O app então diz, na tela da ligação, que a reunião do navegador continua ouvindo a pessoa.
 - **Nota de 23/11 (a construção): quem conta para a rota, e o `409`.** A rota responde `204` só enquanto um participante daquela pessoa e daquele computador, que entrou por uma página, está na reunião ou entrando nela (com uma senha da câmera ainda não usada), como as outras rotas da família. Responde `409 foraDaReuniao` no resto: a página que ainda não passou do "Entrar", a que foi fechada, e também a de quem clicou em "Sair" e a deixou aberta no "Você saiu da reunião"; depois do "Entrar de novo", ela volta a contar. O participante que não conta não recebe nada. **Para o app, um `409` não é para sempre:** a página na tela de entrada, a que carregou de novo, a que está voltando de uma queda e a de quem clicou em "Sair" respondem `409` e podem entrar (de novo) durante a mesma ligação. O "o app então esquece a reunião" desta seção fica para o plano da entrega 2 acertar, com essa regra na mão; um evento da seção 11 daquela reunião a traz de volta (7.5).
 - **Nota de 23/11 (a construção): quem sai durante uma pausa** (o "Sair", o tirado, a reunião encerrada, uma queda) fica sem a pausa, com o som de volta, e o microfone e a câmera continuam desligados: no "Entrar de novo", a pessoa volta com os dois desligados, e não como estavam antes da pausa. É o lado seguro: a pessoa liga de novo o que quiser.
+- **Nota de 26/11 (a construção do app): a regra do app para o `409`, a pausa na hora do evento, a dúvida e o app
+  reaberto.** O `409 foraDaReuniao` da pausa não esquece a reunião: o app só deixa de contar o computador nela (e tira
+  os pedidos dela do aviso), e cada rodada de 10 s tenta de novo **todas** as reuniões abertas no navegador cujo link
+  ainda vale. Um evento da seção 11 do protocolo que mostra o computador entrando numa reunião durante uma pausa faz o
+  `pausada` verdadeiro sair na hora, sem esperar a rodada. Um `404` tira a reunião. **A dúvida depois de um reinício
+  do chat** (a escolha 9 do plano): o servidor avisa antes de desligar. Se, na volta, ele responde `409` ao app numa
+  reunião em que o computador estava, o app não sabe se a pessoa saiu ou se a página continua nela sem a pausa, e as
+  ligações seguintes mostram, na tela da ligação, "A reunião no navegador continua ouvindo você. Desligue o microfone
+  lá." até o app ver o computador de novo naquela reunião, o link dela vencer ou passarem 12 horas. Sem o aviso de que
+  o servidor ia desligar (a rede que caiu, o PC que dormiu, a pessoa que saiu), não há dúvida. **O app reaberto com a
+  reunião no navegador** (a escolha 19): ele só volta a cuidar dela (o aviso e a pausa) quando um evento mostra algo
+  nela (alguém entra, sai ou pede para entrar), porque não guarda no disco as reuniões que abriu. Antes disso, uma
+  ligação não a pausa.
+- **Nota de 26/11 (a construção do app): o fim da pausa alcança quem a recebeu, e os pedidos vão um a um.** Quando a
+  ligação acaba, o `pausada` falso vai a **toda** reunião a que a pausa foi mandada, mesmo que o link dela tenha
+  vencido nesse meio tempo: a página que recebeu a pausa continua em pausa até receber o fim. O falso vai uma vez e
+  não é repetido se falhar. E o app manda os pedidos de pausa de **uma** reunião um de cada vez, cada um depois de o
+  anterior terminar: o servidor os repassa na ordem em que chegam, e a página não guarda o `vez` de um falso, então um
+  falso que ultrapassasse um verdadeiro deixaria a página em pausa.
 
 ## 8. Os valores
 
@@ -440,6 +483,14 @@ A construção se corta em duas entregas, cada uma com o seu plano e a sua revis
 
 - **A prova no WebView2 de verdade vem antes da entrega 2 crescer:** a câmera, o microfone e a captura de tela dentro do `iframe`, na fumaça do Windows do GitHub. Se ela falhar, a construção para e volta ao responsável com as reservas da seção 14.
   - **Nota de 24/11: a entrega 2 em três planos.** O primeiro é só a prova (`docs/superpowers/plans/2026-11-24-reunioes-etapa-2a-prova-no-webview2.md`): as regras do executável e a fumaça do Windows com um servidor do chat de verdade na máquina do teste, sem interface nova. Os outros dois são escritos com o resultado dela na mão: o que a página e o servidor do chat ainda devem ao colega (o item 3 da seção 12.1 e a nota de 24/11 da seção 7.5), e o app (o núcleo, o executável, o instalador e a interface). Cada plano tem a revisão dele, e a do último olha a entrega 2 inteira.
+  - **Nota de 26/11: o plano do app foi cortado em dois.** O 3a
+    (`docs/superpowers/plans/2026-11-24-reunioes-etapa-2a-app-aba-e-navegador.md`) entrega o núcleo e o executável com
+    os quatro comandos, o aviso do canto com um pedido e o navegador, e a interface com a aba Reuniões (a lista, a
+    Nova reunião, o Copiar link, o menu, o cancelar e o campo do link com o "Abrir no navegador"), o aviso do Windows
+    e a pausa da reunião aberta no navegador. O 3b entrega o "Entrar" e a reunião dentro da janela do app, o
+    `starsonic://` e o instalador, o link de reunião numa conversa do chat, as faixas, o cartão da ligação e o
+    "Telefone", o aviso com a reunião do app escondida, a fumaça do Windows com a aba, a versão `0.5.0`, o roteiro de
+    testes e as notas. Nada é publicado entre os dois.
   - **O jeito de apontar o app da fumaça para um servidor do chat** (a seção 16 o deixava para quem constrói): o app fala com o chat pelo nome de sempre, e a máquina do teste leva esse nome a um servidor do chat dela mesma. O app não ganha gancho de teste para isso.
 - **A ordem de instalar:** o servidor do chat primeiro, o app depois. O guia (`docs/chat-servidor.md`) e as notas da versão dizem isso.
 - **Os documentos que mudam:** o `docs/chat-protocolo.md` (as seções 2, 9, 10 e 12), o `docs/ponte-windows.md`, o `docs/chat-servidor.md`, o `docs/teste-manual.md`, e uma nota datada na spec de 12/11 dizendo o que esta troca.

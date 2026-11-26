@@ -2,7 +2,7 @@
 // O relógio da página é instalado e parado (pararORelogio): as horas vêm do noRelogioDaPagina, e o "Link copiado" some
 // com o runFor. O contexto tem as permissões do clipboard, e o POST das reuniões é visto ou segurado pelo page.route.
 import { expect, test, type Page, type Route } from '@playwright/test';
-import { semViolacoesSerias, verTextos } from '../helpers';
+import { capturar, semViolacoesSerias, verTextos } from '../helpers';
 import { pararORelogio } from '../chat/abrir';
 import { empresaComReunioes, liberarReunioes } from '../chat/servidor';
 import { abrirNasReunioes, noRelogioDaPagina } from './abrir';
@@ -347,6 +347,7 @@ for (const tema of ['light', 'dark'] as const) {
       const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
       await abrirANova(page, noRelogioDaPagina(0, 14, 7), pessoas[0], false);
       await semViolacoesSerias(page);
+      await capturar(page, 'reunioes-nova', nomeDoTema(tema));
       await campoVale(page).selectOption('outra');
       await expect(campoAteDia(page)).toBeVisible();
       await semViolacoesSerias(page);

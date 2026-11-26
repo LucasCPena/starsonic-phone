@@ -3,7 +3,7 @@
 // passe não aparece no console, na tela nem em outro comando; a troca de pessoa no meio não abre nada; um pedido por
 // código de cada vez; a acessibilidade nos dois temas. O passe é de verdade: a página da reunião o aceita.
 import { expect, test, type Page, type Route } from '@playwright/test';
-import { comandos, semViolacoesSerias, type Comando } from '../helpers';
+import { capturar, comandos, semViolacoesSerias, type Comando } from '../helpers';
 import { baseDoChat, empresaComReunioes, type ApiDeTeste } from '../chat/servidor';
 import { abrirNasReunioes, meioDiaDeHoje, noRelogioDaPagina } from './abrir';
 
@@ -354,6 +354,9 @@ for (const tema of ['light', 'dark'] as const) {
       await abrir(page, pessoas[0]);
       await expect(campo(page)).toBeVisible();
       await semViolacoesSerias(page);
+      await campo(page).fill('abcdefghjk');
+      await expect(abrirNoNavegador(page)).toBeVisible();
+      await capturar(page, 'reunioes-link', nomeDoTema(tema));
       await campo(page).fill('texto qualquer');
       await expect(abrirNoNavegador(page)).toBeVisible();
       await semViolacoesSerias(page);
