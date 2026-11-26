@@ -581,9 +581,24 @@ function App() {
   const faixaDoTelefone = vistaDaReuniao.escondida ? (
     <FaixaDoTelefone microfone={vistaDaReuniao.microfone} onVoltar={() => reuniaoNoApp.voltar()} />
   ) : null;
+  // No Compacto e no Mínimo, sem o "Starsonic Phone · ", para a conta caber ao lado do estado (no Mínimo, só o ramal).
+  const tituloDaConta = (conta: NonNullable<AppState['conta']>) =>
+    layout === 'normal'
+      ? `Starsonic Phone · ${accountTitle(conta)}`
+      : layout === 'compacto'
+        ? accountTitle(conta)
+        : conta.ramal;
+  // No "Telefone" a barra de título diz "Ocupado · em reunião" e a conta (a tela 14), em qualquer tela do app.
+  const daReuniaoEscondida: Omit<Parameters<typeof TitleBar>[0], 'send'> =
+    faixaDoTelefone && state?.conta
+      ? {
+          title: tituloDaConta(state.conta),
+          status: accountDot(state.conta, state.ligacao != null, state.naoPerturbe, true),
+        }
+      : {};
   const barra = (props: Omit<Parameters<typeof TitleBar>[0], 'send'> = {}) => (
     <>
-      {barraSemFaixa(props)}
+      {barraSemFaixa({ ...daReuniaoEscondida, ...props })}
       {faixaDoTelefone}
     </>
   );
@@ -740,15 +755,8 @@ function App() {
         </div>
       );
     }
-    // No Compacto e no Mínimo, sem o "Starsonic Phone · ", para a conta caber ao lado do estado (no Mínimo, só o ramal).
     const barraDaLigacao = barra({
-      title: !state.conta
-        ? undefined
-        : layout === 'normal'
-          ? `Starsonic Phone · ${accountTitle(state.conta)}`
-          : layout === 'compacto'
-            ? accountTitle(state.conta)
-            : state.conta.ramal,
+      title: state.conta ? tituloDaConta(state.conta) : undefined,
       status: state.conta ? accountDot(state.conta, true, state.naoPerturbe) : undefined,
     });
     // (vídeo, etapa 2) A conversa do Chat, no tema do app, embaixo da faixa da ligação.
@@ -977,15 +985,7 @@ function App() {
   return comVista(
     <div class="win" data-layout={layout} data-plataforma={plataforma}>
       {barra()}
-      {conta && <Header
-          state={state}
-          conta={conta}
-          send={send}
-          navigate={setView}
-          current={view}
-          layout={layout}
-          emReuniao={vistaDaReuniao.escondida}
-        />}
+      {conta && <Header state={state} conta={conta} send={send} navigate={setView} current={view} layout={layout} />}
       <main class="main" aria-label={TABS.find((t) => t.tab === tab)!.label}>
         {tab === 'teclado' && (
           <Teclado

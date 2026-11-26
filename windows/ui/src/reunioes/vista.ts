@@ -322,9 +322,6 @@ export class ReuniaoNoApp {
     const fase = FASES_DA_PAGINA.find((f) => f === m.fase);
     if (fase === undefined || typeof m.microfone !== 'boolean' || this.v.endereco === null) return;
     this.mudar({ fase, microfone: m.microfone });
-    // Escondida, a vista só diz "Você está na reunião" enquanto a página diz o mesmo: se ela saiu da reunião (ou entrou
-    // de novo na entrada), a vista volta para a pessoa ver.
-    if (fase !== 'naReuniao') this.voltar();
   }
 
   private postar(m: object): void {

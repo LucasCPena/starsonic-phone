@@ -304,6 +304,8 @@ export class ReunioesCliente {
       const r = await this.pedirPasse(codigo);
       if (!r.ok) return r;
       this.bridge.send({ cmd: 'reuniaoNavegador', codigo, passe: r.passe });
+      // A reunião agora é a do navegador: o fim da vista do app (o `reuniaoNoApp(null)`) não a tira das abertas.
+      if (this.noApp?.codigo === codigo) this.noApp = null;
       return { ok: true };
     } finally {
       this.abrindo.delete(codigo);

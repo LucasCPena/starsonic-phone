@@ -14,7 +14,7 @@ import {
   type Comando,
 } from '../helpers';
 import { empresaComReunioes } from '../chat/servidor';
-import { esperarOsEventos } from '../chat/abrir';
+import { esperarOsEventos, pararORelogio } from '../chat/abrir';
 import { abrirNasReunioes, comEventos, marcar, meioDiaDeHoje, noRelogioDaPagina, paginaFalsa } from './abrir';
 
 // O CSP da página só deixa falar com o endereço do chat de verdade; o servidor de teste fica no 127.0.0.1:4180.
@@ -22,6 +22,7 @@ test.use({ bypassCSP: true });
 
 const EMPRESA = 'ACME Comércio Ltda';
 const RECEPCAO = { ramal: '2001', nome: 'Recepção' };
+const ANA = { ramal: '2002', nome: 'Ana Souza' };
 const PLANEJAMENTO = 'Planejamento de dezembro';
 const OUTRA = 'Reunião com a contabilidade';
 const MARIA = { id: '0123456789abcdef', nome: 'Maria Lima' };
@@ -45,7 +46,9 @@ test.afterEach(async ({ page }) => {
 const quadro = (page: Page) => page.locator('iframe[title="Reunião"]');
 const botao = (page: Page, nome: string) => page.getByRole('button', { name: nome, exact: true });
 const linhaDe = (page: Page, assunto: string) => page.getByRole('article').filter({ hasText: assunto });
-const faixa = (page: Page) => page.locator('.faixa-telefone');
+const faixa = (page: Page) => page.getByRole('region', { name: NA_REUNIAO, exact: true });
+/** A barra de título do app de sempre (a da vista escondida não conta). */
+const barraDoApp = (page: Page) => page.locator('.win:not(.reuniao) .titlebar');
 const abas = (page: Page) => page.locator('nav.nav button');
 const doTipo = async (page: Page, cmd: string): Promise<Comando[]> =>
   (await comandos(page)).filter((c) => c.cmd === cmd);
@@ -93,7 +96,13 @@ test('o Telefone mostra o app de sempre, com a faixa, e a reunião continua', as
   await expect(botao(page, VOLTAR)).toBeVisible();
   await expect(abas(page)).toHaveCount(6);
   for (const aba of await abas(page).all()) await expect(aba).toBeVisible();
-  await expect(page.locator('.account-sub')).toHaveText(OCUPADO);
+  // A barra de título (a tela 14) diz o estado e a conta; o cabeçalho da conta não muda.
+  await expect(barraDoApp(page).locator('.account-status-text')).toHaveText(OCUPADO);
+  await expect(barraDoApp(page).locator('.titlebar-text')).toHaveText('Starsonic Phone · Recepção · 2001');
+  await expect(page.locator('.account-sub')).not.toContainText(OCUPADO);
+  // A faixa tem nome, e o microfone e o botão estão nela.
+  await expect(faixa(page).getByRole('status')).toHaveText(LIGADO);
+  await expect(faixa(page).getByRole('button', { name: VOLTAR, exact: true })).toBeVisible();
   // A tela de baixo é a que a pessoa usa: nada inerte; e a vista escondida fica fora do Tab e do leitor de tela.
   await expect(page.locator('.tela-de-baixo[inert]')).toHaveCount(0);
   await expect(page.locator('.reuniao-vista[inert]')).toHaveCount(1);
@@ -220,6 +229,30 @@ test('a reunião de dentro do app não entra na pausa do navegador', async ({ pa
   await expect(page.getByText(OUVINDO, { exact: true })).toHaveCount(0);
 });
 
+test('o Abrir no navegador de A reunião não abriu guarda o assunto dos pedidos no aviso', async ({ page }) => {
+  // A reunião é de uma colega: não está na lista da pessoa, e o assunto só vem da resposta do passe.
+  const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO, ANA]);
+  const criada = await marcar(pessoas[1].api, noRelogioDaPagina(0, 14, 0), PLANEJAMENTO);
+  await paginaFalsa(page, criada.codigo, { semPronta: true });
+  await page.clock.install({ time: meioDiaDeHoje() });
+  const eventos = await comEventos(page);
+  await abrirNasReunioes(page, { chave: pessoas[0].chave, ...RECEPCAO });
+  await esperarOsEventos(page);
+  await pararORelogio(page);
+  await page.getByRole('textbox', { name: 'Entrar com o link de uma reunião' }).fill(criada.link);
+  await page.locator('.reun-link').getByRole('button', { name: 'Entrar', exact: true }).click();
+  await expect(quadro(page)).toBeVisible();
+  await page.clock.runFor(15_000);
+  await botao(page, 'Abrir no navegador').click();
+  await expect.poll(async () => (await doTipo(page, 'reuniaoNavegador')).length).toBe(1);
+  await esperarComando(page, { cmd: 'videoWindow', modo: 'normal' });
+  await expect(quadro(page)).toHaveCount(0);
+  const comPedido = { tipo: 'reuniaoParticipantes', reuniao: criada.codigo, participantes: [], pedidos: [MARIA] };
+  await eventos.mandar(comPedido);
+  const pedido = { id: MARIA.id, nome: MARIA.nome, assunto: PLANEJAMENTO };
+  await expect.poll(() => pedidoDoAviso(page)).toEqual({ v: 1, cmd: 'reuniaoPedido', pedido, escondida: true });
+});
+
 for (const tema of ['light', 'dark'] as const) {
   test(`a faixa do Telefone não tem violações sérias (${nomeDoTema(tema)})`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: tema });
@@ -248,6 +281,13 @@ test('a faixa do Telefone cabe nos três tamanhos', async ({ page }) => {
       const cortado = await alvo.evaluate((e) => e.scrollWidth > e.clientWidth + 0.5);
       expect(cortado, `${texto} cortado em ${onde}`).toBe(false);
     }
+    // A barra de título cabe: o estado inteiro e a conta (com reticências, sem estourar a janela).
+    const estado = barraDoApp(page).locator('.account-status-text');
+    await expect(estado, onde).toHaveText(OCUPADO);
+    expect(await estado.evaluate((e) => e.scrollWidth > e.clientWidth + 0.5), `estado cortado em ${onde}`).toBe(false);
+    const caixaDaBarra = (await barraDoApp(page).boundingBox())!;
+    expect(caixaDaBarra.x + caixaDaBarra.width, onde).toBeLessThanOrEqual(largura);
+    expect(await barraDoApp(page).evaluate((e) => e.scrollWidth > e.clientWidth + 0.5), `barra em ${onde}`).toBe(false);
     const caixaDaFaixa = (await faixa(page).boundingBox())!;
     expect(caixaDaFaixa.x + caixaDaFaixa.width, onde).toBeLessThanOrEqual(largura);
     expect(await page.evaluate(() => document.scrollingElement!.scrollWidth), onde).toBeLessThanOrEqual(largura);

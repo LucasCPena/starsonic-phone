@@ -1847,20 +1847,20 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .tela-de-baixo { display: contents; }
 /* O "Telefone": a vista fica no documento (o iframe vivo, a reunião andando), mas fora da vista, do Tab e do leitor. */
 .reuniao-vista-escondida { visibility: hidden; pointer-events: none; }
-/* A faixa da tela 14, logo abaixo da barra de título: a pessoa está na reunião, que anda escondida. */
-.faixa-telefone { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 10px 14px; background: var(--navy-950); color: #ffffff; border-top: 1px solid rgba(255, 255, 255, 0.08);
-  --focus: var(--cyan); }
-.faixa-telefone-textos { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.faixa-telefone-titulo { margin: 0; font-size: 14.5px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.3;
-  overflow-wrap: anywhere; }
-.faixa-telefone-mic { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600;
-  line-height: 1.3; color: #b9c4e6; }
-.faixa-telefone-mic .ic { flex: none; width: 14px; height: 14px; }
-.faixa-telefone-voltar { flex: none; height: 36px; padding: 0 14px; font-size: 13px; }
-.win[data-layout="compacto"] .faixa-telefone-voltar,
-.win[data-layout="minimo"] .faixa-telefone-voltar { font-size: 12px; }
+/* A faixa da tela 14, logo abaixo da barra de título (o quadro Telefone): verde-azulada, com o ponto ciano, o título e
+   o microfone, e o "Voltar para a reunião" em ciano. As mesmas cores nos dois temas, como a barra de título. */
+.faixa-telefone { flex: none; display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: #0b3d47;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1); color: #ffffff; --focus: var(--cyan); }
+.faixa-telefone-ponto { flex: none; width: 10px; height: 10px; border-radius: 999px; background: var(--cyan);
+  box-shadow: 0 0 0 4px rgba(0, 194, 203, 0.25); }
+.faixa-telefone-textos { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.faixa-telefone-titulo { font-size: 13.5px; line-height: 1.25; font-weight: 800; overflow-wrap: anywhere; }
+.faixa-telefone-mic { font-size: 12px; line-height: 1.3; color: #cfeef1; overflow-wrap: anywhere; }
+.faixa-telefone-voltar { flex: none; height: 34px; padding: 0 14px; border-radius: 999px; border: 0;
+  background: var(--cyan); color: #03222a; font: 700 13px/1 var(--font-sans); white-space: nowrap; }
+.faixa-telefone-voltar:hover { filter: brightness(1.08); }
 .win[data-layout="minimo"] .faixa-telefone { gap: 8px; padding: 8px 10px; }
-.win[data-layout="minimo"] .faixa-telefone-titulo { font-size: 13px; }
+.win[data-layout="minimo"] .faixa-telefone-titulo { font-size: 12.5px; }
 .win[data-layout="minimo"] .faixa-telefone-mic { font-size: 11.5px; }
-.win[data-layout="minimo"] .faixa-telefone-voltar { height: 32px; padding: 0 10px; font-size: 11.5px; }
+.win[data-layout="minimo"] .faixa-telefone-voltar { height: 32px; padding: 0 10px; font-size: 11.5px;
+  white-space: normal; line-height: 1.15; max-width: 45%; }

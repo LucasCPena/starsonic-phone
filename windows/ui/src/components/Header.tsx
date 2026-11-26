@@ -29,11 +29,9 @@ interface Props {
   navigate(view: View): void;
   current: View;
   layout: Layout;
-  /** A pessoa está numa reunião dentro do app (escondida pelo "Telefone"). */
-  emReuniao?: boolean;
 }
 
-export function Header({ state, conta, send, navigate, current, layout, emReuniao }: Props) {
+export function Header({ state, conta, send, navigate, current, layout }: Props) {
   const [aberto, setAberto] = useState<'menu' | 'contas' | null>(null);
   // (iPhone) A confirmação do Sair.
   const [sair, setSair] = useState(false);
@@ -41,7 +39,7 @@ export function Header({ state, conta, send, navigate, current, layout, emReunia
   const contaRef = useRef<HTMLButtonElement>(null);
   const fechar = () => setAberto(null);
   const ios = isIos(state);
-  const estado = accountDot(conta, state.ligacao !== null, state.naoPerturbe, emReuniao);
+  const estado = accountDot(conta, state.ligacao !== null, state.naoPerturbe);
   const mostrarDnd = state.admin.naoPerturbe;
   const mostrarAuto = state.admin.atenderAuto;
 
