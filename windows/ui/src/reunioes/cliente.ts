@@ -24,12 +24,19 @@
 //   (reuniaoResposta) tira o pedido do aviso na hora e chama a rota. O que sai do aviso por uma resposta fica no
 //   cliente enquanto a reunião o lista (um evento ou a conferência que ainda o traz não o põe de volta no aviso); só a
 //   rota que falha o devolve. A parada da sessão esquece tudo.
+// - (Task 12) A pausa: enquanto uma ligação pausa (pausa.ts), cada reunião aberta no navegador cujo link ainda vale
+//   recebe o `pausada` verdadeiro, com o `vez` da pausa, na hora e a cada 10 s; o falso, uma vez, no fim, a cada uma
+//   que a pausa alcançou. Um evento que mostra o computador entrando numa reunião manda a pausa dela na hora. O
+//   `ouvindoNoNavegador` da vista diz quando a reunião do navegador pode continuar ouvindo a pessoa: a última tentativa
+//   de pausar uma reunião em que o computador está falhou, ou a dúvida (o servidor avisou que ia desligar e, na volta,
+//   não conhece mais o computador na reunião: a pessoa pode ter saído, ou a página continua nela sem a pausa).
 // Nada de uma reunião vai ao console.
 import type { Bridge } from '../bridge';
 import { ehChave, ErroChat } from '../chat/api';
 import { ehParado, type ChatCliente } from '../chat/cliente';
 import { limitCharacters } from '../format';
-import type { Command, RespostaDoAviso } from '../state';
+import { haPausa, novaVez } from './pausa';
+import type { CallState, Command, RespostaDoAviso } from '../state';
 import {
   LINK_SEM_VALOR,
   MUITAS_TENTATIVAS,
@@ -51,6 +58,8 @@ export interface VistaReunioes {
   copiado: string | null;
   /** Um aviso curto para a tela (o toast do app); a `vez` sobe a cada aviso. */
   avisoCurto: { texto: string; vez: number } | null;
+  /** A frase na tela da ligação: a reunião do navegador continua ouvindo a pessoa. */
+  ouvindoNoNavegador: boolean;
 }
 
 /** `erro` null: nada a dizer (a pessoa trocou no meio, ou a aba sumiu). */
@@ -65,6 +74,10 @@ export const LINK_COPIADO_MS = 2_000;
 
 /** A conferência dos pedidos das reuniões em que o computador está. */
 export const CONFERENCIA_MS = 10_000;
+/** A pausa é mandada de novo a esta distância, enquanto a ligação dura. */
+export const PAUSA_MS = 10_000;
+/** A dúvida depois de um reinício do chat acaba tanto tempo depois de começar. */
+export const DUVIDA_MS = 12 * 3_600_000;
 /** O mais que o aviso aceita (pontos de código) no nome e no assunto. */
 const MAXIMO_DO_AVISO = 120;
 const ID_DO_PEDIDO = /^[0-9a-f]{16}$/;
@@ -87,6 +100,18 @@ interface Aberta {
   pessoa: number | null;
   /** Sobe a cada evento dela: a resposta de um pedido que saiu antes dele não vale mais. */
   epoca: number;
+  /** A última tentativa de pausá-la que terminou falhou (sem resposta, um 5xx, o 429 ou outro erro). */
+  falhou: boolean;
+  /** O servidor avisou que ia desligar depois da última vez em que o app viu o computador nela. */
+  desligou: boolean;
+  /** Quando começou a dúvida (o chat voltou sem conhecer o computador nela); null: sem dúvida. */
+  duvida: number | null;
+}
+
+/** Uma pausa em andamento: o `vez` dela e as reuniões a que ela foi mandada. */
+interface Pausa {
+  vez: string;
+  enviadas: Set<string>;
 }
 
 /** Um pedido para entrar; `fora`: já saiu do aviso (a resposta, ou o fechar). */
@@ -96,6 +121,9 @@ interface PedidoGuardado {
   nome: string;
   fora: boolean;
 }
+
+/** Os campos da pausa de uma reunião que acaba de ser conhecida. */
+const SEM_PAUSA = { falhou: false, desligou: false, duvida: null };
 
 const ehSemReunioes = (e: unknown): boolean => e instanceof ErroChat && e.status === 403 && e.erro === 'semReunioes';
 
@@ -138,6 +166,11 @@ export class ReunioesCliente {
   private conferindo = new Set<string>();
   /** O último aviso curto. */
   private avisoCurto: { texto: string; vez: number } | null = null;
+  /** O último `haPausa` visto: a pausa começa e acaba nas mudanças dele. */
+  private haPausaAgora = false;
+  /** A pausa de agora (null sem ela) e o relógio que a repete. */
+  private pausa: Pausa | null = null;
+  private relogioDaPausa: ReturnType<typeof setTimeout> | undefined;
   private v: VistaReunioes;
 
   constructor(o: { chat: ChatCliente; bridge: Bridge; base: string }) {
@@ -153,6 +186,7 @@ export class ReunioesCliente {
         // Cada volta dos eventos (a primeira não tem reunião nenhuma): o que houve enquanto caiu.
         this.conferirTodas();
       },
+      desligando: () => this.desligando(),
       parou: () => this.parou(),
     });
   }
@@ -295,6 +329,7 @@ export class ReunioesCliente {
       conectado: c.situacao === 'pronto' && c.conectado && !this.falhou,
       copiado: this.copiado,
       avisoCurto: this.avisoCurto,
+      ouvindoNoNavegador: this.ouvindo(),
     };
   }
 
@@ -306,7 +341,8 @@ export class ReunioesCliente {
       nova.lista === this.v.lista &&
       nova.conectado === this.v.conectado &&
       nova.copiado === this.v.copiado &&
-      nova.avisoCurto === this.v.avisoCurto;
+      nova.avisoCurto === this.v.avisoCurto &&
+      nova.ouvindoNoNavegador === this.v.ouvindoNoNavegador;
     if (igual) return;
     this.v = nova;
     for (const f of [...this.ouvintes]) f();
@@ -367,6 +403,10 @@ export class ReunioesCliente {
     this.abertas.clear();
     this.pedidos = [];
     this.conferindo = new Set();
+    // Nada mais é mandado da pausa de antes: a de agora recomeça com a primeira reunião que um evento trouxer.
+    this.pausa?.enviadas.clear();
+    clearTimeout(this.relogioDaPausa);
+    this.relogioDaPausa = undefined;
     this.mudou();
     this.publicar();
   }
@@ -377,7 +417,7 @@ export class ReunioesCliente {
     const antes = this.abertas.get(r.codigo);
     this.lembradas.delete(r.codigo);
     if (antes) antes.info = info;
-    else this.abertas.set(r.codigo, { info, dentro: false, pessoa: this.pessoa(), epoca: 0 });
+    else this.abertas.set(r.codigo, { info, dentro: false, pessoa: this.pessoa(), epoca: 0, ...SEM_PAUSA });
   }
 
   /** O que um evento diz da reunião: ela entra na lista se o app não a conhecia (com o que a lista da pessoa sabe). */
@@ -392,11 +432,21 @@ export class ReunioesCliente {
         dentro: false,
         pessoa: this.pessoa(),
         epoca: 0,
+        ...SEM_PAUSA,
       };
       this.abertas.set(codigo, a);
     }
     a.epoca += 1;
+    // Um evento da reunião acaba com a dúvida: o servidor a conhece, com o computador nela.
+    a.desligou = false;
+    a.duvida = null;
+    const entrou = !a.dentro;
     a.dentro = true;
+    // O computador entrou durante uma pausa: a pausa dela sai na hora, sem esperar a rodada.
+    if (entrou && this.pausa) {
+      this.armarAPausa();
+      void this.pausarUma(codigo, this.pausa);
+    }
     return a;
   }
 
@@ -423,6 +473,8 @@ export class ReunioesCliente {
         const a = this.abertas.get(e.reuniao);
         if (!a) return;
         a.epoca += 1;
+        a.desligou = false;
+        a.duvida = null;
         this.sair(e.reuniao, a);
         break;
       }
@@ -457,8 +509,126 @@ export class ReunioesCliente {
   private foraDaReuniao(codigo: string, epoca: number): void {
     const a = this.abertas.get(codigo);
     if (!a || !a.dentro || a.epoca !== epoca) return;
+    // O servidor avisou que ia desligar desde a última vez que o app o viu nela: o chat reiniciou e a esqueceu, e a
+    // página do navegador pode continuar nela. Sem o aviso, a pessoa saiu, a rede caiu ou o PC dormiu: sem dúvida.
+    if (a.desligou) a.duvida = Date.now();
+    a.desligou = false;
     this.sair(codigo, a);
     this.mudou();
+  }
+
+  /** O servidor vai desligar: vale para cada reunião em que o computador está. */
+  private desligando(): void {
+    for (const a of this.abertas.values()) if (a.dentro) a.desligou = true;
+  }
+
+  /** O link da reunião ainda vale (o valeAte desconhecido conta como valendo). */
+  private linkVale(a: Aberta, agora: number): boolean {
+    return a.info === null || a.info.valeAte === null || a.info.valeAte > agora;
+  }
+
+  /** A dúvida da reunião ainda vive: começou há menos de 12 horas, e o link dela ainda vale. */
+  private duvidaViva(a: Aberta, agora: number): boolean {
+    return a.duvida !== null && agora - a.duvida < DUVIDA_MS && this.linkVale(a, agora);
+  }
+
+  /** A frase da tela da ligação: a pausa dura e alguma reunião de link válido pode continuar ouvindo a pessoa. */
+  private ouvindo(): boolean {
+    if (!this.pausa) return false;
+    const agora = Date.now();
+    for (const a of this.abertas.values()) {
+      if (this.linkVale(a, agora) && ((a.dentro && a.falhou) || this.duvidaViva(a, agora))) return true;
+    }
+    return false;
+  }
+
+  /** As ligações do estado da ponte, a cada estado: a pausa começa e acaba com o `haPausa`. */
+  ligacoes(l: CallState | null): void {
+    const ha = haPausa(l);
+    if (ha !== this.haPausaAgora) {
+      this.haPausaAgora = ha;
+      if (ha) this.comecarAPausa();
+      else this.acabarAPausa();
+    }
+    // A hora também conta (a dúvida e o link vencem): a vista é conferida a cada estado.
+    this.publicar();
+  }
+
+  private comecarAPausa(): void {
+    this.pausa = { vez: novaVez(), enviadas: new Set() };
+    for (const a of this.abertas.values()) a.falhou = false;
+    this.rodada();
+  }
+
+  /** A pausa acabou: o falso, uma vez, a cada reunião que ela alcançou e que o cliente ainda tem; sem repetir. */
+  private acabarAPausa(): void {
+    const pausa = this.pausa;
+    this.pausa = null;
+    clearTimeout(this.relogioDaPausa);
+    this.relogioDaPausa = undefined;
+    if (pausa) {
+      for (const codigo of pausa.enviadas) {
+        if (!this.abertas.has(codigo)) continue;
+        this.chat.pedir((api) => api.pausarReuniao(codigo, false, pausa.vez)).catch(() => undefined);
+      }
+    }
+    this.publicar();
+  }
+
+  /** Uma rodada da pausa: a todas as reuniões, e a próxima daqui a 10 s. */
+  private rodada(): void {
+    const pausa = this.pausa;
+    if (!pausa) return;
+    for (const codigo of [...this.abertas.keys()]) void this.pausarUma(codigo, pausa);
+    this.armarAPausa();
+    this.publicar();
+  }
+
+  private armarAPausa(): void {
+    if (this.relogioDaPausa !== undefined || !this.pausa) return;
+    this.relogioDaPausa = setTimeout(() => {
+      this.relogioDaPausa = undefined;
+      this.rodada();
+    }, PAUSA_MS);
+  }
+
+  /** Manda o `pausada` verdadeiro a uma reunião cujo link ainda vale, e trata a resposta (a tabela da Task 12). */
+  private async pausarUma(codigo: string, pausa: Pausa): Promise<void> {
+    const antes = this.abertas.get(codigo);
+    if (!antes || !this.linkVale(antes, Date.now())) return;
+    pausa.enviadas.add(codigo);
+    const vez = this.vez;
+    const epoca = antes.epoca;
+    try {
+      await this.chat.pedir((api) => api.pausarReuniao(codigo, true, pausa.vez));
+    } catch (e) {
+      this.pausaSemResposta(codigo, e, vez, epoca);
+      return;
+    }
+    const a = this.abertas.get(codigo);
+    if (vez !== this.vez || this.pausa !== pausa || !a) return;
+    // O 204: a pausa chegou, e a dúvida acaba.
+    a.falhou = false;
+    a.duvida = null;
+    this.publicar();
+  }
+
+  private pausaSemResposta(codigo: string, e: unknown, vez: number, epoca: number): void {
+    const a = this.abertas.get(codigo);
+    if (vez !== this.vez || ehParado(e) || !a) return;
+    if (e instanceof ErroChat && e.status === 404) {
+      if (a.epoca !== epoca) return;
+      this.abertas.delete(codigo);
+      this.pedidos = this.pedidos.filter((p) => p.reuniao !== codigo);
+      this.mudou();
+    } else if (e instanceof ErroChat && e.status === 409 && e.erro === 'foraDaReuniao') {
+      // Não é uma falha, e não é para sempre: a rodada seguinte tenta de novo.
+      a.falhou = false;
+      this.foraDaReuniao(codigo, epoca);
+    } else {
+      a.falhou = true;
+    }
+    this.publicar();
   }
 
   /** O que mudou nas reuniões: o relógio da conferência e o pedido do aviso. */
@@ -471,6 +641,7 @@ export class ReunioesCliente {
       this.conferencia = setTimeout(() => this.passouOTempo(), CONFERENCIA_MS);
     }
     this.mostrarNoAviso();
+    this.publicar();
   }
 
   private passouOTempo(): void {
@@ -494,6 +665,8 @@ export class ReunioesCliente {
       const r = await this.chat.pedir((api) => api.participantesDaReuniao(codigo));
       const agora = this.abertas.get(codigo);
       if (vez !== this.vez || !agora?.dentro || agora.epoca !== epoca) return;
+      // O servidor conhece o computador na reunião: o aviso de que ia desligar já não conta.
+      agora.desligou = false;
       this.definirPedidos(codigo, r.pedidos);
       this.mudou();
     } catch (e) {

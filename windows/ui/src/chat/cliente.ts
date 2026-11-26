@@ -134,6 +134,8 @@ export const ehParado = (e: unknown): boolean => e instanceof Parado;
 interface AssinanteDaSessao {
   evento(e: EventoDaReuniao): void;
   conectou(): void;
+  /** O servidor avisou que vai desligar (a conexão dos eventos fechou com o código 1001). */
+  desligando?(): void;
   parou(): void;
 }
 
@@ -571,6 +573,9 @@ export class ChatCliente {
         if (this.ramalDaVez !== null) {
           this.avisoDoRamal.canalAbriu(this.ramalDaVez, (estado, segundos) => api.dizerRamal(estado, segundos));
         }
+      }),
+      desligando: desta(() => {
+        for (const a of [...this.assinantes]) a.desligando?.();
       }),
       caiu: desta(() => {
         // Cada tentativa que não abre também é um `caiu`: a queda começa no primeiro.

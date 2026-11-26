@@ -73,6 +73,7 @@ import { CaixaDoVideo, SuaImagemFlutuante } from '../video/CaixaDoVideo';
 import { cameraDaLigacaoDesativada, imagemDaLigacao, oferecerAtenderComVideo, videoDe, videoDoApp } from '../video/estado';
 import { ATENDER_COM_VIDEO, CAMERA, CHAT, DESLIGAR_A_CAMERA, LIGAR_A_CAMERA, rotuloDoVideo } from '../video/textos';
 import { Avatar, confirmada, Ctrl, NoWindows, RoundAction } from './controlesDaLigacao';
+import { NAVEGADOR_CONTINUA_OUVINDO } from '../reunioes/textos';
 import { PainelPorNome, type PainelProps } from './PainelPorNome';
 import { statusLine, useNow } from './tempoDaLigacao';
 
@@ -86,6 +87,8 @@ interface Props {
   send: Send;
   /** (vídeo, etapa 2) O Chat, com um colega do chat na ligação de cima: abre a conversa com ele (main.tsx). */
   chat?: { abrir(): void } | null;
+  /** (reuniões) A reunião aberta no navegador continua ouvindo a pessoa: a frase do aviso. */
+  ouvindoNoNavegador?: boolean;
 }
 
 type Painel = 'teclado' | 'transferir' | 'nova' | 'atalhos' | 'adicionar' | null;
@@ -271,7 +274,15 @@ export function CartaoDaOutra({ state, ligacao: l, send, now }: CartaoProps): VN
   );
 }
 
-export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send, chat = null }: Props) {
+export function Ligacao({
+  state,
+  ligacao: l,
+  contatos,
+  daEmpresa,
+  send,
+  chat = null,
+  ouvindoNoNavegador = false,
+}: Props) {
   const now = useNow();
   const [painelPedido, setPainel] = useState<Painel>(null);
   const [digitos, setDigitos] = useState('');
@@ -729,6 +740,11 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send, chat = n
           sua
         )}
         {quem}
+        {ouvindoNoNavegador && (
+          <p class="call-ouvindo" role="status">
+            {NAVEGADOR_CONTINUA_OUVINDO}
+          </p>
+        )}
         <div class="call-middle">{meio}</div>
         {baixo}
       </main>

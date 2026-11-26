@@ -12,6 +12,8 @@ export const ESPERAS_MS = [1000, 2000, 5000, 10000, 30000];
 const ESPERA_MAXIMA_DO_LIMITE_MS = 60_000;
 /** O fechamento do computador que saiu do chat. */
 const FECHOU_FORA = 4001;
+/** O fechamento do servidor que vai desligar. */
+const FECHOU_DESLIGANDO = 1001;
 
 /** A espera antes da tentativa (0, a primeira): a da tabela vezes um fator entre 0,5 e 1,5 (`aleatorio` de 0 a 1). */
 export function esperaDaVez(tentativa: number, aleatorio: number): number {
@@ -74,7 +76,14 @@ function lerEvento(dados: unknown): Evento | null {
 export function conectarEventos(
   base: string,
   api: Pick<ApiChat, 'bilhete'>,
-  ao: { evento(e: Evento): void; conectou(): void; caiu(): void; fora(): void },
+  ao: {
+    evento(e: Evento): void;
+    conectou(): void;
+    caiu(): void;
+    fora(): void;
+    /** O servidor avisou que vai desligar: o fechamento com o código 1001, antes de a nova tentativa ser marcada. */
+    desligando?(): void;
+  },
 ): { parar(): void } {
   const endereco = `${base.replace(/^http/i, 'ws')}/api/v1/eventos`;
   let parado = false;
@@ -151,8 +160,12 @@ export function conectarEventos(
     s.onclose = (f) => {
       clearTimeout(prazoDaAbertura);
       socket = null;
-      if (f.code === FECHOU_FORA) sair();
-      else depoisDaFalha();
+      if (f.code === FECHOU_FORA) {
+        sair();
+        return;
+      }
+      if (f.code === FECHOU_DESLIGANDO && !parado) ao.desligando?.();
+      depoisDaFalha();
     };
   }
 

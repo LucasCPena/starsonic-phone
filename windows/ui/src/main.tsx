@@ -285,6 +285,12 @@ function App() {
   useLayoutEffect(() => {
     reunioesCliente.abaAVista(reunioesNaVista);
   }, [reunioesNaVista]);
+  // A pausa da reunião aberta no navegador segue as ligações do estado. Um efeito de layout: o useEffect não roda com o
+  // relógio da página parado nos testes.
+  const ligacaoDoEstado = state?.ligacao ?? null;
+  useLayoutEffect(() => {
+    if (!ios) reunioesCliente.ligacoes(ligacaoDoEstado);
+  }, [ligacaoDoEstado]);
   // A aba some com a pessoa nela (o semReunioes, o chat desligado): a vista vai para o Teclado de fato, e não só a tela.
   // Sem isto, a aba que volta (as reuniões liberadas de novo) puxaria a pessoa de volta para ela sozinha.
   const abaDasReunioes = !ios && resumoDoChat?.ligado === true && vistaReunioes.aba;
@@ -621,6 +627,7 @@ function App() {
           daEmpresa={daEmpresa.contatos}
           send={send}
           chat={salaEmbaixo(l, sala) ? null : colegaDaLigacao && { abrir: abrirOChat }}
+          ouvindoNoNavegador={vistaReunioes.ouvindoNoNavegador}
         />
         {toastEl}
       </div>

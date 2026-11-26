@@ -118,8 +118,12 @@ interface ListasDaReuniao {
 export async function comEventos(page: Page): Promise<{
   /** Entrega um evento à página, como se viesse do servidor. */
   mandar(evento: object): Promise<void>;
-  /** Fecha a conexão dos eventos e recusa as próximas, até o `voltar`. */
-  derrubar(): Promise<void>;
+  /**
+   * Fecha a conexão dos eventos e recusa as próximas, até o `voltar`. Com o `desligando`, fecha com o código 1001 e
+   * esquece as reuniões, como o servidor que reiniciou (o GET …/participantes volta a responder 409 foraDaReuniao até o
+   * próximo evento mandado); sem ele, é uma queda da rede.
+   */
+  derrubar(o?: { desligando?: boolean }): Promise<void>;
   voltar(): void;
 }> {
   await page.addInitScript(() => {
@@ -173,9 +177,10 @@ export async function comEventos(page: Page): Promise<{
       // mesmo canal do Playwright): o que o teste manda em seguida (a resposta do aviso, o relógio) já o encontra.
       await page.evaluate(() => 0);
     },
-    async derrubar() {
+    async derrubar(o) {
       cair = true;
-      for (const { ws } of noAr.splice(0)) await ws.close();
+      if (o?.desligando) reunioes.clear();
+      for (const { ws } of noAr.splice(0)) await ws.close(o?.desligando ? { code: 1001 } : undefined);
     },
     voltar() {
       cair = false;
