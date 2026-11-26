@@ -260,6 +260,8 @@ test('o cancelar feito pelo teclado deixa o foco no Nova reunião', async ({ pag
   await abrir(page, pessoas[0]);
   await botaoMais(page).focus();
   await page.keyboard.press('Enter');
+  // O menu leva o foco ao primeiro item depois do desenho: mexer no foco antes disso o faria voltar ao primeiro item.
+  await expect(itemAbrir(page)).toBeFocused();
   await itemCancelar(page).focus();
   await page.keyboard.press('Enter');
   await expect(voltar(page)).toBeFocused();
