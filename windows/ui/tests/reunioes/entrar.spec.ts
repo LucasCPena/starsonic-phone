@@ -3,7 +3,7 @@
 // servidor do chat antigo. O "Entrar" da linha é da vista.spec.ts.
 import { expect, test, type Page, type Route } from '@playwright/test';
 import { comandos, empurrar, esperarComando, mudarEstado, type Comando } from '../helpers';
-import { abrirNoChat } from '../chat/abrir';
+import { abrirNoChat, pararORelogio } from '../chat/abrir';
 import { baseDoChat, empresaComReunioes } from '../chat/servidor';
 import { versaoDoWebView2, WEBVIEW2_MINIMO } from '../../src/reunioes/vista';
 import {
@@ -305,13 +305,16 @@ test('o chat antigo diz que precisa ser atualizado', async ({ page }) => {
   const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
   const criada = await marcarHoje(pessoas[0].api);
   // O chat sem a operação do passe: 404 numa reunião que continua na lista.
-  await page.route(ePasse, (rota) => rota.fulfill({ status: 404, json: { erro: 'naoEncontrado' } }));
+  const passes = await passeAntigo(page);
   await abrir(page, pessoas[0]);
   await campo(page).fill(criada.link);
   await entrarDoCampo(page).click();
   await expect(alertaDoCampo(page)).toHaveText(ATUALIZAR);
-  // O link do app diz o mesmo, no campo.
+  // O link do app diz o mesmo, no campo. O erro de antes ainda está na tela: espera o segundo pedido e o campo
+  // com o link (o app o serve depois de decidir), senão o que vem a seguir se mistura com ele.
   await abrirReuniao(page, criada.codigo);
+  await expect.poll(() => passes.pedidos()).toBe(2);
+  await expect(campo(page)).toHaveValue(criada.link);
   await expect(alertaDoCampo(page)).toHaveText(ATUALIZAR);
   await expect(page.getByRole('article')).toHaveCount(1);
   expect(await doTipo(page, 'videoWindow')).toEqual([]);
@@ -431,4 +434,28 @@ test.describe('o WebView2 antigo, com uma ligação', () => {
     await expect(page.locator('.toast-box')).toHaveText(ATUALIZAR);
     expect(await doTipo(page, 'reuniaoNavegador')).toEqual([]);
   });
+});
+
+test('o link do app espera no máximo 30 s a conta do telefone, e então diz o sem chat', async ({ page }) => {
+  const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
+  const criada = await marcarHoje(pessoas[0].api);
+  const passes = await passeAntigo(page);
+  await page.clock.install({ time: meioDiaDeHoje() });
+  // O chat fica em `precisaConta`: a conta do telefone ainda não conectou.
+  await abrirNoChat(page, { chave: pessoas[0].chave, ...RECEPCAO, cenario: 'chat-sem-conta' });
+  await pararORelogio(page);
+  await abrirReuniao(page, criada.codigo);
+  // O app trata a mensagem antes de o relógio andar (as mensagens vão em ordem pelo mesmo canal).
+  await page.evaluate(() => 0);
+  await page.clock.runFor(29_000);
+  await expect(page.locator('.toast-box')).toHaveCount(0);
+  await page.clock.runFor(2_000);
+  await expect(page.locator('.toast-box')).toHaveText(SEM_CHAT);
+  // A conta conecta depois: o link foi largado de vez, e nada entra sozinho.
+  await mudarEstado(page, (s) => ({ ...s, chat: { ...s.chat, contaConectada: true } }));
+  await page.clock.runFor(5_000);
+  await page.evaluate(() => 0);
+  expect(passes.pedidos()).toBe(0);
+  expect(await doTipo(page, 'videoWindow')).toEqual([]);
+  expect(await doTipo(page, 'reuniaoNavegador')).toEqual([]);
 });

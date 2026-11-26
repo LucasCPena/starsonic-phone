@@ -171,6 +171,9 @@ function conversaDaTela(v: View): number | null {
 const ABA_CHAT: View = { kind: 'tab', tab: 'chat' };
 const ABA_REUNIOES: View = { kind: 'tab', tab: 'reunioes' };
 
+/** O mais que o link do app espera o chat decidir se a aba Reuniões aparece. */
+const ESPERA_DO_LINK_MS = 30_000;
+
 function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [view, setView] = useState<View>(initialView);
@@ -339,6 +342,18 @@ function App() {
       return daAba || v.kind === 'reuniaoNova' ? { kind: 'tab', tab: 'teclado' } : v;
     });
   }, [abaDasReunioes]);
+  // O link que ainda espera a aba é largado 30 s depois de chegar, com o aviso do sem chat (o chat fica em
+  // `precisaConta` enquanto a conta do telefone não conecta, sem prazo). O efeito sai (e o relógio com ele) quando o
+  // link é decidido.
+  const vezDoLinkQueEspera = linkDoApp !== null && !linkDoApp.pronto ? linkDoApp.vez : null;
+  useEffect(() => {
+    if (vezDoLinkQueEspera === null) return;
+    const relogio = setTimeout(() => {
+      reunioesCliente.avisar(SEM_CHAT_ENTRE_PELO_NAVEGADOR);
+      setLinkDoApp((x) => (x?.vez === vezDoLinkQueEspera ? null : x));
+    }, ESPERA_DO_LINK_MS);
+    return () => clearTimeout(relogio);
+  }, [vezDoLinkQueEspera]);
   // O link do app (starsonic://reuniao/<código>) espera o chat responder pela primeira vez e é servido ou largado uma
   // única vez, só para a pessoa de quando chegou (a troca de conta o larga, sem aviso). O app nunca entra sozinho:
   // largado, ele não volta quando a conexão voltar.
@@ -351,9 +366,7 @@ function App() {
       setLinkDoApp((x) => (x?.vez === l.vez ? null : x));
     };
     if ((contaEmUso?.id ?? null) !== l.conta) return largar();
-    if (resumoDoChat?.ligado !== true || situacaoDoChat === 'precisaConta') {
-      return largar(SEM_CHAT_ENTRE_PELO_NAVEGADOR);
-    }
+    if (resumoDoChat?.ligado !== true) return largar(SEM_CHAT_ENTRE_PELO_NAVEGADOR);
     if (situacaoDoChat === 'fora') return largar(SERVIDOR_NAO_RESPONDEU);
     if (situacaoDoChat !== 'pronto' || !vistaReunioes.respondeu) return;
     // A leitura que falhou (ou a lista sem conexão) é o chat que não respondeu; sem a aba e sem falha, é o chat sem as
