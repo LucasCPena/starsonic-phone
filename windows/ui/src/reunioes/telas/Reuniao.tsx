@@ -49,6 +49,22 @@ export function Reuniao({ controle, vista, origem, barra, layout, plataforma, to
   const quadro = useRef<HTMLIFrameElement>(null);
   const titulo = useRef<HTMLHeadingElement>(null);
   const comQuadro = vista.endereco !== null;
+  // O Tentar de novo com o passe vindo: `aria-disabled` e o clique ignorado (um `disabled` com o foco o jogaria
+  // para o fundo).
+  const [tentando, setTentando] = useState(false);
+  const viva = useRef(true);
+  useLayoutEffect(
+    () => () => {
+      viva.current = false;
+    },
+    [],
+  );
+  const tentarDeNovo = async () => {
+    if (tentando) return;
+    setTentando(true);
+    await controle.tentarDeNovo();
+    if (viva.current) setTentando(false);
+  };
   const telaCheia = vista.janela === 'telaCheia';
   // Um efeito de layout: o useEffect não roda com o relógio da página parado nos testes. O elemento é dito ao
   // controlador a cada documento novo (a chave do iframe é o `quadro`), e o foco vai para ele.
@@ -100,7 +116,12 @@ export function Reuniao({ controle, vista, origem, barra, layout, plataforma, to
                 {A_REUNIAO_NAO_ABRIU}
               </h1>
               <div class="reuniao-falha-botoes">
-                <button type="button" class="btn btn-cyan" onClick={() => controle.tentarDeNovo()}>
+                <button
+                  type="button"
+                  class="btn btn-cyan"
+                  aria-disabled={tentando ? 'true' : undefined}
+                  onClick={() => void tentarDeNovo()}
+                >
                   {TENTAR_DE_NOVO}
                 </button>
                 <button type="button" class="btn btn-outline" onClick={() => controle.fechar()}>

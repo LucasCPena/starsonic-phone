@@ -74,6 +74,7 @@ export const NAVEGADOR_CONTINUA_OUVINDO = 'A reunião no navegador continua ouvi
 
 // A reunião dentro do app (o quadro, telas 6, 7 e 12 a 14).
 export const REUNIAO = 'Reunião';
+export const OCUPADO_EM_REUNIAO = 'Ocupado · em reunião';
 export const TELA_CHEIA = 'Tela cheia';
 export const SAIR_DA_TELA_CHEIA = 'Sair da tela cheia';
 export const A_REUNIAO_NAO_ABRIU = 'A reunião não abriu.';

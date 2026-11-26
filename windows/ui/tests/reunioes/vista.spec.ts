@@ -368,6 +368,120 @@ test('o Abrir no navegador de A reunião não abriu abre a reunião lá e fecha 
   await expect(page.getByRole('heading', { name: 'Reuniões', level: 1 })).toBeVisible();
 });
 
+/** Segura o primeiro pedido do passe até o `soltar`; os seguintes seguem. */
+async function segurarOPrimeiro(page: Page): Promise<{ soltar(): void; pedidos(): number }> {
+  let n = 0;
+  let soltar!: () => void;
+  const solto = new Promise<void>((r) => (soltar = r));
+  await page.route(ePasse, async (rota) => {
+    n += 1;
+    if (n === 1) await solto;
+    await rota.continue();
+  });
+  return { soltar, pedidos: () => n };
+}
+
+/** Abre a reunião sem o pronta e espera "A reunião não abriu." (com o relógio parado). */
+async function ateONaoAbriu(page: Page, pessoa: { chave: string; api: Parameters<typeof marcar>[0] }) {
+  const r = await semPronta(page, pessoa);
+  await page.clock.runFor(15_000);
+  await expect(titulo(page)).toBeVisible();
+  return r;
+}
+
+test('o Fechar com a aba já sumida não leva à aba quando ela volta', async ({ page }) => {
+  const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
+  await ateONaoAbriu(page, pessoas[0]);
+  // O Tentar de novo recebe o semReunioes: a aba some com a vista ainda aberta.
+  const semReunioes = { status: 403, json: { erro: 'semReunioes' } };
+  await page.route(ePasse, (rota) => rota.fulfill(semReunioes));
+  await page.route((url) => url.pathname === '/api/v1/reunioes', (rota) => rota.fulfill(semReunioes));
+  await botao(page, 'Tentar de novo').click();
+  await expect(page.locator('nav.nav button.tab-reunioes')).toHaveCount(0);
+  await botao(page, 'Fechar').click();
+  await expect(titulo(page)).toHaveCount(0);
+  // As reuniões voltam (a pergunta se repete a cada 5 minutos): a pessoa fica onde estava, no Teclado.
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+  await page.clock.runFor(300_000);
+  await expect(page.locator('nav.nav button.tab-reunioes')).toBeVisible();
+  await expect(page.locator('nav.nav button.tab[aria-current="page"]')).toHaveText('Teclado');
+});
+
+test('o Entrar depois do Fechar não espera um Tentar de novo ainda no ar', async ({ page }) => {
+  const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
+  await ateONaoAbriu(page, pessoas[0]);
+  const passes = await segurarOPrimeiro(page);
+  await botao(page, 'Tentar de novo').click();
+  await expect.poll(() => passes.pedidos()).toBe(1);
+  await botao(page, 'Fechar').click();
+  await expect(botaoEntrar(page)).toBeVisible();
+  await botaoEntrar(page).click();
+  await expect(quadro(page)).toBeVisible();
+  expect(passes.pedidos()).toBe(2);
+  // A resposta do Tentar de novo de antes não mexe na vista nova.
+  passes.soltar();
+  // O relógio da página está parado: uma ida ao servidor dá tempo de o app tratar a resposta.
+  await page.evaluate(() => fetch('/index.html').then((r) => r.text()));
+  await expect(quadro(page)).toBeVisible();
+  await expect(titulo(page)).toHaveCount(0);
+});
+
+test('o Abrir no navegador que volta depois do Fechar não fecha a vista nova', async ({ page }) => {
+  const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
+  await ateONaoAbriu(page, pessoas[0]);
+  const passes = await segurarOPrimeiro(page);
+  await botao(page, 'Abrir no navegador').click();
+  await expect.poll(() => passes.pedidos()).toBe(1);
+  await botao(page, 'Fechar').click();
+  await botaoEntrar(page).click();
+  await expect(quadro(page)).toBeVisible();
+  passes.soltar();
+  await expect.poll(async () => (await doTipo(page, 'reuniaoNavegador')).length).toBe(1);
+  // O relógio da página está parado: uma ida ao servidor dá tempo de o app tratar a resposta.
+  await page.evaluate(() => fetch('/index.html').then((r) => r.text()));
+  await expect(quadro(page)).toBeVisible();
+  expect(await doTipo(page, 'videoWindow')).toEqual([
+    { v: 1, cmd: 'videoWindow', modo: 'grande' },
+    { v: 1, cmd: 'videoWindow', modo: 'normal' },
+    { v: 1, cmd: 'videoWindow', modo: 'grande' },
+  ]);
+});
+
+test('o Tentar de novo ocupado fica aria-disabled e ignora o clique', async ({ page }) => {
+  const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
+  await ateONaoAbriu(page, pessoas[0]);
+  const passes = await segurarOPrimeiro(page);
+  await botao(page, 'Tentar de novo').click();
+  await expect(botao(page, 'Tentar de novo')).toHaveAttribute('aria-disabled', 'true');
+  await expect(botao(page, 'Tentar de novo')).toHaveJSProperty('disabled', false);
+  await botao(page, 'Tentar de novo').click({ force: true });
+  expect(passes.pedidos()).toBe(1);
+  passes.soltar();
+  await expect(quadro(page)).toBeVisible();
+});
+
+test('o Entrar do menu no Mínimo, ocupado, fica aria-disabled e ignora o clique', async ({ page }) => {
+  const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
+  const codigo = await marcarHoje(pessoas[0].api);
+  await paginaFalsa(page, codigo);
+  const passes = await segurarOPrimeiro(page);
+  await page.setViewportSize({ width: 300, height: 440 });
+  await abrir(page, pessoas[0]);
+  const mais = page.getByRole('button', { name: `Mais opções de ${PLANEJAMENTO}` });
+  const item = page.getByRole('menuitem', { name: 'Entrar', exact: true });
+  await mais.click();
+  await item.click();
+  await expect.poll(() => passes.pedidos()).toBe(1);
+  await mais.click();
+  await expect(item).toHaveAttribute('aria-disabled', 'true');
+  await expect(item).toHaveJSProperty('disabled', false);
+  await item.click({ force: true });
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 100)));
+  expect(passes.pedidos()).toBe(1);
+  passes.soltar();
+  await expect(quadro(page)).toBeVisible();
+});
+
 test('a tela cheia e a volta não recriam a reunião', async ({ page }) => {
   const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
   const codigo = await marcarHoje(pessoas[0].api);
@@ -514,7 +628,7 @@ test('o erro do passe aparece na aba, e a reunião de outra empresa oferece o na
   await expect.poll(async () => await doTipo(page, 'reuniaoNavegador')).toEqual([
     { v: 1, cmd: 'reuniaoNavegador', codigo },
   ]);
-  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByRole('alert')).toHaveText('');
   await expect(quadro(page)).toHaveCount(0);
 });
 

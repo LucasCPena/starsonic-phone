@@ -84,6 +84,8 @@ export class ReuniaoNoApp {
   private relogio: ReturnType<typeof setTimeout> | undefined;
   /** O pedido do passe do Entrar ou do Tentar de novo está no ar: outro igual não faz nada. */
   private pedindo = false;
+  /** Sobe a cada abertura e a cada fechamento: o que volta de um pedido de antes não vale. */
+  private abertura = 0;
   private ligacao: CallState | null = null;
   private aparelhosAgora: Aparelhos | null = null;
 
@@ -142,13 +144,16 @@ export class ReuniaoNoApp {
   }
 
   /** "Tentar de novo": outro passe, um documento novo (o `quadro` novo) e os 15 s de novo. */
-  tentarDeNovo(): void {
+  async tentarDeNovo(): Promise<void> {
     const reuniao = this.v.reuniao;
     if (this.v.fase !== 'naoAbriu' || reuniao === null || this.pedindo) return;
     this.pedindo = true;
-    void this.reunioes.pedirPasse(reuniao.codigo).then((r) => {
+    const abertura = this.abertura;
+    await this.reunioes.pedirPasse(reuniao.codigo).then((r) => {
+      // Fechada no meio: o fechar já soltou o `pedindo`, e a resposta é de uma abertura que acabou.
+      if (abertura !== this.abertura) return;
       this.pedindo = false;
-      if (this.v.fase !== 'naoAbriu' || this.v.reuniao?.codigo !== reuniao.codigo) return;
+      if (this.v.fase !== 'naoAbriu') return;
       if (!r.ok) {
         if (r.erro !== null) this.reunioes.avisar(r.erro);
         return;
@@ -162,9 +167,10 @@ export class ReuniaoNoApp {
   async abrirNoNavegador(): Promise<void> {
     const codigo = this.v.reuniao?.codigo;
     if (this.v.fase !== 'naoAbriu' || codigo === undefined) return;
+    const abertura = this.abertura;
     const r = await this.reunioes.abrirNoNavegador(codigo);
     if (r.ok) {
-      if (this.v.reuniao?.codigo === codigo) this.fechar();
+      if (abertura === this.abertura) this.fechar();
     } else if (r.erro !== null) {
       this.reunioes.avisar(r.erro);
     }
@@ -173,6 +179,8 @@ export class ReuniaoNoApp {
   /** Fecha a vista sem o `sair` (o "Fechar" de "A reunião não abriu."). A janela volta ao normal. */
   fechar(): void {
     if (this.v.fase === 'nenhuma') return;
+    this.abertura += 1;
+    this.pedindo = false;
     clearTimeout(this.relogio);
     this.relogio = undefined;
     this.passe = null;
@@ -204,6 +212,7 @@ export class ReuniaoNoApp {
 
   /** A vista abre (ou abre de novo): o documento novo, a fase `carregando` e os 15 s. */
   private abrir(codigo: string, assunto: string): void {
+    this.abertura += 1;
     this.jaPronta = false;
     this.passeEnviado = false;
     this.mudar({

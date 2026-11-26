@@ -317,12 +317,6 @@ function App() {
       camera: cameraDoEstado ?? '',
     });
   }, [microfoneDoEstado, altoFalanteDoEstado, cameraDoEstado]);
-  // A vista da reunião fechou: a aba Reuniões (e, com ela de volta à vista, a lista lida de novo).
-  const reuniaoEstavaAberta = useRef(false);
-  useLayoutEffect(() => {
-    if (reuniaoEstavaAberta.current && !reuniaoAberta) setView(ABA_REUNIOES);
-    reuniaoEstavaAberta.current = reuniaoAberta;
-  }, [reuniaoAberta]);
   // A aba some com a pessoa nela (o semReunioes, o chat desligado): a vista vai para o Teclado de fato, e não só a
   // tela.
   // Sem isto, a aba que volta (as reuniões liberadas de novo) puxaria a pessoa de volta para ela sozinha.
@@ -334,6 +328,15 @@ function App() {
       return daAba || v.kind === 'reuniaoNova' ? { kind: 'tab', tab: 'teclado' } : v;
     });
   }, [abaDasReunioes]);
+  // A vista da reunião fechou: a aba Reuniões (e, com ela de volta à vista, a lista lida de novo). Sem a aba (ela sumiu
+  // com a vista aberta), o Teclado: a pessoa não é puxada para a aba quando ela voltar.
+  const reuniaoEstavaAberta = useRef(false);
+  useLayoutEffect(() => {
+    if (reuniaoEstavaAberta.current && !reuniaoAberta) {
+      setView(abaDasReunioes ? ABA_REUNIOES : { kind: 'tab', tab: 'teclado' });
+    }
+    reuniaoEstavaAberta.current = reuniaoAberta;
+  }, [reuniaoAberta]);
 
   // (0.2.0) A conversa das vistas chatConversa, chatMembros e chatPor, quando a lista já a tem. Uma que não está nela
   // com a lista já lida (o aviso de uma conversa que saiu, ou que não existe; o grupo de que a pessoa saiu ou foi tirada,
@@ -494,8 +497,9 @@ function App() {
   // Antes do primeiro estado a plataforma não se sabe: a janela é a do Windows.
   const plataforma = ios ? 'ios' : undefined;
   const barra = (props: Omit<Parameters<typeof TitleBar>[0], 'send'> = {}) => (ios ? null : <TitleBar send={send} {...props} />);
-  // (3b) A reunião no app fica fora da raiz de cada tela: a tela de agora é sempre o primeiro filho (a vista, o segundo,
-  // não é recriada por uma troca de tela), e inerte enquanto a vista cobre a janela. O aviso curto vai para a vista.
+  // (3b) A reunião no app fica fora da raiz de cada tela: a tela de agora é sempre o primeiro filho (a vista, o
+  // segundo, não é recriada por uma troca de tela), e inerte enquanto a vista cobre a janela. O aviso curto vai para
+  // a vista.
   const vistaDaJanela =
     state && reuniaoAberta ? (
       <Reuniao

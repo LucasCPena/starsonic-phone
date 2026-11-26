@@ -1,6 +1,7 @@
 // Como a interface escreve o que vem no estado (só apresentação: as regras ficam no C++). (iPhone) A ordem, a busca e as
 // sugestões da agenda do iPhone, as do Android 0.2.0-rc.3 (contacts/ContactsSource.kt): a agenda chega como o iPhone a
 // entrega, e a interface a ordena.
+import { OCUPADO_EM_REUNIAO } from './reunioes/textos';
 import type { AgendaContact, BlfState, CallState, Contact, CurrentAccount, RecentCall, RecentKind, SavedAccount, Shortcut, ShortcutAction } from './state';
 
 /** "Recepção · 2001"; sem nome, só o ramal. */
@@ -61,7 +62,7 @@ export function accountDot(
       break;
   }
   if (emLigacao) return { dot: 'dot dot-busy', texto: 'Ocupado · em ligação', atencao: false };
-  if (emReuniao) return { dot: 'dot dot-busy', texto: 'Ocupado · em reunião', atencao: false };
+  if (emReuniao) return { dot: 'dot dot-busy', texto: OCUPADO_EM_REUNIAO, atencao: false };
   if (naoPerturbe) return { dot: 'dot dot-busy', texto: 'Não perturbe · as ligações não tocam', atencao: false };
   return { dot: 'dot dot-online', texto: accountStatusLine(conta), atencao: false };
 }

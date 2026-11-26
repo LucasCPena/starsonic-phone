@@ -26,7 +26,8 @@ const NAO_RESPONDEU = 'O servidor do chat não respondeu. Tente de novo.';
 
 const campo = (page: Page) => page.getByRole('textbox', { name: 'Entrar com o link de uma reunião' });
 const abrirNoNavegador = (page: Page) => page.getByRole('button', { name: 'Abrir no navegador' });
-const alerta = (page: Page) => page.getByRole('alert');
+// O alerta do campo (as linhas têm o delas, sempre montado).
+const alerta = (page: Page) => page.locator('.reun-link').getByRole('alert');
 const botaoMais = (page: Page) => page.getByRole('button', { name: `Mais opções de ${PLANEJAMENTO}` });
 const menu = (page: Page) => page.getByRole('menu', { name: `Opções de ${PLANEJAMENTO}` });
 const itemDoMenu = (page: Page) => menu(page).getByRole('menuitem', { name: 'Abrir no navegador' });

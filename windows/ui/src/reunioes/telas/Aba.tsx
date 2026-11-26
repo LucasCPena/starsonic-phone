@@ -10,9 +10,9 @@
 // num `alert` embaixo do campo, e o da outra empresa traz o "Abrir no navegador" sem o passe. Deu certo: o campo
 // esvazia. O "Abrir no navegador" do menu da linha manda o erro dele ao aviso curto do app.
 // (3b) O "Entrar" da linha abre a reunião dentro do app: é o botão principal, antes do "Copiar link"; no tamanho
-// Mínimo, é o primeiro item do menu. Ocupado (o passe vindo), fica `aria-disabled` e ignora o clique: um `disabled` com o foco
-// o jogaria para o fundo. O erro do passe fica na linha, num `alert`; o da reunião de outra empresa traz o "Abrir no
-// navegador" sem o passe. Com a vista da reunião aberta, a aba fica embaixo dela, sem o foco.
+// Mínimo, é o primeiro item do menu. Ocupado (o passe vindo), fica `aria-disabled` e ignora o clique: um `disabled` com
+// o foco o jogaria para o fundo. O erro do passe fica na linha, num `alert` sempre montado; o da reunião de outra
+// empresa traz o "Abrir no navegador" sem o passe. Com a vista da reunião aberta, a aba fica embaixo dela, sem o foco.
 import type { JSX } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { Menu } from '../../components/Menu';
@@ -214,6 +214,7 @@ function Linha({
                     type="button"
                     role="menuitem"
                     class="menuitem"
+                    aria-disabled={entrando ? 'true' : undefined}
                     onClick={() => {
                       setMenu(false);
                       void entrar();
@@ -260,23 +261,23 @@ function Linha({
             )}
           </div>
         </div>
-        {erroDoEntrar !== null && (
-          <div class="reun-entrar-erro">
-            <p role="alert">{erroDoEntrar.texto}</p>
-            {erroDoEntrar.convidado && (
-              <button
-                type="button"
-                class="btn btn-cyan reun-link-abrir"
-                onClick={() => {
-                  setErroDoEntrar(null);
-                  onAbrirComoConvidado(reuniao.codigo);
-                }}
-              >
-                {ABRIR_NO_NAVEGADOR}
-              </button>
-            )}
-          </div>
-        )}
+        <div class="reun-entrar-erro">
+          <p class="reun-link-erro" role="alert">
+            {erroDoEntrar?.texto}
+          </p>
+          {erroDoEntrar?.convidado && (
+            <button
+              type="button"
+              class="btn btn-cyan reun-link-abrir"
+              onClick={() => {
+                setErroDoEntrar(null);
+                onAbrirComoConvidado(reuniao.codigo);
+              }}
+            >
+              {ABRIR_NO_NAVEGADOR}
+            </button>
+          )}
+        </div>
         {cancelando && (
           <Cancelar
             reuniao={reuniao}
