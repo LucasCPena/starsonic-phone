@@ -25,7 +25,8 @@
 //   (reuniaoResposta) tira o pedido do aviso na hora e chama a rota. O que sai do aviso por uma resposta fica no
 //   cliente enquanto a reunião o lista (um evento ou a conferência que ainda o traz não o põe de volta no aviso); só a
 //   rota que falha o devolve. A parada da sessão esquece tudo.
-// - (Task 12) A pausa: enquanto uma ligação pausa (pausa.ts), cada reunião aberta no navegador cujo link ainda vale
+// - (Task 12) A pausa: enquanto uma ligação pausa (pausa.ts; desde o plano 3b, com a regra da reunião dentro do app: a
+//   ligação em espera pelo "Voltar para a reunião" não pausa), cada reunião aberta no navegador cujo link ainda vale
 //   recebe o `pausada` verdadeiro, com o `vez` da pausa, na hora e a cada 10 s; o falso, uma vez, no fim, a cada uma
 //   que a pausa alcançou. Um evento que mostra o computador entrando numa reunião manda a pausa dela na hora. O
 //   `ouvindoNoNavegador` da vista diz quando a reunião do navegador pode continuar ouvindo a pessoa: a última tentativa
@@ -601,9 +602,12 @@ export class ReunioesCliente {
     return this.noApp?.codigo === codigo;
   }
 
-  /** As ligações do estado da ponte, a cada estado: a pausa começa e acaba com o `haPausa`. */
-  ligacoes(l: CallState | null): void {
-    const ha = haPausa(l);
+  /**
+   * As ligações do estado da ponte, a cada estado: a pausa começa e acaba com o `haPausa`, com o `emEspera` da reunião
+   * dentro do app (a ligação que o "Voltar para a reunião" pôs em espera não pausa as do navegador).
+   */
+  ligacoes(l: CallState | null, emEspera: number | null = null): void {
+    const ha = haPausa(l, emEspera);
     if (ha !== this.haPausaAgora) {
       this.haPausaAgora = ha;
       if (ha) this.comecarAPausa();

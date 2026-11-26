@@ -1,5 +1,6 @@
-// Os textos das reuniões (a spec, seção 11, e o quadro "Starsonic Phone — reuniões", telas 1 a 5 e 11): o aviso do
-// Windows, a aba, o menu, a Nova reunião, o cancelar e os erros.
+// Os textos das reuniões (a spec, seção 11, e o quadro "Starsonic Phone — reuniões", telas 1 a 7 e 11 a 14): o aviso do
+// Windows, a aba, o menu, a Nova reunião, o cancelar, os erros e a reunião dentro do app (a barra, as faixas e os
+// cartões da ligação).
 
 export const AVISO_REUNIOES = 'Starsonic Phone · Reuniões';
 export const querEntrar = (nome: string) => `${nome} quer entrar`;
@@ -91,3 +92,15 @@ export const VOCE_ESTA_NA_REUNIAO = 'Você está na reunião';
 export const MICROFONE_LIGADO = 'O microfone está ligado';
 export const MICROFONE_DESLIGADO = 'O microfone está desligado';
 export const VOLTAR_PARA_A_REUNIAO = 'Voltar para a reunião';
+/** O cartão da ligação que toca por cima da reunião (tela 12); o "Recusar" é o RECUSAR do aviso. */
+export const ligacaoDe = (nome: string) => `Ligação de ${nome}`;
+/** A segunda linha do cartão: "<Ramal ou número> · tocando" com o nome; só "tocando" sem ele (o nome é o número). */
+export const tocando = (linhaDoNumero: string | null) => (linhaDoNumero ? `${linhaDoNumero} · tocando` : 'tocando');
+export const ATENDER = 'Atender';
+export const ATENDER_TIRA_DA_REUNIAO = 'Atender tira você da reunião enquanto a ligação durar.';
+/** A faixa da ligação (tela 13); o assunto vem da reunião, ou o SEM_ASSUNTO. */
+export const VOCE_ESTA_FORA_DA_REUNIAO = 'Você está fora da reunião';
+/** O cartão da ligação em espera pelo "Voltar para a reunião". */
+export const emEsperaDe = (nome: string) => `${nome} em espera`;
+export const VOLTAR_A_LIGACAO = 'Voltar à ligação';
+export const DESLIGAR = 'Desligar';

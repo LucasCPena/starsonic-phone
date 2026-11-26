@@ -4,7 +4,8 @@
 // A vista da outra ponta leva o `key` do id da ligação: uma ligação nova monta uma vista nova, que nunca mostra um quadro
 // da de antes (o contrato da página com as memórias). O Abrir grande é irmão das vistas, nunca filho de uma imagem (o
 // role="img" esconde o que tem dentro do leitor de tela). A sua imagem flutuante (o quadro VozComCamera) é a sua imagem
-// fora da área do vídeo: a tela da ligação a mostra com a câmera ligada (Ligacao.tsx).
+// fora da área do vídeo: a tela da ligação a mostra com a câmera ligada (Ligacao.tsx). (reuniões, 3b) Com uma reunião
+// aberta dentro do app, sem o Abrir grande (o `abrirGrande` falso): o tamanho da janela é o da reunião.
 import type { VNode } from 'preact';
 import { VistaDeVideo } from '../components/VistaDeVideo';
 import { contactNumberLine, nameOrNumber } from '../format';
@@ -23,10 +24,12 @@ interface Props {
   card: CallCard;
   now: number;
   send: Send;
+  /** (reuniões, 3b) Sem o Abrir grande (false) com uma reunião aberta dentro do app: o tamanho da janela é o dela. */
+  abrirGrande?: boolean;
 }
 
 /** A área do vídeo e quem fala, no lugar do bloco de quem fala da ligação só de voz. */
-export function CaixaDoVideo({ state, card, now, send }: Props): VNode {
+export function CaixaDoVideo({ state, card, now, send, abrirGrande = true }: Props): VNode {
   const video = videoDe(state, card);
   // No Mínimo, quem fala é outro texto (uma linha só, sem o ramal): o layout vem daqui, como o título da barra no main.tsx.
   const layout = useLayout();
@@ -39,14 +42,16 @@ export function CaixaDoVideo({ state, card, now, send }: Props): VNode {
         {video.camera && <VistaDeVideo vista="local" desenhar rotulo={SUA_IMAGEM} espelhar class="video-sua" />}
         {/* O grande toma a tela: o segundo clique de um clique duplo não vale aqui nem no vídeo do grande, que fica embaixo
             do ponteiro (o Grande só alterna a tela cheia num clique duplo que começou no vídeo). */}
-        <button
-          type="button"
-          class="video-abrir"
-          onClick={semSegundoClique(!isIos(state), () => send({ cmd: 'videoWindow', modo: 'grande' }))}
-        >
-          <IconExpand size="sm" />
-          {ABRIR_GRANDE}
-        </button>
+        {abrirGrande && (
+          <button
+            type="button"
+            class="video-abrir"
+            onClick={semSegundoClique(!isIos(state), () => send({ cmd: 'videoWindow', modo: 'grande' }))}
+          >
+            <IconExpand size="sm" />
+            {ABRIR_GRANDE}
+          </button>
+        )}
       </div>
       {layout === 'minimo' ? (
         <div class="who who-video">

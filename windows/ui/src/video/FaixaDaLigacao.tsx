@@ -7,7 +7,8 @@
 // "Em ligação ·" vai no cinza-azulado e menor, o nome em branco e mais forte, e o tempo em ciano (com o "·" antes dele
 // quando vem o nome). À direita, os botões redondos: o Mudo, a Câmera (só com o vídeo ligado, com
 // a regra da tela da ligação: o cameraDesativada) e o Desligar (o hangup com o id). A conversa só fica com uma ligação
-// (main.tsx). Os botões ignoram o segundo clique de um clique duplo, como os da tela da ligação.
+// (main.tsx). Os botões ignoram o segundo clique de um clique duplo, como os da tela da ligação. (reuniões, 3b) Com uma
+// reunião aberta dentro do app (o `soVoz`), a Câmera só desliga, como na tela da ligação: a câmera está com a reunião.
 import type { VNode } from 'preact';
 import { VistaDeVideo } from '../components/VistaDeVideo';
 import { nameOrNumber } from '../format';
@@ -25,9 +26,11 @@ interface Props {
   send: Send;
   /** O "Voltar para a ligação": a tela da ligação no lugar da conversa. */
   onVoltar(): void;
+  /** (reuniões, 3b) Uma reunião aberta dentro do app: a Câmera só desliga (a câmera está com a reunião). */
+  soVoz?: boolean;
 }
 
-export function FaixaDaLigacao({ state, ligacao: l, send, onVoltar }: Props): VNode {
+export function FaixaDaLigacao({ state, ligacao: l, send, onVoltar, soVoz = false }: Props): VNode {
   const now = useNow();
   const top = l.top;
   const video = videoDe(state, top);
@@ -80,7 +83,7 @@ export function FaixaDaLigacao({ state, ligacao: l, send, onVoltar }: Props): VN
             class={video.camera ? 'faixa-botao faixa-on' : 'faixa-botao'}
             aria-label={camera}
             title={camera}
-            disabled={cameraDesativada(top, video)}
+            disabled={soVoz ? !video.camera : cameraDesativada(top, video)}
             onClick={aoClicar(() => send({ cmd: 'camera', on: !video.camera }))}
           >
             {video.camera ? <IconVideo /> : <IconVideoOff />}

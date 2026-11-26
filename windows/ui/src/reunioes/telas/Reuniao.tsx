@@ -5,7 +5,9 @@
 // ordem do Tab. Com a fase `naoAbriu` o iframe sai e entram o título, o "Tentar de novo", o "Fechar" e o "Abrir no
 // navegador"; o foco vai ao título. A vista é montada uma vez, fora da raiz de cada tela do main.tsx: a tela do iframe
 // não é desmontada por uma troca de tela nem pela tela cheia (o documento da reunião fica o mesmo). No "Telefone" a
-// vista fica escondida (`visibility: hidden`, o iframe vivo e a reunião andando), fora do Tab e do leitor de tela.
+// vista fica escondida (`visibility: hidden`, o iframe vivo e a reunião andando), fora do Tab e do leitor de tela; na
+// pausa de uma ligação, também. (Task 6) O cartão da ligação (o `cartao`, do main.tsx) fica no alto e no meio, por
+// cima da página, e antes dela no documento.
 import type { ComponentChildren } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { IconExitFullscreen, IconFullscreen, IconPhone } from '../../icons';
@@ -45,9 +47,11 @@ interface Props {
   plataforma: string | undefined;
   /** O aviso curto do app: a lista fica embaixo da vista, e o aviso tem de aparecer em cima dela. */
   toast: ComponentChildren;
+  /** (Task 6) O cartão da ligação (o que toca, ou o da espera), no alto e no meio, por cima da página. */
+  cartao?: ComponentChildren;
 }
 
-export function Reuniao({ controle, vista, origem, barra, layout, plataforma, toast }: Props) {
+export function Reuniao({ controle, vista, origem, barra, layout, plataforma, toast, cartao }: Props) {
   const quadro = useRef<HTMLIFrameElement>(null);
   const titulo = useRef<HTMLHeadingElement>(null);
   const comQuadro = vista.endereco !== null;
@@ -109,6 +113,8 @@ export function Reuniao({ controle, vista, origem, barra, layout, plataforma, to
       >
         {barra(acoes)}
         <div class="reuniao-corpo">
+          {/* Antes da página no documento: os botões do cartão vêm antes dela na ordem do Tab. */}
+          {cartao}
           {comQuadro ? (
             <iframe
               key={vista.quadro}

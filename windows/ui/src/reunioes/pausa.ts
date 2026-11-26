@@ -1,17 +1,21 @@
-// A regra de quando uma ligação pausa a reunião aberta no navegador (a spec, 7.8 e 7.9).
+// A regra de quando uma ligação pausa a reunião, a de dentro do app e a aberta no navegador (a spec, 7.8 e 7.9).
 import type { CallCard, CallState } from '../state';
 
 /** Uma recebida que ainda toca não pausa nada. */
 const soTocando = (c: CallCard): boolean => c.incoming && c.phase === 'ringing';
 
 /**
- * A reunião fica em pausa do começo de uma ligação feita, ou do atender de uma recebida, até a última acabar: existe um
- * cartão (o de cima ou o segundo) que não é uma recebida ainda tocando. A sala de vídeo de pé conta como uma ligação.
+ * Há pausa enquanto existe uma ligação que não está em espera pelo "Voltar para a reunião" (`emEspera`: o id da
+ * ligação que o Voltar pôs em espera, ou null): do começo de uma ligação feita, ou do atender de uma recebida, até a
+ * última acabar; só tocando não pausa; a sala de vídeo de pé conta como uma ligação. A ligação do `emEspera` só deixa
+ * de contar já em espera (o `held`): até o núcleo dizer que ela está em espera, a pausa continua.
  */
-export function haPausa(l: CallState | null): boolean {
+export function haPausa(l: CallState | null, emEspera: number | null = null): boolean {
   if (!l) return false;
   if (l.sala) return true;
-  return !soTocando(l.top) || (l.second !== null && !soTocando(l.second));
+  const conta = (c: CallCard | null): boolean =>
+    c !== null && !soTocando(c) && !(emEspera !== null && c.id === emEspera && c.held);
+  return conta(l.top) || conta(l.second);
 }
 
 const LETRAS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';

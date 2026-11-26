@@ -18,10 +18,18 @@
 // - Com o WebView2 abaixo do mínimo (WEBVIEW2_MINIMO), o Entrar abre no navegador e diz por quê.
 // - As ligações de agora (o CallState) servem ao Entrar, que recusa com uma ligação (também tocando, ou a sala de vídeo
 //   de pé) e com outra reunião na vista; a reunião que já está na vista só é mostrada.
+// - (Task 6) A pausa da reunião é o haPausa das ligações, com o `emEspera`: quando ela começa, o `pausar` à página, a
+//   vista escondida (a tela da ligação por cima, com a faixa da tela 13) e a janela normal; quando acaba, o `retomar`
+//   e a vista de volta, no tamanho em que ela estava. Enquanto ela dura, o `pausar` vai de novo a cada `estado` em que
+//   a fase passa a `naReuniao`. Antes de a pessoa entrar, a ligação atendida ou feita fecha a vista, sem pausa. O
+//   "Voltar para a reunião" da faixa da tela 13 põe a ligação em espera (o `hold`) e guarda o id dela no `emEspera`;
+//   o "Voltar à ligação" a tira da espera. O núcleo põe a janela no normal quando a última ligação acaba: a vista à
+//   vista manda o tamanho dela de novo.
 // Nada da reunião (o código, o passe, o link, o assunto) vai ao console.
 import type { Bridge } from '../bridge';
 import type { CallState } from '../state';
 import type { ReunioesCliente, ResultadoSemPasse } from './cliente';
+import { haPausa } from './pausa';
 import { DESLIGUE_PARA_ENTRAR, SAIA_PARA_ENTRAR_EM_OUTRA, WEBVIEW2_ANTIGO } from './textos';
 
 export type FaseNoApp = 'nenhuma' | 'carregando' | 'naoAbriu' | 'entrada' | 'naReuniao' | 'fora';
@@ -40,6 +48,19 @@ export interface VistaNoApp {
   janela: 'grande' | 'telaCheia';
   /** A reunião está escondida dentro do app: o "Telefone", ou a tela de uma ligação por cima (Task 6). */
   escondida: boolean;
+  /** A reunião está em pausa por uma ligação (o `pausar` foi à página): a vista fica escondida, com a tela da ligação
+   *  e a faixa da tela 13 por cima. */
+  pausada: boolean;
+  /** O id da ligação que o "Voltar para a reunião" pôs em espera, ou null. */
+  emEspera: number | null;
+}
+
+/**
+ * O "Voltar para a reunião" da faixa da tela 13 vale com uma ligação só, já atendida: sem a segunda, fora da
+ * conferência e da consulta, e sem a sala de vídeo (que não vai para a espera).
+ */
+export function podeVoltarDaLigacao(l: CallState | null): l is CallState {
+  return l !== null && l.second === null && !l.conference && !l.consulting && !l.sala && l.top.phase === 'active';
 }
 
 /** Os nomes dos aparelhos das Configurações do app (`""` é o padrão do sistema). */
@@ -74,6 +95,8 @@ const FECHADA: Omit<VistaNoApp, 'quadro'> = {
   microfone: false,
   janela: 'grande',
   escondida: false,
+  pausada: false,
+  emEspera: null,
 };
 const SEM_APARELHOS: Aparelhos = { microfone: '', altoFalante: '', camera: '' };
 const FASES_DA_PAGINA: readonly FaseNoApp[] = ['entrada', 'naReuniao', 'fora'];
@@ -103,6 +126,8 @@ export class ReuniaoNoApp {
   private abertura = 0;
   private ligacao: CallState | null = null;
   private aparelhosAgora: Aparelhos | null = null;
+  /** Um estado já mostrou a ligação do `emEspera` em espera: daí em diante, sair dela tira o `emEspera`. */
+  private esperaVista = false;
 
   constructor(o: { reunioes: ReunioesCliente; bridge: Bridge; base: string }) {
     this.reunioes = o.reunioes;
@@ -212,6 +237,7 @@ export class ReuniaoNoApp {
     this.passe = null;
     this.jaPronta = false;
     this.passeEnviado = false;
+    this.esperaVista = false;
     this.mudar({ ...FECHADA });
     this.bridge.send({ cmd: 'videoWindow', modo: 'normal' });
   }
@@ -225,11 +251,34 @@ export class ReuniaoNoApp {
     this.bridge.send({ cmd: 'videoWindow', modo: 'normal' });
   }
 
-  /** O "Voltar para a reunião": a vista de novo, no tamanho em que ela estava. */
+  /**
+   * O "Voltar para a reunião" da faixa da tela 14: a vista de novo, no tamanho em que ela estava. Na pausa de uma
+   * ligação, nada: a tela da ligação fica por cima (a volta é a da faixa da tela 13, o voltarDaLigacao).
+   */
   voltar(): void {
-    if (!this.v.escondida) return;
+    if (!this.v.escondida || this.v.pausada) return;
     this.mudar({ escondida: false });
-    this.bridge.send({ cmd: 'videoWindow', modo: this.v.janela });
+    this.mandarOTamanho();
+  }
+
+  /** O "Voltar para a reunião" da faixa da tela 13: a ligação em espera e a reunião de volta. */
+  voltarDaLigacao(): void {
+    const l = this.ligacao;
+    if (!this.v.pausada || !podeVoltarDaLigacao(l)) return;
+    this.bridge.send({ cmd: 'hold', on: true });
+    // A reunião volta com o estado que mostra a ligação em espera (o haPausa); já em espera, na hora.
+    this.esperaVista = l.top.held;
+    this.mudar({ emEspera: l.top.id });
+    this.acertarAPausa();
+  }
+
+  /** O "Voltar à ligação" do cartão da espera: a ligação sai da espera, e a pausa volta (a janela normal, a tela). */
+  voltarALigacao(): void {
+    if (this.v.emEspera === null) return;
+    this.bridge.send({ cmd: 'hold', on: false });
+    this.esperaVista = false;
+    this.mudar({ emEspera: null });
+    this.acertarAPausa();
   }
 
   telaCheia(ligada: boolean): void {
@@ -247,9 +296,63 @@ export class ReuniaoNoApp {
     if (this.passeEnviado) this.postar({ tipo: 'aparelhos', aparelhos: a });
   }
 
-  /** As ligações de agora (o CallState): o "Entrar" usa para recusar; as Tasks 5 e 6 acrescentam o resto. */
+  /**
+   * As ligações de agora (o CallState), a cada estado: o "Entrar" recusa com uma; a pausa começa e acaba com o
+   * haPausa (com o `emEspera`, que some quando a ligação dele sai da espera por outro caminho ou acaba). O núcleo põe a
+   * janela no normal quando a última ligação acaba: a vista à vista manda o tamanho dela de novo.
+   */
   ligacoes(l: CallState | null): void {
+    const acabou = this.ligacao !== null && l === null;
     this.ligacao = l;
+    this.acertarAEspera();
+    const voltou = this.acertarAPausa();
+    if (acabou && !voltou && this.v.fase !== 'nenhuma' && !this.v.escondida) this.mandarOTamanho();
+  }
+
+  /** O `emEspera` some quando a ligação dele acaba, ou quando ela sai da espera depois de um estado a mostrar nela. */
+  private acertarAEspera(): void {
+    const id = this.v.emEspera;
+    if (id === null) return;
+    const l = this.ligacao;
+    const c = l === null ? null : ([l.top, l.second].find((x) => x !== null && x.id === id) ?? null);
+    if (c?.held) {
+      this.esperaVista = true;
+    } else if (c === null || this.esperaVista) {
+      this.esperaVista = false;
+      this.mudar({ emEspera: null });
+    }
+  }
+
+  /**
+   * A pausa segue o haPausa. O começo, com a pessoa na reunião: o `pausar`, a vista escondida e a janela normal (no
+   * "Telefone", ela já está); antes de a pessoa entrar (a página carregando, "A reunião não abriu.", a entrada ou o
+   * `fora`), a ligação fecha a vista, sem faixa e sem pausa. O fim: o `retomar` e a vista de volta, no tamanho em que
+   * ela estava. Devolve se a vista voltou (e já mandou o tamanho).
+   */
+  private acertarAPausa(): boolean {
+    if (this.v.fase === 'nenhuma') return false;
+    const ha = haPausa(this.ligacao, this.v.emEspera);
+    if (ha === this.v.pausada) return false;
+    if (ha) {
+      if (this.v.fase !== 'naReuniao') {
+        this.fechar();
+        return false;
+      }
+      this.postar({ tipo: 'pausar' });
+      const jaEscondida = this.v.escondida;
+      this.mudar({ pausada: true, escondida: true });
+      if (!jaEscondida) this.bridge.send({ cmd: 'videoWindow', modo: 'normal' });
+      return false;
+    }
+    this.postar({ tipo: 'retomar' });
+    this.mudar({ pausada: false, escondida: false });
+    this.mandarOTamanho();
+    return true;
+  }
+
+  /** O tamanho em que a reunião estava: o grande ou a tela cheia. */
+  private mandarOTamanho(): void {
+    this.bridge.send({ cmd: 'videoWindow', modo: this.v.janela });
   }
 
   /** A vista abre (ou abre de novo): o documento novo, a fase `carregando` e os 15 s. */
@@ -321,7 +424,11 @@ export class ReuniaoNoApp {
   private oEstadoDaPagina(m: Mensagem): void {
     const fase = FASES_DA_PAGINA.find((f) => f === m.fase);
     if (fase === undefined || typeof m.microfone !== 'boolean' || this.v.endereco === null) return;
+    // A página só obedece ao `pausar` na reunião ou entrando nela, e não guarda nada: enquanto a pausa dura, ele vai
+    // de novo a cada fase que passa a naReuniao (a página que entrou de novo sozinha, no meio da ligação).
+    const entrou = fase === 'naReuniao' && this.v.fase !== 'naReuniao';
     this.mudar({ fase, microfone: m.microfone });
+    if (entrou && this.v.pausada) this.postar({ tipo: 'pausar' });
   }
 
   private postar(m: object): void {

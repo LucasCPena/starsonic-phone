@@ -30,7 +30,10 @@
 // do chat, e a aba só aparece depois da primeira leitura que dá certo (as reuniões liberadas para a empresa).
 // (3b) A reunião dentro do app (reunioes/vista.ts e telas/Reuniao.tsx): a vista é montada uma vez, junto da tela de
 // agora e fora da raiz dela (o `comVista`): enquanto a reunião está na vista, a tela de baixo fica inerte e o aviso
-// curto vai para a vista. Ao fechar, a aba Reuniões.
+// curto vai para a vista. Ao fechar, a aba Reuniões. (Task 6) A ligação que toca com a vista à vista é o cartão da tela
+// 12, por cima da página (telas/CartaoDaLigacao.tsx), e a janela não muda; na pausa (a vista escondida), a tela da
+// ligação de sempre, só de voz e sem o grande, com a faixa da tela 13; com a ligação em espera pelo "Voltar para a
+// reunião", o cartão da espera. As ligações e o emEspera vão às duas pausas: a da vista e a do navegador.
 // (0.3.0) O vídeo: as memórias das vistas desta página (video/vistas.ts) são guardadas uma vez, junto com a ponte, e vão
 // às vistas de vídeo pelo VideoContexto. Os avisos do vídeo (os toasts do AVISOS_DE_5_S) ficam 5 s na tela; os outros,
 // os 2 s de sempre. (Task 8) O chat na ligação: numa ligação com um colega do chat (video/chatDaLigacao.ts), o Chat da
@@ -55,11 +58,12 @@ import { PorPessoas } from './chat/telas/PorPessoas';
 import type { Conversa as ConversaDaLista } from './chat/tipos';
 import { useAcao, useVistaChat } from './chat/usarChat';
 import { ReunioesCliente } from './reunioes/cliente';
-import { ReuniaoNoApp } from './reunioes/vista';
+import { podeVoltarDaLigacao, ReuniaoNoApp } from './reunioes/vista';
 import { Aba as AbaReunioes, type LinkDoApp } from './reunioes/telas/Aba';
 import { SEM_CHAT_ENTRE_PELO_NAVEGADOR, SERVIDOR_NAO_RESPONDEU } from './reunioes/textos';
 import { Nova as NovaReuniao } from './reunioes/telas/Nova';
-import { FaixaDoTelefone } from './reunioes/telas/Faixas';
+import { CartaoDaLigacao } from './reunioes/telas/CartaoDaLigacao';
+import { FaixaDoTelefone, FaixaForaDaReuniao } from './reunioes/telas/Faixas';
 import { Reuniao, useVistaDaReuniao } from './reunioes/telas/Reuniao';
 import { useVistaReunioes } from './reunioes/usarReunioes';
 import { AdminLogin } from './components/AdminLogin';
@@ -315,15 +319,17 @@ function App() {
   useLayoutEffect(() => {
     reunioesCliente.abaAVista(reunioesNaVista);
   }, [reunioesNaVista]);
-  // A pausa da reunião aberta no navegador segue as ligações do estado. Um efeito de layout: o useEffect não roda com o
-  // relógio da página parado nos testes.
+  // As ligações do estado vão à reunião do app (a pausa dela e o emEspera do "Voltar para a reunião") e, com o emEspera
+  // dela, à pausa da reunião aberta no navegador: a mesma regra. O emEspera também muda sem estado novo (o Voltar e o
+  // Voltar à ligação). Um efeito de layout: o useEffect não roda com o relógio da página parado nos testes.
   const ligacaoDoEstado = state?.ligacao ?? null;
+  const emEsperaNoApp = vistaDaReuniao.emEspera;
   useLayoutEffect(() => {
     if (!ios) {
-      reunioesCliente.ligacoes(ligacaoDoEstado);
       reuniaoNoApp.ligacoes(ligacaoDoEstado);
+      reunioesCliente.ligacoes(ligacaoDoEstado, reuniaoNoApp.vista().emEspera);
     }
-  }, [ligacaoDoEstado]);
+  }, [ligacaoDoEstado, emEsperaNoApp]);
   // A reunião da vista é dita ao cliente das reuniões: os pedidos dela vão ao aviso com o `escondida`, e ela fica
   // fora da pausa do navegador. Um efeito de layout: o useEffect não roda com o relógio da página parado nos testes.
   const codigoNoApp = vistaDaReuniao.reuniao?.codigo ?? null;
@@ -512,7 +518,9 @@ function App() {
   const toqueNoGrande = state?.ligacao != null && state.ligacao.top.phase === 'ringing' && state.video != null && videoDoApp(state).janela !== 'normal';
   const foraDaSalaNoGrande =
     state?.ligacao != null && state.video != null && salaEmbaixo(state.ligacao, salaDe(state)) && videoDoApp(state).janela !== 'normal';
-  const idQueToca = toqueNoGrande || foraDaSalaNoGrande ? state!.ligacao!.top.id : null;
+  // (3b) Com a reunião aberta dentro do app, o tamanho da janela é o dela: a ligação que toca aparece no cartão por
+  // cima da página (a tela 12), sem mudar a janela, e a pausa pede a janela normal.
+  const idQueToca = !reuniaoAberta && (toqueNoGrande || foraDaSalaNoGrande) ? state!.ligacao!.top.id : null;
   useEffect(() => {
     if (idQueToca !== null) send({ cmd: 'videoWindow', modo: 'normal' });
   }, [idQueToca, send]);
@@ -577,10 +585,18 @@ function App() {
   const plataforma = ios ? 'ios' : undefined;
   const barraSemFaixa = (props: Omit<Parameters<typeof TitleBar>[0], 'send'> = {}) =>
     ios ? null : <TitleBar send={send} {...props} />;
-  // (3b) O "Telefone": a faixa da tela 14 vai logo abaixo da barra de qualquer tela do app de sempre.
-  const faixaDoTelefone = vistaDaReuniao.escondida ? (
+  // (3b) A reunião escondida: a faixa vai logo abaixo da barra de qualquer tela do app de sempre. Com a pausa de uma
+  // ligação (a tela da ligação por cima), a da tela 13, com o "Voltar para a reunião" só com uma ligação, já atendida;
+  // no "Telefone", a da tela 14 (também com uma ligação que só toca: a reunião continua ouvindo a pessoa).
+  const ligacaoAgora = state?.ligacao ?? null;
+  const faixaDaReuniao = !vistaDaReuniao.escondida ? null : vistaDaReuniao.pausada ? (
+    <FaixaForaDaReuniao
+      assunto={vistaDaReuniao.reuniao?.assunto ?? ''}
+      onVoltar={podeVoltarDaLigacao(ligacaoAgora) ? () => reuniaoNoApp.voltarDaLigacao() : null}
+    />
+  ) : (
     <FaixaDoTelefone microfone={vistaDaReuniao.microfone} onVoltar={() => reuniaoNoApp.voltar()} />
-  ) : null;
+  );
   // No Compacto e no Mínimo, sem o "Starsonic Phone · ", para a conta caber ao lado do estado (no Mínimo, só o ramal).
   const tituloDaConta = (conta: NonNullable<AppState['conta']>) =>
     layout === 'normal'
@@ -588,9 +604,10 @@ function App() {
       : layout === 'compacto'
         ? accountTitle(conta)
         : conta.ramal;
-  // No "Telefone" a barra de título diz "Ocupado · em reunião" e a conta (a tela 14), em qualquer tela do app.
+  // No "Telefone" a barra de título diz "Ocupado · em reunião" e a conta (a tela 14), em qualquer tela do app; a tela
+  // da ligação diz "Ocupado · em ligação" (a tela 13).
   const daReuniaoEscondida: Omit<Parameters<typeof TitleBar>[0], 'send'> =
-    faixaDoTelefone && state?.conta
+    faixaDaReuniao && state?.conta
       ? {
           title: tituloDaConta(state.conta),
           status: accountDot(state.conta, state.ligacao != null, state.naoPerturbe, true),
@@ -599,9 +616,12 @@ function App() {
   const barra = (props: Omit<Parameters<typeof TitleBar>[0], 'send'> = {}) => (
     <>
       {barraSemFaixa({ ...daReuniaoEscondida, ...props })}
-      {faixaDoTelefone}
+      {faixaDaReuniao}
     </>
   );
+  // Na reunião, a barra da vista diz "Ocupado · em reunião", também com a ligação que toca no cartão (a tela 12) ou em
+  // espera; antes de a pessoa entrar, "Ocupado · em ligação" com uma ligação, como a tela da ligação.
+  const naReuniao = vistaDaReuniao.fase === 'naReuniao';
   // (3b) A reunião no app fica fora da raiz de cada tela: a tela de agora é sempre o primeiro filho (a vista, o
   // segundo, não é recriada por uma troca de tela), e inerte enquanto a vista cobre a janela. O aviso curto vai para
   // a vista.
@@ -615,7 +635,7 @@ function App() {
           barraSemFaixa({
             title: state.conta ? `Starsonic Phone · ${accountTitle(state.conta)}` : undefined,
             status: state.conta
-              ? accountDot(state.conta, state.ligacao != null, state.naoPerturbe, vistaDaReuniao.fase === 'naReuniao')
+              ? accountDot(state.conta, state.ligacao != null && !naReuniao, state.naoPerturbe, naReuniao)
               : undefined,
             semRedimensionar: true,
             acoes,
@@ -624,6 +644,16 @@ function App() {
         layout={layout}
         plataforma={plataforma}
         toast={<Toast texto={vistaDaReuniao.escondida ? null : (toast?.texto ?? null)} vez={toast?.vez ?? 0} />}
+        cartao={
+          state.ligacao && !vistaDaReuniao.escondida ? (
+            <CartaoDaLigacao
+              ligacao={state.ligacao}
+              emEspera={vistaDaReuniao.emEspera}
+              send={send}
+              onVoltarALigacao={() => reuniaoNoApp.voltarALigacao()}
+            />
+          ) : null
+        }
       />
     ) : null;
   const comVista = (tela: JSX.Element) => (
@@ -725,9 +755,11 @@ function App() {
     // a barra de título é a da ligação, sem as zonas de redimensionar; na tela cheia, nenhuma barra. O Chat abre e fecha a
     // conversa no painel da direita (o Voltar dela também o fecha).
     // (0.4.0) Com a sala embaixo (a ligação de fora em cima), a janela é a normal, mesmo com a `janela` diferente dela.
+    // (3b) Com a reunião aberta dentro do app, a `janela` é a da reunião, e a ligação é só de voz (sem o grande): a
+    // tela da ligação de sempre, que a pausa leva à janela normal.
     const sala = salaDe(state);
     const janela = videoDoApp(state).janela;
-    if (janela !== 'normal' && l.top.phase !== 'ringing' && !salaEmbaixo(l, sala)) {
+    if (janela !== 'normal' && l.top.phase !== 'ringing' && !salaEmbaixo(l, sala) && !reuniaoAberta) {
       // A sala no grande não tem o Chat (dentro da sala só ficam os controles dela).
       const chat =
         sala === null && l.second === null && (colegaDaLigacao !== null || daLigacao !== null)
@@ -764,7 +796,7 @@ function App() {
       return comVista(
         <div class="win" data-layout={layout} data-plataforma={plataforma}>
           {barraDaLigacao}
-          <FaixaDaLigacao state={state} ligacao={l} send={send} onVoltar={fecharOChat} />
+          <FaixaDaLigacao state={state} ligacao={l} send={send} onVoltar={fecharOChat} soVoz={reuniaoAberta} />
           <AvisoOuvindo ouvindo={vistaReunioes.ouvindoNoNavegador} fora />
           {conversaDaLigacao(daLigacao)}
           {toastEl}
@@ -797,6 +829,7 @@ function App() {
           send={send}
           chat={salaEmbaixo(l, sala) ? null : colegaDaLigacao && { abrir: abrirOChat }}
           ouvindoNoNavegador={vistaReunioes.ouvindoNoNavegador}
+          soVoz={reuniaoAberta}
         />
         {toastEl}
       </div>

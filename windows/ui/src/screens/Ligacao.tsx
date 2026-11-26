@@ -34,6 +34,9 @@
 // canto de baixo, ao lado do Desligar. Os controles (controlesDaLigacao.tsx) e o painel pelo nome (PainelPorNome.tsx)
 // saíram daqui sem mudar, para a sala usar também. Com a sala embaixo (você na ligação de fora), a outra não é ela: a sala tem a
 // faixa "Você está fora da sala" (sala/FaixaForaDaSala.tsx, no main.tsx), e os controles são os de uma ligação, sem o Chat.
+// (reuniões, 3b) Com uma reunião aberta dentro do app (o `soVoz`, do main.tsx), a ligação é só de voz: sem o Atender
+// com vídeo, sem o Adicionar pessoa, e a Câmera desligada fica sem efeito (a câmera está com a reunião). A imagem que
+// chega da outra ponta fica, sem o Abrir grande: o tamanho da janela é o da reunião.
 import type { VNode } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { AtalhosPainel } from '../components/AtalhosPainel';
@@ -89,6 +92,12 @@ interface Props {
   chat?: { abrir(): void } | null;
   /** (reuniões) A reunião aberta no navegador continua ouvindo a pessoa: a frase do aviso. */
   ouvindoNoNavegador?: boolean;
+  /**
+   * (reuniões, 3b) Uma reunião aberta dentro do app: a ligação é só de voz (a câmera está com a reunião). Sem o Atender
+   * com vídeo, a Câmera só desliga (desligada, ela fica sem efeito), sem o Adicionar pessoa (a sala de vídeo não se
+   * monta) e sem o Abrir grande da área do vídeo (o tamanho da janela é o da reunião).
+   */
+  soVoz?: boolean;
 }
 
 type Painel = 'teclado' | 'transferir' | 'nova' | 'atalhos' | 'adicionar' | null;
@@ -282,6 +291,7 @@ export function Ligacao({
   send,
   chat = null,
   ouvindoNoNavegador = false,
+  soVoz = false,
 }: Props) {
   const now = useNow();
   const [painelPedido, setPainel] = useState<Painel>(null);
@@ -321,7 +331,7 @@ export function Ligacao({
   // atendida (nunca com só uma recebida tocando), fora da consulta e da conferência, e com algum atalho. (0.4.0) O de
   // adicionar, enquanto o Adicionar pessoa vale (a segunda que toca, o vídeo que para e a espera o fecham).
   const temAtalhos = state.atalhos.length > 0;
-  const podeAdicionarAgora = podeAdicionar(state, l);
+  const podeAdicionarAgora = !soVoz && podeAdicionar(state, l);
   const painel: Painel =
     painelPedido === 'teclado' && falando && !tocando && !consulta
       ? 'teclado'
@@ -399,9 +409,9 @@ export function Ligacao({
   const suaFlutuante = !comVideo && video.camera;
   // (vídeo, etapa 2) O porteiro que manda a imagem antes de atender: a imagem em cima, no lugar do avatar. O Atender com
   // vídeo, com o vídeo do app ligado, a oferta da que toca e nenhuma outra ligação em andamento (o
-  // oferecerAtenderComVideo).
+  // oferecerAtenderComVideo); numa reunião, nunca.
   const porteiro = tocando && video.cedo;
-  const atenderComVideo = tocando && oferecerAtenderComVideo(state, top);
+  const atenderComVideo = tocando && !soVoz && oferecerAtenderComVideo(state, top);
 
   // O que fica no alto: a faixa da segunda que toca, ou o cartão da outra (em espera).
   const temCartao = segundaTocando !== null || outra !== null;
@@ -410,7 +420,8 @@ export function Ligacao({
   // Quem fala: a área do vídeo, a conferência (os dois), ou a ligação de cima.
   let quem;
   if (comVideo) {
-    quem = <CaixaDoVideo state={state} card={top} now={now} send={send} />;
+    // (reuniões, 3b) Numa reunião, a imagem que chega fica, mas sem o Abrir grande: o tamanho da janela é o da reunião.
+    quem = <CaixaDoVideo state={state} card={top} now={now} send={send} abrirGrande={!soVoz} />;
   } else if (conferencia && l.second) {
     const segunda = l.second;
     quem = (
@@ -522,14 +533,15 @@ export function Ligacao({
   // câmera ligada. Numa ligação, desligada, ela espera o atender e a volta da espera (o cameraDesativada); ligada,
   // sempre desliga. Com duas (a segunda tocando ou em espera, também na consulta), ela só desliga: o motor pausa a
   // câmera de todas (nada é mandado, nem a um porteiro), nenhuma câmera liga com duas ligações, e a que ainda aparece
-  // ligada sempre tem como ser desligada (o cameraDaLigacaoDesativada, a mesma regra do grande).
+  // ligada sempre tem como ser desligada (o cameraDaLigacaoDesativada, a mesma regra do grande). (reuniões, 3b) Numa
+  // reunião, ela só desliga: desligada, fica sem efeito (a câmera está com a reunião).
   const cameraCtrl = videoDoApp(state).ligado ? (
     <Ctrl
       label={CAMERA}
       nome={video.camera ? DESLIGAR_A_CAMERA : LIGAR_A_CAMERA}
       icon={video.camera ? <IconVideo /> : <IconVideoOff />}
       aceso={video.camera}
-      disabled={cameraDaLigacaoDesativada(l, video)}
+      disabled={soVoz ? !video.camera : cameraDaLigacaoDesativada(l, video)}
       onClick={() => send({ cmd: 'camera', on: !video.camera })}
     />
   ) : null;
@@ -539,8 +551,9 @@ export function Ligacao({
   const chatCtrl =
     chat && !ios ? <Ctrl label={CHAT} icon={<IconMessage />} disabled={l.second !== null} onClick={chat.abrir} /> : null;
   // (0.4.0) O Adicionar pessoa, numa videochamada (o mostraAdicionar; nunca no iPhone): abre o painel de adicionar, e
-  // espera a ligação sozinha, atendida e fora da espera (o podeAdicionar).
-  const adicionarCtrl = mostraAdicionar(state, l) ? (
+  // espera a ligação sozinha, atendida e fora da espera (o podeAdicionar). (reuniões, 3b) Numa reunião, nenhum: a sala
+  // de vídeo precisa da câmera, que está com a reunião.
+  const adicionarCtrl = !soVoz && mostraAdicionar(state, l) ? (
     <Ctrl label={ADICIONAR_PESSOA} icon={<IconAdicionarPessoa />} disabled={!podeAdicionar(state, l)} onClick={() => setPainel('adicionar')} />
   ) : null;
 

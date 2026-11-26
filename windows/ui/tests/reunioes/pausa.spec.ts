@@ -9,7 +9,15 @@ import { comandos, mudarEstado, semViolacoesSerias } from '../helpers';
 import { empresaComReunioes } from '../chat/servidor';
 import { esperarOsEventos, pararORelogio } from '../chat/abrir';
 import { haPausa, novaVez } from '../../src/reunioes/pausa';
-import { abrirNasReunioes, comEventos, esperarALeitura, marcar, noRelogioDaPagina, numerarAsLeituras } from './abrir';
+import {
+  abrirNasReunioes,
+  comEventos,
+  esperarALeitura,
+  marcar,
+  noRelogioDaPagina,
+  numerarAsLeituras,
+  paginaFalsa,
+} from './abrir';
 
 // O CSP da página só deixa falar com o endereço do chat de verdade; o servidor de teste fica no 127.0.0.1:4180.
 test.use({ bypassCSP: true });
@@ -204,6 +212,43 @@ test('a regra da pausa: uma ligação só tocando não pausa nada', () => {
   expect(haPausa(l(cartao(true, 'ringing'), cartao(false, 'active')))).toBe(true);
   const sala = { id: 1, fora: false, cheia: false, participantes: [] };
   expect(haPausa({ ...l(cartao(true, 'ringing')), sala })).toBe(true);
+});
+
+test('a regra da pausa: a ligação em espera pelo Voltar para a reunião não pausa', () => {
+  type Ligacao = NonNullable<Parameters<typeof haPausa>[0]>;
+  const cartao = (id: number, phase: 'ringing' | 'dialing' | 'active', held = false): Ligacao['top'] => ({
+    id,
+    number: '2003',
+    name: '',
+    incoming: true,
+    phase,
+    activeSinceMs: phase === 'active' ? 1 : 0,
+    held,
+  });
+  const l = (top: Ligacao['top'], second: Ligacao['second'] = null): Ligacao => ({
+    top,
+    second,
+    secondKind: second === null ? 'none' : second.phase === 'ringing' ? 'ringing' : 'held',
+    muted: false,
+    conference: false,
+    conferenceSinceMs: 0,
+    consulting: false,
+    colleagueActive: false,
+  });
+  // A em espera pelo Voltar (o id e a espera): sem pausa; sem o emEspera, a mesma espera pausa.
+  expect(haPausa(l(cartao(7, 'active', true)), 7)).toBe(false);
+  expect(haPausa(l(cartao(7, 'active', true)), null)).toBe(true);
+  expect(haPausa(l(cartao(7, 'active', true)))).toBe(true);
+  // O Voltar mandou o hold, mas a ligação ainda não está em espera: a pausa continua.
+  expect(haPausa(l(cartao(7, 'active')), 7)).toBe(true);
+  // Outra ligação em espera, ou o id de outra: pausa.
+  expect(haPausa(l(cartao(7, 'active', true)), 8)).toBe(true);
+  // Com a em espera e outra que só toca: sem pausa; com a outra atendida: pausa.
+  expect(haPausa(l(cartao(7, 'active', true), cartao(8, 'ringing')), 7)).toBe(false);
+  expect(haPausa(l(cartao(8, 'active'), cartao(7, 'active', true)), 7)).toBe(true);
+  // A sala de vídeo de pé conta como uma ligação.
+  const sala = { id: 9, fora: false, cheia: false, participantes: [] };
+  expect(haPausa({ ...l(cartao(7, 'active', true)), sala }, 7)).toBe(true);
 });
 
 test('o vez tem 12 caracteres de letras e números, e muda a cada pausa', () => {
@@ -454,6 +499,48 @@ test('o 404 do falso do fim tira a reunião da lista: a pausa seguinte não a te
   expect(pausas.corpos[1].pausada).toBe(false);
   await dandoTempo(page);
   await chegaALigacao(page, ligacao());
+  await dandoTempo(page);
+  await page.clock.runFor(10_000);
+  await dandoTempo(page);
+  expect(pausas.corpos).toHaveLength(2);
+});
+
+test('a ligação em espera pelo Voltar não pausa a reunião do navegador', async ({ page }) => {
+  // Duas reuniões da pessoa: a primeira aberta no navegador (o menu), a segunda dentro do app (o Entrar).
+  const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
+  const doNavegador = await marcar(pessoas[0].api, noRelogioDaPagina(1, 10, 0), 'Planejamento de dezembro');
+  const doApp = await marcar(pessoas[0].api, noRelogioDaPagina(1, 11, 0), 'Reunião com a contabilidade');
+  await page.clock.install({ time: Date.now() });
+  const leituras = await numerarAsLeituras(page, 150);
+  const pausas = await respondendoAPausa(page, OK);
+  const pagina = await paginaFalsa(page, doApp.codigo);
+  await abrirNasReunioes(page, { chave: pessoas[0].chave, ...RECEPCAO });
+  await esperarOsEventos(page);
+  await esperarALeitura(page, leituras, 2);
+  await page.getByRole('article').nth(0).getByRole('button', { name: /^Mais opções de / }).click();
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Abrir no navegador' }).click();
+  await expect.poll(async () => (await comandos(page)).filter((c) => c.cmd === 'reuniaoNavegador').length).toBe(1);
+  await pararORelogio(page);
+  await page.getByRole('article').nth(1).getByRole('button', { name: 'Entrar', exact: true }).click();
+  await expect(page.locator('iframe[title="Reunião"]')).toBeVisible();
+  const tipos = async () => (await pagina.recebidas()).map((m) => (m as { tipo?: string }).tipo);
+  await expect.poll(tipos).toEqual(['passe']);
+  await pagina.mandar({ tipo: 'estado', fase: 'naReuniao', microfone: true });
+  await expect(page.locator('.reuniao .titlebar')).toContainText('Ocupado · em reunião');
+
+  // A ligação atendida pausa as duas: a do navegador pela rota, a do app pela mensagem.
+  await chegaALigacao(page, ligacao());
+  await expect.poll(() => pausas.corpos.length).toBe(1);
+  const vez = pausas.corpos[0].vez;
+  expect(pausas.corpos[0]).toEqual({ codigo: doNavegador.codigo, pausada: true, vez });
+  // O Voltar para a reunião: a ligação em espera não pausa mais nenhuma das duas.
+  const faixa = page.getByRole('region', { name: 'Você está fora da reunião', exact: true });
+  await faixa.getByRole('button', { name: 'Voltar para a reunião', exact: true }).click();
+  await page.clock.runFor(1);
+  await expect.poll(() => pausas.corpos.length).toBe(2);
+  expect(pausas.corpos[1]).toEqual({ codigo: doNavegador.codigo, pausada: false, vez });
+  await expect(page.locator('iframe[title="Reunião"]')).toBeVisible();
+  // E a pausa do navegador não se repete com a ligação em espera; a do app nunca foi à rota.
   await dandoTempo(page);
   await page.clock.runFor(10_000);
   await dandoTempo(page);
