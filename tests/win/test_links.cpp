@@ -89,6 +89,19 @@ TEST_CASE("the link command of the installer never carries options, as Windows s
     REQUIRE(line.link.has_value());
     CHECK(*line.link == "+551150603000");
 
+    // O link da reuniao: as aspas e o resto do %1 nao viram opcao, nem entram no codigo.
+    line = ParseCommandLine(
+        Split(exe + L"--link \"starsonic://reuniao/abcdefghjk\" --dados \\\\servidor\\pasta --sair"));
+    CHECK(line.dataFolder.empty());
+    CHECK_FALSE(line.quit);
+    CHECK_FALSE(line.link.has_value());
+    CHECK_FALSE(line.meeting.has_value());
+
+    line = ParseCommandLine(Split(exe + L"--link \"STARSONIC://reuniao/ABCDEFGHJK\""));
+    CHECK_FALSE(line.link.has_value());
+    REQUIRE(line.meeting.has_value());
+    CHECK(*line.meeting == "abcdefghjk");
+
     line = ParseCommandLine(Split(exe + L"--dados \"C:\\dados de teste\""));
     CHECK(line.dataFolder == L"C:\\dados de teste");
 }

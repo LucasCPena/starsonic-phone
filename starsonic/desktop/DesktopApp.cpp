@@ -9,6 +9,7 @@
 #include "AccountPolicy.h"
 #include "CallMessages.h"
 #include "RegistrationErrors.h"
+#include "Reunioes.h"   // OpenMeetingMessage
 #include "Text.h"
 #include "branding.h"   // os links do Sobre (STARSONIC_URL_SITE, STARSONIC_URL_SUPPORT, STARSONIC_REPO_URL)
 
@@ -597,6 +598,22 @@ void DesktopApp::OpenChat(int64_t conversa) {
     });
 }
 
+void DesktopApp::OpenMeeting(const std::string& code) {
+    Post([this, code] {
+        if (IPhone()) {
+            Log("abrir a reuniao: recusado no modo iPhone");
+            return;
+        }
+        Log("reunioes: link do app");
+        // Antes do ready da janela principal, o abrir vai nele, no fim; o ready do aviso nao o solta.
+        if (!mainInterfaceReady_) {
+            openMeetingPending_ = code;
+            return;
+        }
+        if (hooks_.post) hooks_.post(OpenMeetingMessage(code));
+    });
+}
+
 void DesktopApp::SetH264State(H264State state) {
     Post([this, state] { HandleH264State(state); });
 }
@@ -686,6 +703,7 @@ void DesktopApp::Execute(const Command& command, bool noticePage) {
         case CommandKind::Ready:
             Log("interface pronta");
             interfaceReady_ = true;
+            if (!noticePage) mainInterfaceReady_ = true;
             // 0.3.0: a janela principal recarregou, ou o navegador foi refeito: o teste da camera que ficou ligado nao
             // tem mais quem o desligue na pagina (a luz da camera ficaria acesa sem controle), e ele para antes do
             // estado. O ready do aviso nao mexe nele. No iPhone o teste nunca liga.
@@ -719,6 +737,12 @@ void DesktopApp::Execute(const Command& command, bool noticePage) {
                 const int64_t conversa = *openChatPending_;
                 openChatPending_.reset();
                 if (hooks_.post) hooks_.post(OpenChatMessage(conversa));
+            }
+            // O link da reuniao pedido antes do ready da janela principal, por ultimo (o ready do aviso nao o solta).
+            if (!noticePage && openMeetingPending_) {
+                const std::string code = *openMeetingPending_;
+                openMeetingPending_.reset();
+                if (hooks_.post) hooks_.post(OpenMeetingMessage(code));
             }
             break;
         case CommandKind::Login:

@@ -23,6 +23,7 @@ constexpr int kStatusGone = 410;
 constexpr std::uint32_t kMaxWin32Error = 0xFFFF;
 // A mensagem com a chave do chat (a resposta ao chatKey, Protocol.h): so para a janela principal.
 const char kChatKeyType[] = "chatChave";
+const char kMeetingScreen[] = "reuniao";
 
 // O codigo em hexadecimal, com os 8 digitos e o 0x ("0x80004005"), como o HRESULT no resto do diagnostico.
 std::string Hex(std::uint32_t code) {
@@ -259,13 +260,18 @@ std::string DownloadLine(int status, size_t bytes, std::uint32_t naoGravado) {
 }
 
 bool NoticeMayGet(const std::string& json) {
-    // A maioria das mensagens nem cita a chatChave: nem le o JSON.
-    if (json.find(kChatKeyType) == std::string::npos) return true;
+    // A maioria das mensagens nem cita a chatChave nem o abrir da reuniao: nem le o JSON.
+    if (json.find(kChatKeyType) == std::string::npos && json.find(kMeetingScreen) == std::string::npos) return true;
     const nlohmann::json parsed = nlohmann::json::parse(json, nullptr, /*allow_exceptions=*/false);
     // Um texto que cita a chatChave e nao se le fica de fora (o aviso so le o estado).
     if (!parsed.is_object()) return false;
     const auto type = parsed.find("type");
-    return type == parsed.end() || !type->is_string() || type->get<std::string>() != kChatKeyType;
+    if (type == parsed.end() || !type->is_string()) return true;
+    if (type->get<std::string>() == kChatKeyType) return false;
+    // O abrir da reuniao leva o codigo: so a janela principal o recebe.
+    if (type->get<std::string>() != "abrir") return true;
+    const auto screen = parsed.find("tela");
+    return screen == parsed.end() || !screen->is_string() || screen->get<std::string>() != kMeetingScreen;
 }
 
 std::string ShellFailureLine(const char* onde, const char* operacao, std::uint32_t hresult) {

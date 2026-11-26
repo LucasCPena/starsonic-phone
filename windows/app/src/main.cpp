@@ -683,6 +683,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     engine.Start();
     app.Start();
     if (arguments.link) app.DialLink(*arguments.link);
+    if (arguments.meeting) app.OpenMeeting(*arguments.meeting);
 
     AppUpdater::Hooks updateHooks;
     updateHooks.offer = [&app](const std::string& version, const std::string& notes) { app.OfferUpdate(version, notes); };
@@ -739,7 +740,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             return;
         }
         if (next.link) app.DialLink(*next.link);
-        if (next.tray && !next.link) return;   // o Iniciar com o Windows com o app ja aberto: fica como esta
+        if (next.meeting) app.OpenMeeting(*next.meeting);
+        // O Iniciar com o Windows com o app ja aberto: fica como esta (um link, de ligacao ou reuniao, traz a janela).
+        if (next.tray && !next.link && !next.meeting) return;
         window.RunOnWindow([&window] { window.BringToFront(); });
     });
 

@@ -17,7 +17,13 @@ namespace starsonic {
 // "2003", "callto:2003" -> "2003". Qualquer outro argumento (outro esquema, sem numero, letras no numero): nada.
 std::optional<std::string> ParseLinkArgument(const std::wstring& argument);
 
+// O codigo de um argumento que e o link starsonic://reuniao/<codigo>: o esquema sem diferenciar maiusculas, os %XX
+// decodificados, o codigo passado a minusculas e sem espacos (como o servidor faz), e mais nada (nem barra, nem ?, nem
+// #). So vale com o ValidMeetingCode. Qualquer outra coisa: nada.
+std::optional<std::string> ParseMeetingLink(const std::wstring& argument);
+
 // A linha de comando do StarsonicPhone.exe (sem o executavel), lida. Um link nunca carrega opcoes:
+// - um link e um tel:/sip:/callto: ou um starsonic://reuniao/<codigo>; um argumento e um ou outro, nunca os dois;
 // - "--link <link>" (o registro dos links: "<exe>" --link "%1"): tudo depois do --link e o link (juntado com espacos,
 //   para um lancador que nao pos as aspas), e nenhuma opcao vale, nem antes nem depois;
 // - sem o --link, um argumento que e um link (o registro antigo, "<exe>" "%1") tambem desliga todas as opcoes;
@@ -28,6 +34,7 @@ struct CommandLine {
     bool quit = false;                  // --sair
     bool tray = false;                  // --bandeja (ou o /minimized da rc.7)
     std::optional<std::string> link;    // o numero de um tel:/sip:/callto:
+    std::optional<std::string> meeting; // o codigo de um starsonic://reuniao/<codigo>
 };
 
 CommandLine ParseCommandLine(const std::vector<std::wstring>& arguments);

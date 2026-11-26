@@ -400,7 +400,8 @@ export type IncomingMessage =
   /** (reuniões) A resposta da página do aviso ao pedido que ela mostrava (o aviso → a janela principal). */
   | { v: number; type: 'reuniaoResposta'; pedido: string; resposta: RespostaDoAviso }
   /** (reuniões) O clique fora dos botões do aviso: a janela vai para a aba Reuniões. */
-  | { v: number; type: 'abrir'; tela: 'reunioes' };
+  | { v: number; type: 'abrir'; tela: 'reunioes' }
+  | { v: number; type: 'abrir'; tela: 'reuniao'; codigo: string };
 
 /** Interface → C++ (sem o `v`, que a ponte acrescenta). */
 export type Command =

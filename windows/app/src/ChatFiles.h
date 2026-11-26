@@ -68,8 +68,9 @@ std::string DownloadLine(int status, size_t bytes, std::uint32_t naoGravado);
 std::string FitNoticeText(const std::string& utf8, size_t maxUtf16Units);
 
 // A mensagem da ponte (o JSON que o DesktopApp manda) vai tambem para o aviso de ligacao recebida (aviso.html)? Todas
-// vao as duas janelas, menos a chatChave: a chave do chat vai so para a interface da janela principal, que a pediu (o
-// aviso so le o estado). Um texto que cita a chatChave e nao se le tambem fica so com a janela principal.
+// vao as duas janelas, menos a chatChave (a chave do chat vai so para a interface da janela principal, que a pediu: o
+// aviso so le o estado) e o abrir da tela "reuniao" (leva o codigo da reuniao). Um texto que cita uma das duas e nao
+// se le tambem fica so com a janela principal.
 bool NoticeMayGet(const std::string& json);
 
 // A linha do diagnostico de uma falha do Windows no aviso do chat (Tray: onde "aviso") ou no numero no icone

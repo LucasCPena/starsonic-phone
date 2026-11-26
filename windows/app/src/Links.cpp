@@ -2,6 +2,8 @@
 
 #include <cwctype>
 
+#include "Reunioes.h"   // ValidMeetingCode
+
 namespace starsonic {
 
 namespace {
@@ -97,6 +99,26 @@ std::optional<std::string> ParseLinkArgument(const std::wstring& argument) {
     return number;
 }
 
+std::optional<std::string> ParseMeetingLink(const std::wstring& argument) {
+    const std::wstring text = Trim(argument);
+    const wchar_t* const scheme = L"starsonic://";
+    if (!StartsWithNoCase(text, scheme)) return std::nullopt;
+    std::wstring decoded;
+    if (!PercentDecode(text.substr(std::wstring(scheme).size()), &decoded)) return std::nullopt;
+    // O caminho e "reuniao/" (so em minusculas) e o codigo; mais nada depois dele.
+    const std::wstring path = L"reuniao/";
+    if (decoded.compare(0, path.size(), path) != 0) return std::nullopt;
+    std::string code;
+    for (size_t i = path.size(); i < decoded.size(); ++i) {
+        const wchar_t ch = decoded[i];
+        if (ch == L' ') continue;   // o servidor tira os espacos do codigo
+        if (ch > 0x7f) return std::nullopt;
+        code.push_back(static_cast<char>(std::towlower(ch)));
+    }
+    if (!ValidMeetingCode(code)) return std::nullopt;
+    return code;
+}
+
 CommandLine ParseCommandLine(const std::vector<std::wstring>& raw) {
     CommandLine arguments;
     // "<exe>" --link "%1" (o registro dos links): tudo depois do --link e o link, e nada vale como opcao. Um lancador
@@ -106,13 +128,18 @@ CommandLine ParseCommandLine(const std::vector<std::wstring>& raw) {
         std::wstring link;
         for (size_t j = i + 1; j < raw.size(); ++j) link += (j > i + 1 ? L" " : L"") + raw[j];
         arguments.link = ParseLinkArgument(link);
+        if (!arguments.link) arguments.meeting = ParseMeetingLink(link);
         return arguments;
     }
-    // Um argumento que e um link (o registro antigo, "<exe>" "%1"): so o link, sem as opcoes.
+    // Um argumento que e um link (o registro antigo, "<exe>" "%1"): so o link, sem as opcoes. O primeiro que vale: um
+    // tel: ou um starsonic:, nunca os dois.
     for (const std::wstring& item : raw) {
-        const std::optional<std::string> link = ParseLinkArgument(item);
-        if (link) {
+        if (const std::optional<std::string> link = ParseLinkArgument(item)) {
             arguments.link = link;
+            return arguments;
+        }
+        if (const std::optional<std::string> meeting = ParseMeetingLink(item)) {
+            arguments.meeting = meeting;
             return arguments;
         }
     }

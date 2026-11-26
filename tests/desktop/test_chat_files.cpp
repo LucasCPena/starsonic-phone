@@ -8,6 +8,7 @@
 
 #include "ChatFiles.h"
 #include "Protocol.h"
+#include "Reunioes.h"
 #include "test_support.h"
 
 using namespace starsonic;
@@ -186,6 +187,13 @@ TEST_CASE("the chat key goes only to the main window, never to the call notice")
     CHECK_FALSE(NoticeMayGet(R"({ "type" : "chatChave", "v" : 1, "chave" : "x" })"));
     // Um texto que cita a chatChave e nao se le: tambem fica.
     CHECK_FALSE(NoticeMayGet(R"({"v":1,"type":"chatChave","chave":"Chave_de-teste)"));
+    // O abrir da reuniao (o link starsonic://reuniao/<codigo>) tambem vai so a janela principal: leva o codigo.
+    CHECK_FALSE(NoticeMayGet(OpenMeetingMessage("abcdefghjk")));
+    CHECK_FALSE(NoticeMayGet(R"({ "type" : "abrir", "v" : 1, "tela" : "reuniao", "codigo" : "abcdefghjk" })"));
+    // Um texto que cita a reuniao e nao se le fica de fora; o abrir de outras telas segue as duas.
+    CHECK_FALSE(NoticeMayGet(R"({"v":1,"type":"abrir","tela":"reuniao","codigo":"abcdefghjk)"));
+    CHECK(NoticeMayGet(R"({"v":1,"type":"abrir","tela":"reunioes"})"));
+    CHECK(NoticeMayGet(R"({"v":1,"type":"toast","texto":"abrir reuniao"})"));
     // As outras vao as duas janelas, como sempre (o estado e o que o aviso le), tambem com "chatChave" num texto.
     CHECK(NoticeMayGet(R"({"v":1,"type":"state","state":{"ligacao":null}})"));
     CHECK(NoticeMayGet(R"({"v":1,"type":"state","state":{"conta":{"nome":"chatChave"}}})"));

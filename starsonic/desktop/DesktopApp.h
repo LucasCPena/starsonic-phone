@@ -404,6 +404,11 @@ public:
     // mensagem da janela principal (MainWindow.cpp), e o primeiro ready e sempre o dela. No iPhone, nada (uma linha no
     // diagnostico). So poe na fila.
     void OpenChat(int64_t conversa);
+    // Plano 3b: o link starsonic://reuniao/<codigo> (ja conferido pelo ParseMeetingLink): a mensagem abrir da reuniao,
+    // so para a janela principal (o aviso nao a recebe). Antes do primeiro ready da janela PRINCIPAL (o do aviso nao
+    // conta), espera por ele e vai no fim do ready, depois do resto (dois links: o do ultimo). No iPhone, recusado com
+    // uma linha no diagnostico. Deixa "reunioes: link do app", sem o codigo. So poe na fila.
+    void OpenMeeting(const std::string& code);
     // 0.3.0: o modulo H.264 terminou de baixar e conferir (Installed) ou falhou (Failed), em qualquer thread: vai para a
     // fila. Com o H.264 desligado (no cartao ou pela pessoa), nada muda. No iPhone, nada. So poe na fila.
     void SetH264State(H264State state);
@@ -639,6 +644,10 @@ private:
     bool windowInFront_ = false;
     int chatBadge_ = 0;
     std::optional<int64_t> openChatPending_;
+    // O codigo do link starsonic://reuniao/<codigo> que espera o primeiro ready da janela principal (nunca no
+    // diagnostico), e se esse ready ja veio (o interfaceReady_ conta o da pagina do aviso tambem).
+    std::optional<std::string> openMeetingPending_;
+    bool mainInterfaceReady_ = false;
     // O pedido para entrar que o aviso mostra (reuniaoPedido): so na memoria, e nunca no diagnostico. O ready da janela
     // principal o esquece (a interface que recarregou nao o conhece mais).
     std::optional<MeetingRequestView> meetingRequest_;

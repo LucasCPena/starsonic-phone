@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstring>
 
+#include "nlohmann/json.hpp"
+
 namespace starsonic {
 
 namespace {
@@ -31,6 +33,10 @@ bool ValidMeetingRequestId(const std::string& id) {
     return id.size() == kRequestIdLength && std::all_of(id.begin(), id.end(), [](char ch) {
                return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f');
            });
+}
+
+std::string OpenMeetingMessage(const std::string& code) {
+    return nlohmann::ordered_json({{"v", 1}, {"type", "abrir"}, {"tela", "reuniao"}, {"codigo", code}}).dump();
 }
 
 }  // namespace starsonic

@@ -265,3 +265,81 @@ TEST_CASE("the meeting commands do nothing after quit") {
                                              "comando ignorado depois do Sair: reuniaoResposta",
                                              "comando ignorado depois do Sair: reuniaoMostrar"});
 }
+
+TEST_CASE("OpenMeeting waits for the first ready of the main window") {
+    // O link starsonic://reuniao/<codigo> chega antes de a pagina carregar: nada vai, e no ready o abrir vem depois do
+    // estado (e do resto), no fim, como o do chat.
+    Harness h;
+    h.app->OpenMeeting("abcdefghjk");
+    h.StartRegistered();
+    h.Run();
+    CHECK(h.Messages("abrir").empty());
+    size_t from = h.posts.size();
+    h.Send(kReady);
+    REQUIRE(h.posts.size() > from + 1);
+    CHECK(h.posts[from].find(R"("type":"state")") != std::string::npos);
+    CHECK(h.posts.back() == R"({"v":1,"type":"abrir","tela":"reuniao","codigo":"abcdefghjk"})");
+    CHECK(h.Messages("abrir").size() == 1);
+
+    // Uma vez so: a pagina que recarrega depois nao volta a reuniao.
+    h.Send(kReady);
+    CHECK(h.Messages("abrir").size() == 1);
+
+    // Depois do ready, vai na hora, sozinho.
+    from = h.posts.size();
+    h.app->OpenMeeting("yz23456789");
+    h.Run();
+    REQUIRE(h.posts.size() == from + 1);
+    CHECK(h.posts.back() == R"({"v":1,"type":"abrir","tela":"reuniao","codigo":"yz23456789"})");
+}
+
+TEST_CASE("OpenMeeting: the last one wins, and the ready of the notice page does not release it") {
+    Harness h;
+    h.app->OpenMeeting("abcdefghjk");
+    h.StartRegistered();
+    h.app->OpenMeeting("mnpqrstvwx");
+    h.Run();
+    // O ready da pagina do aviso nao e o da janela principal: nada sai.
+    h.SendFromNotice(kReady);
+    CHECK(h.Messages("abrir").empty());
+    // Um link depois do ready do aviso, ainda sem o da principal: continua esperando.
+    h.app->OpenMeeting("yz23456789");
+    h.Run();
+    CHECK(h.Messages("abrir").empty());
+    h.Send(kReady);
+    REQUIRE(h.Messages("abrir").size() == 1);
+    CHECK(h.posts.back() == R"({"v":1,"type":"abrir","tela":"reuniao","codigo":"yz23456789"})");
+}
+
+TEST_CASE("OpenMeeting leaves a line in the diagnostics without the code") {
+    Harness h;
+    h.StartRegistered();
+    h.Send(kReady);
+    h.logs.clear();
+    h.app->OpenMeeting("abcdefghjk");
+    h.Run();
+    CHECK(h.logs == std::vector<std::string>{"reunioes: link do app"});
+    for (const std::string& line : h.logs) CHECK(line.find("abcdefghjk") == std::string::npos);
+
+    // Tambem o que espera o ready.
+    Harness other;
+    other.app->OpenMeeting("mnpqrstvwx");
+    other.StartRegistered();
+    other.Run();
+    CHECK(other.Logged("reunioes: link do app"));
+    for (const std::string& line : other.logs) CHECK(line.find("mnpqrstvwx") == std::string::npos);
+}
+
+TEST_CASE("OpenMeeting is refused on the iPhone") {
+    Harness h(Platform::IPhone);
+    h.StartRegistered();
+    h.Send(kReady);
+    const size_t from = h.posts.size();
+    h.logs.clear();
+    h.app->OpenMeeting("abcdefghjk");
+    h.Run();
+    CHECK(h.posts.size() == from);
+    CHECK(h.logs == std::vector<std::string>{"abrir a reuniao: recusado no modo iPhone"});
+    h.Send(kReady);
+    CHECK(h.Messages("abrir").empty());
+}

@@ -287,7 +287,8 @@ Function ReopenApp
   ${EndIf}
 FunctionEnd
 
-; Um link tel:, sip: ou callto: abre o app com o numero no Teclado. O app aparece em Programas padrao (pelas
+; Um link tel:, sip: ou callto: abre o app com o numero no Teclado (o starsonic://reuniao/<codigo> abre a reuniao).
+; O app aparece em Programas padrao (pelas
 ; Capabilities); a chave do esquema em HKCU\Software\Classes so e gravada quando nenhum outro programa tem o link,
 ; nem por usuario (HKCU) nem para a maquina (HKLM: a do HKCU passaria na frente dela), ou quando ja e a do app (com o
 ; comando novo ou o antigo, que vira o novo).
@@ -398,7 +399,7 @@ Section "-Starsonic Phone" SecMain
     ${EndIf}
   ${EndIf}
 
-  ; Os links tel:, sip: e callto:.
+  ; Os links tel:, sip:, callto: e starsonic: (o starsonic://reuniao/<codigo>).
   WriteRegStr HKCU "${REG_CLASSES}\${LINK_PROGID}" "" "Starsonic Phone"
   WriteRegStr HKCU "${REG_CLASSES}\${LINK_PROGID}" "URL Protocol" ""
   WriteRegStr HKCU "${REG_CLASSES}\${LINK_PROGID}\DefaultIcon" "" '"$INSTDIR\${APP_EXE}",0'
@@ -409,6 +410,7 @@ Section "-Starsonic Phone" SecMain
   !insertmacro RegisterLink "tel"
   !insertmacro RegisterLink "sip"
   !insertmacro RegisterLink "callto"
+  !insertmacro RegisterLink "starsonic"
   WriteRegStr HKCU "Software\RegisteredApplications" "${APP_NAME}" "${REG_APP}\Capabilities"
 
   WriteRegStr HKCU "${REG_UNINSTALL}" "DisplayName" "${APP_NAME}"
@@ -474,6 +476,7 @@ Section "Uninstall"
   !insertmacro UnregisterLink "tel"
   !insertmacro UnregisterLink "sip"
   !insertmacro UnregisterLink "callto"
+  !insertmacro UnregisterLink "starsonic"
   DeleteRegKey HKCU "${REG_CLASSES}\${LINK_PROGID}"
   DeleteRegValue HKCU "Software\RegisteredApplications" "${APP_NAME}"
   DeleteRegKey HKCU "${REG_APP}"

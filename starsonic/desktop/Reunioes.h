@@ -13,4 +13,8 @@ bool ValidMeetingPass(const std::string& pass);
 // O id de um pedido para entrar: 16 caracteres hexadecimais, em minusculas.
 bool ValidMeetingRequestId(const std::string& id);
 
+// {"v":1,"type":"abrir","tela":"reuniao","codigo":"<codigo>"}: o link starsonic://reuniao/<codigo> (ja conferido),
+// so para a interface da janela principal.
+std::string OpenMeetingMessage(const std::string& code);
+
 }  // namespace starsonic
