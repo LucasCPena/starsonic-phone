@@ -365,7 +365,10 @@ function App() {
       if (aviso !== undefined) reunioesCliente.avisar(aviso);
       setLinkDoApp((x) => (x?.vez === l.vez ? null : x));
     };
-    if ((contaEmUso?.id ?? null) !== l.conta) return largar();
+    // Um link que chegou sem conta conhecida (o primeiro estado ainda não desenhado, ou a conta que aparece depois)
+    // adota a primeira conta que aparecer; entre duas contas conhecidas, a troca larga o link, sem aviso.
+    if (l.conta === null && contaEmUso !== null) return setLinkDoApp({ ...l, conta: contaEmUso.id });
+    if (l.conta !== null && contaEmUso?.id !== l.conta) return largar();
     if (resumoDoChat?.ligado !== true) return largar(SEM_CHAT_ENTRE_PELO_NAVEGADOR);
     if (situacaoDoChat === 'fora') return largar(SERVIDOR_NAO_RESPONDEU);
     if (situacaoDoChat !== 'pronto' || !vistaReunioes.respondeu) return;

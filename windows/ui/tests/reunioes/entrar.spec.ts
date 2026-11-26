@@ -2,7 +2,7 @@
 // do app (a mensagem `abrir` com a tela `reuniao`), o WebView2 antigo, que abre no navegador e diz por quê, e o
 // servidor do chat antigo. O "Entrar" da linha é da vista.spec.ts.
 import { expect, test, type Page, type Route } from '@playwright/test';
-import { comandos, empurrar, esperarComando, mudarEstado, type Comando } from '../helpers';
+import { comandos, empurrar, esperarComando, estado, mudarEstado, type Comando } from '../helpers';
 import { abrirNoChat, pararORelogio } from '../chat/abrir';
 import { baseDoChat, empresaComReunioes } from '../chat/servidor';
 import { versaoDoWebView2, WEBVIEW2_MINIMO } from '../../src/reunioes/vista';
@@ -458,4 +458,23 @@ test('o link do app espera no máximo 30 s a conta do telefone, e então diz o s
   expect(passes.pedidos()).toBe(0);
   expect(await doTipo(page, 'videoWindow')).toEqual([]);
   expect(await doTipo(page, 'reuniaoNavegador')).toEqual([]);
+});
+
+test('o link do app que chega antes de a conta aparecer segue com a primeira conta', async ({ page }) => {
+  const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
+  const criada = await marcarHoje(pessoas[0].api);
+  const passes = await passeAntigo(page);
+  await abrir(page, pessoas[0]);
+  const completo = await estado(page);
+  // O estado sem conta, o link do app e só então o estado com a conta.
+  await mudarEstado(page, (s) => ({ ...s, conta: null }));
+  await abrirReuniao(page, criada.codigo);
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 200)));
+  expect(passes.pedidos()).toBe(0);
+  await empurrar(page, { v: 1, type: 'state', state: completo });
+  await expect(page.getByRole('heading', { name: 'Reuniões', level: 1 })).toBeVisible();
+  await expect(campo(page)).toHaveValue(criada.link);
+  await expect.poll(() => passes.pedidos()).toBe(1);
+  await expect(alertaDoCampo(page)).toHaveText(ATUALIZAR);
+  await expect(page.locator('.toast-box')).toHaveCount(0);
 });
