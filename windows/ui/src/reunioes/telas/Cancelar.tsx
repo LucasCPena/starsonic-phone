@@ -3,7 +3,9 @@
 // EncerrarSala), com o foco no Voltar. O Voltar e o Esc fecham com o close() antes de avisar, e quem mostra a pergunta
 // devolve o foco ao botão do menu. A falha fica num `alert` dentro do diálogo, que continua aberto; com o pedido no ar,
 // o "Cancelar a reunião" fica desligado. Se a reunião sai da tela com a pergunta aberta (o cancelar deu certo, e a
-// lista foi relida), o foco vai para o "Nova reunião", e não se perde no `body`.
+// lista foi relida), o foco vai para o "Nova reunião", esteja ele dentro do diálogo ou solto no `body`: o botão que
+// estava com o foco fica desligado com o pedido no ar (o `disabled`, que o teste da pergunta confere), e o Chromium
+// tira o foco de um botão desligado.
 import type { VNode } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import { quando, textoDoCancelar } from '../formato';
@@ -60,7 +62,10 @@ export function Cancelar({ reuniao, agora, ocupado, falhou, onVoltar, onCancelar
     dialogo.addEventListener('cancel', esc);
     return () => {
       dialogo.removeEventListener('cancel', esc);
-      if (dialogo.open && dialogo.contains(document.activeElement)) {
+      // O diálogo ainda aberto na saída: o cancelar deu certo e a reunião saiu da tela. O foco está dentro dele ou,
+      // com o "Cancelar a reunião" desligado (o foco sai de um botão `disabled`), solto no `body`.
+      const foco = document.activeElement;
+      if (dialogo.open && (dialogo.contains(foco) || foco === null || foco === document.body)) {
         requestAnimationFrame(() => document.querySelector<HTMLElement>('.reun-nova')?.focus());
       }
     };

@@ -250,6 +250,23 @@ test('o Cancelar a reunião tira a reunião da lista, e só ela', async ({ page 
   expect(lida.json.reunioes.map((r: { assunto: string }) => r.assunto)).toEqual(['Reunião com a contabilidade']);
 });
 
+test('o cancelar feito pelo teclado deixa o foco no Nova reunião', async ({ page }) => {
+  const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
+  await marcarHoje(pessoas[0].api, PLANEJAMENTO);
+  await abrir(page, pessoas[0]);
+  await botaoMais(page).focus();
+  await page.keyboard.press('Enter');
+  await itemCancelar(page).focus();
+  await page.keyboard.press('Enter');
+  await expect(voltar(page)).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(cancelarNoDialogo(page)).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(pergunta(page)).toHaveCount(0);
+  await expect(linhas(page)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Nova reunião' }).first()).toBeFocused();
+});
+
 test('o cancelar que falha fica aberto e diz O servidor do chat não respondeu', async ({ page }) => {
   const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
   await marcarHoje(pessoas[0].api, PLANEJAMENTO);
