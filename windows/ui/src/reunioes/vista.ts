@@ -12,6 +12,9 @@
 // - O `estado` da página muda a fase (`entrada`, `naReuniao`, `fora`) e o `microfone`. O `link` vai ao `reuniaoLink`
 //   (só http e https, até 2.048 caracteres; o núcleo confere de novo).
 // - Os `aparelhos` das Configurações vão no `passe` e, depois, a cada mudança deles.
+// - O "Telefone" esconde a vista (`escondida`: o iframe fica no documento, a reunião continua) e mostra o app de sempre
+//   com a faixa da tela 14; o "Voltar para a reunião" mostra a vista de novo, no tamanho em que ela
+//   estava. A reunião da vista é dita ao ReunioesCliente (reuniaoNoApp), com o `escondida`, pelo main.tsx.
 // - Com o WebView2 abaixo do mínimo (WEBVIEW2_MINIMO), o Entrar abre no navegador e diz por quê.
 // - As ligações de agora (o CallState) servem ao Entrar, que recusa com uma ligação (também tocando, ou a sala de vídeo
 //   de pé) e com outra reunião na vista; a reunião que já está na vista só é mostrada.
@@ -35,6 +38,8 @@ export interface VistaNoApp {
   microfone: boolean;
   /** O tamanho da janela da reunião. */
   janela: 'grande' | 'telaCheia';
+  /** A reunião está escondida dentro do app: o "Telefone", ou a tela de uma ligação por cima (Task 6). */
+  escondida: boolean;
 }
 
 /** Os nomes dos aparelhos das Configurações do app (`""` é o padrão do sistema). */
@@ -68,6 +73,7 @@ const FECHADA: Omit<VistaNoApp, 'quadro'> = {
   endereco: null,
   microfone: false,
   janela: 'grande',
+  escondida: false,
 };
 const SEM_APARELHOS: Aparelhos = { microfone: '', altoFalante: '', camera: '' };
 const FASES_DA_PAGINA: readonly FaseNoApp[] = ['entrada', 'naReuniao', 'fora'];
@@ -130,7 +136,10 @@ export class ReuniaoNoApp {
       return SEM_RESULTADO;
     }
     if (this.v.reuniao !== null) {
-      if (this.v.reuniao.codigo === codigo) return { ok: true };
+      if (this.v.reuniao.codigo === codigo) {
+        this.voltar();
+        return { ok: true };
+      }
       this.reunioes.avisar(SAIA_PARA_ENTRAR_EM_OUTRA);
       return SEM_RESULTADO;
     }
@@ -205,6 +214,22 @@ export class ReuniaoNoApp {
     this.passeEnviado = false;
     this.mudar({ ...FECHADA });
     this.bridge.send({ cmd: 'videoWindow', modo: 'normal' });
+  }
+
+  /** O "Telefone": na reunião, mostra o app de sempre e esconde a vista; antes de entrar, fecha a vista. */
+  telefone(): void {
+    if (this.v.fase === 'nenhuma') return;
+    if (this.v.fase !== 'naReuniao') return this.fechar();
+    if (this.v.escondida) return;
+    this.mudar({ escondida: true });
+    this.bridge.send({ cmd: 'videoWindow', modo: 'normal' });
+  }
+
+  /** O "Voltar para a reunião": a vista de novo, no tamanho em que ela estava. */
+  voltar(): void {
+    if (!this.v.escondida) return;
+    this.mudar({ escondida: false });
+    this.bridge.send({ cmd: 'videoWindow', modo: this.v.janela });
   }
 
   telaCheia(ligada: boolean): void {
@@ -297,6 +322,9 @@ export class ReuniaoNoApp {
     const fase = FASES_DA_PAGINA.find((f) => f === m.fase);
     if (fase === undefined || typeof m.microfone !== 'boolean' || this.v.endereco === null) return;
     this.mudar({ fase, microfone: m.microfone });
+    // Escondida, a vista só diz "Você está na reunião" enquanto a página diz o mesmo: se ela saiu da reunião (ou entrou
+    // de novo na entrada), a vista volta para a pessoa ver.
+    if (fase !== 'naReuniao') this.voltar();
   }
 
   private postar(m: object): void {

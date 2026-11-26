@@ -4,10 +4,11 @@
 // mensagem, nunca no endereço), com o title "Reunião", e recebe o foco quando a vista abre; a barra vem antes dele na
 // ordem do Tab. Com a fase `naoAbriu` o iframe sai e entram o título, o "Tentar de novo", o "Fechar" e o "Abrir no
 // navegador"; o foco vai ao título. A vista é montada uma vez, fora da raiz de cada tela do main.tsx: a tela do iframe
-// não é desmontada por uma troca de tela nem pela tela cheia (o documento da reunião fica o mesmo).
+// não é desmontada por uma troca de tela nem pela tela cheia (o documento da reunião fica o mesmo). No "Telefone" a
+// vista fica escondida (`visibility: hidden`, o iframe vivo e a reunião andando), fora do Tab e do leitor de tela.
 import type { ComponentChildren } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { IconExitFullscreen, IconFullscreen } from '../../icons';
+import { IconExitFullscreen, IconFullscreen, IconPhone } from '../../icons';
 import type { Layout } from '../../layout';
 import {
   A_REUNIAO_NAO_ABRIU,
@@ -16,6 +17,7 @@ import {
   REUNIAO,
   SAIR_DA_TELA_CHEIA,
   TELA_CHEIA,
+  TELEFONE,
   TENTAR_DE_NOVO,
 } from '../textos';
 import type { ReuniaoNoApp, VistaNoApp } from '../vista';
@@ -75,23 +77,31 @@ export function Reuniao({ controle, vista, origem, barra, layout, plataforma, to
     el?.focus();
     return () => controle.quadroMontado(null);
   }, [controle, vista.quadro, comQuadro]);
+  // O "Voltar para a reunião": o foco volta para a página da reunião.
+  const eraEscondida = useRef(vista.escondida);
+  useLayoutEffect(() => {
+    if (eraEscondida.current && !vista.escondida) quadro.current?.focus();
+    eraEscondida.current = vista.escondida;
+  }, [vista.escondida]);
   useLayoutEffect(() => {
     if (vista.fase === 'naoAbriu') titulo.current?.focus();
   }, [vista.fase === 'naoAbriu']);
 
   const acoes = (
-    <button
-      type="button"
-      class="caption-texto"
-      onClick={() => controle.telaCheia(!telaCheia)}
-    >
-      {telaCheia ? <IconExitFullscreen size="sm" /> : <IconFullscreen size="sm" />}
-      {telaCheia ? SAIR_DA_TELA_CHEIA : TELA_CHEIA}
-    </button>
+    <>
+      <button type="button" class="caption-texto" onClick={() => controle.telefone()}>
+        <IconPhone size="sm" />
+        {TELEFONE}
+      </button>
+      <button type="button" class="caption-texto" onClick={() => controle.telaCheia(!telaCheia)}>
+        {telaCheia ? <IconExitFullscreen size="sm" /> : <IconFullscreen size="sm" />}
+        {telaCheia ? SAIR_DA_TELA_CHEIA : TELA_CHEIA}
+      </button>
+    </>
   );
 
   return (
-    <div class="reuniao-vista">
+    <div class={vista.escondida ? 'reuniao-vista reuniao-vista-escondida' : 'reuniao-vista'} inert={vista.escondida}>
       <div
         class={`win reuniao ${telaCheia ? 'win-tela-cheia' : 'win-grande'}`}
         data-layout={layout}

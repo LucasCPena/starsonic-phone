@@ -85,3 +85,9 @@ export const SAIA_PARA_ENTRAR_EM_OUTRA = 'Saia da reunião de agora para entrar 
 export const SEM_CHAT_ENTRE_PELO_NAVEGADOR =
   'Este computador não está ligado ao chat da empresa. Entre pelo navegador.';
 export const WEBVIEW2_ANTIGO = 'Este Windows não abre a reunião dentro do app. Ela abriu no navegador.';
+export const TELEFONE = 'Telefone';
+/** A faixa do "Telefone" (tela 14). */
+export const VOCE_ESTA_NA_REUNIAO = 'Você está na reunião';
+export const MICROFONE_LIGADO = 'O microfone está ligado';
+export const MICROFONE_DESLIGADO = 'O microfone está desligado';
+export const VOLTAR_PARA_A_REUNIAO = 'Voltar para a reunião';

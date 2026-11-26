@@ -59,6 +59,7 @@ import { ReuniaoNoApp } from './reunioes/vista';
 import { Aba as AbaReunioes, type LinkDoApp } from './reunioes/telas/Aba';
 import { SEM_CHAT_ENTRE_PELO_NAVEGADOR, SERVIDOR_NAO_RESPONDEU } from './reunioes/textos';
 import { Nova as NovaReuniao } from './reunioes/telas/Nova';
+import { FaixaDoTelefone } from './reunioes/telas/Faixas';
 import { Reuniao, useVistaDaReuniao } from './reunioes/telas/Reuniao';
 import { useVistaReunioes } from './reunioes/usarReunioes';
 import { AdminLogin } from './components/AdminLogin';
@@ -251,7 +252,9 @@ function App() {
         } else if (!noIphone.current && msg.tela === 'reunioes') {
           // (Reuniões) O clique fora dos botões do aviso do pedido: a aba Reuniões, se ela existe (a tecla Ctrl + 6 tem
           // a mesma regra). Sem ela, a pessoa fica onde estava.
-          if (atual.current?.chat?.ligado && reunioesCliente.vista().aba) setView(ABA_REUNIOES);
+          // A reunião do app, escondida pelo "Telefone" e sem ligação: o clique volta para ela.
+          if (reuniaoNoApp.vista().fase === 'naReuniao' && !atual.current?.ligacao) reuniaoNoApp.voltar();
+          else if (atual.current?.chat?.ligado && reunioesCliente.vista().aba) setView(ABA_REUNIOES);
         } else if (!noIphone.current && msg.tela === 'reuniao') {
           // (Reuniões) O link do app (starsonic://reuniao/<código>): espera o chat responder (o efeito do `linkDoApp`)
           // e então vai à aba Reuniões, com o link no campo e o "Entrar" dele. Um link novo toma o lugar do que espera.
@@ -297,9 +300,11 @@ function App() {
   const vistaReunioes = useVistaReunioes(reunioesCliente);
   const vistaDaReuniao = useVistaDaReuniao(reuniaoNoApp);
   const reuniaoAberta = vistaDaReuniao.fase !== 'nenhuma';
+  // A vista cobre a janela (e a tela de baixo fica inerte) enquanto não está escondida pelo "Telefone".
+  const reuniaoCobre = reuniaoAberta && !vistaDaReuniao.escondida;
   const reunioesNaVista =
     !ios &&
-    !reuniaoAberta &&
+    !reuniaoCobre &&
     resumoDoChat?.ligado === true &&
     vistaReunioes.aba &&
     view.kind === 'tab' &&
@@ -319,6 +324,13 @@ function App() {
       reuniaoNoApp.ligacoes(ligacaoDoEstado);
     }
   }, [ligacaoDoEstado]);
+  // A reunião da vista é dita ao cliente das reuniões: os pedidos dela vão ao aviso com o `escondida`, e ela fica
+  // fora da pausa do navegador. Um efeito de layout: o useEffect não roda com o relógio da página parado nos testes.
+  const codigoNoApp = vistaDaReuniao.reuniao?.codigo ?? null;
+  const escondidaNoApp = vistaDaReuniao.escondida;
+  useLayoutEffect(() => {
+    reunioesCliente.reuniaoNoApp(codigoNoApp === null ? null : { codigo: codigoNoApp, escondida: escondidaNoApp });
+  }, [codigoNoApp, escondidaNoApp]);
   // Os aparelhos das Configurações vão à reunião no app: no passe e, depois, a cada troca.
   const microfoneDoEstado = state?.audio.microfone;
   const altoFalanteDoEstado = state?.audio.altoFalante;
@@ -563,7 +575,18 @@ function App() {
   // A barra de título do Windows (com as zonas de redimensionar); no iPhone, nenhuma (a de cima é a do próprio iPhone).
   // Antes do primeiro estado a plataforma não se sabe: a janela é a do Windows.
   const plataforma = ios ? 'ios' : undefined;
-  const barra = (props: Omit<Parameters<typeof TitleBar>[0], 'send'> = {}) => (ios ? null : <TitleBar send={send} {...props} />);
+  const barraSemFaixa = (props: Omit<Parameters<typeof TitleBar>[0], 'send'> = {}) =>
+    ios ? null : <TitleBar send={send} {...props} />;
+  // (3b) O "Telefone": a faixa da tela 14 vai logo abaixo da barra de qualquer tela do app de sempre.
+  const faixaDoTelefone = vistaDaReuniao.escondida ? (
+    <FaixaDoTelefone microfone={vistaDaReuniao.microfone} onVoltar={() => reuniaoNoApp.voltar()} />
+  ) : null;
+  const barra = (props: Omit<Parameters<typeof TitleBar>[0], 'send'> = {}) => (
+    <>
+      {barraSemFaixa(props)}
+      {faixaDoTelefone}
+    </>
+  );
   // (3b) A reunião no app fica fora da raiz de cada tela: a tela de agora é sempre o primeiro filho (a vista, o
   // segundo, não é recriada por uma troca de tela), e inerte enquanto a vista cobre a janela. O aviso curto vai para
   // a vista.
@@ -574,7 +597,7 @@ function App() {
         vista={vistaDaReuniao}
         origem={ORIGEM_DO_CHAT}
         barra={(acoes) =>
-          barra({
+          barraSemFaixa({
             title: state.conta ? `Starsonic Phone · ${accountTitle(state.conta)}` : undefined,
             status: state.conta
               ? accountDot(state.conta, state.ligacao != null, state.naoPerturbe, vistaDaReuniao.fase === 'naReuniao')
@@ -585,12 +608,12 @@ function App() {
         }
         layout={layout}
         plataforma={plataforma}
-        toast={<Toast texto={toast?.texto ?? null} vez={toast?.vez ?? 0} />}
+        toast={<Toast texto={vistaDaReuniao.escondida ? null : (toast?.texto ?? null)} vez={toast?.vez ?? 0} />}
       />
     ) : null;
   const comVista = (tela: JSX.Element) => (
     <>
-      <div class="tela-de-baixo" inert={reuniaoAberta}>
+      <div class="tela-de-baixo" inert={reuniaoCobre}>
         {tela}
       </div>
       {vistaDaJanela}
@@ -627,7 +650,7 @@ function App() {
 
   // As sugestões do número (o Teclado, o Transferir e a Nova ligação): no iPhone, as da agenda, no lugar dos `contatos`.
   const sugestoes = ios ? sugestoesDaAgenda : state.contatos;
-  const toastEl = <Toast texto={reuniaoAberta ? null : (toast?.texto ?? null)} vez={toast?.vez ?? 0} />;
+  const toastEl = <Toast texto={reuniaoCobre ? null : (toast?.texto ?? null)} vez={toast?.vez ?? 0} />;
   // A pergunta da atualização e o diálogo do administrador nunca cobrem a tela da ligação.
   const avisos = (
     <>
@@ -954,7 +977,15 @@ function App() {
   return comVista(
     <div class="win" data-layout={layout} data-plataforma={plataforma}>
       {barra()}
-      {conta && <Header state={state} conta={conta} send={send} navigate={setView} current={view} layout={layout} />}
+      {conta && <Header
+          state={state}
+          conta={conta}
+          send={send}
+          navigate={setView}
+          current={view}
+          layout={layout}
+          emReuniao={vistaDaReuniao.escondida}
+        />}
       <main class="main" aria-label={TABS.find((t) => t.tab === tab)!.label}>
         {tab === 'teclado' && (
           <Teclado

@@ -183,6 +183,8 @@ export class ReunioesCliente {
    * verdadeiro ainda no ar deixaria a página em pausa depois da ligação.
    */
   private readonly filaDaPausa = new Map<string, Promise<void>>();
+  /** A reunião da vista dentro do app (o código e se ela está escondida), ou null. */
+  private noApp: { codigo: string; escondida: boolean } | null = null;
   private v: VistaReunioes;
 
   constructor(o: { chat: ChatCliente; bridge: Bridge; base: string }) {
@@ -565,10 +567,36 @@ export class ReunioesCliente {
   private ouvindo(): boolean {
     if (!this.pausa) return false;
     const agora = Date.now();
-    for (const a of this.abertas.values()) {
+    for (const [codigo, a] of this.abertas) {
+      if (this.ehDoApp(codigo)) continue;
       if (this.linkVale(a, agora) && ((a.dentro && a.falhou) || this.duvidaViva(a, agora))) return true;
     }
     return false;
+  }
+
+  /**
+   * A reunião da vista do app (o código e se ela está escondida), ou null sem ela. Os eventos dela continuam trazendo
+   * os pedidos ao aviso, com o `escondida` daqui; ela não entra na pausa do navegador nem no `ouvindoNoNavegador` (a
+   * pausa dela é a da vista). Sem ela, a reunião sai das abertas:
+   * o pedido do passe a pôs lá como se fosse do navegador.
+   */
+  reuniaoNoApp(r: { codigo: string; escondida: boolean } | null): void {
+    const antes = this.noApp;
+    if (antes?.codigo === r?.codigo && antes?.escondida === r?.escondida) return;
+    this.noApp = r;
+    if (antes !== null && antes.codigo !== r?.codigo) {
+      this.abertas.delete(antes.codigo);
+      this.pedidos = this.pedidos.filter((p) => p.reuniao !== antes.codigo);
+      this.mudou();
+    } else {
+      this.mostrarNoAviso();
+      this.publicar();
+    }
+  }
+
+  /** A reunião é a da vista do app: fora da pausa e da frase do navegador. */
+  private ehDoApp(codigo: string): boolean {
+    return this.noApp?.codigo === codigo;
   }
 
   /** As ligações do estado da ponte, a cada estado: a pausa começa e acaba com o `haPausa`. */
@@ -643,7 +671,7 @@ export class ReunioesCliente {
   private rodada(): void {
     const pausa = this.pausa;
     if (!pausa) return;
-    for (const codigo of [...this.abertas.keys()]) void this.pausarUma(codigo, pausa);
+    for (const codigo of [...this.abertas.keys()]) if (!this.ehDoApp(codigo)) void this.pausarUma(codigo, pausa);
     this.armarAPausa();
     this.publicar();
   }
@@ -659,7 +687,7 @@ export class ReunioesCliente {
   /** Manda o `pausada` verdadeiro a uma reunião cujo link ainda vale, e trata a resposta (a tabela da Task 12). */
   private async pausarUma(codigo: string, pausa: Pausa): Promise<void> {
     const antes = this.abertas.get(codigo);
-    if (!antes || !this.linkVale(antes, Date.now())) return;
+    if (!antes || this.ehDoApp(codigo) || !this.linkVale(antes, Date.now())) return;
     pausa.enviadas.add(codigo);
     const vez = this.vez;
     const epoca = antes.epoca;
@@ -762,7 +790,7 @@ export class ReunioesCliente {
       ? {
           cmd: 'reuniaoPedido',
           pedido: { id: p.id, nome: p.nome, assunto: assunto === undefined ? null : paraOAviso(assunto) },
-          escondida: true,
+          escondida: !(this.noApp?.codigo === p.reuniao && !this.noApp.escondida),
         }
       : { cmd: 'reuniaoPedido' };
     const chave = JSON.stringify(comando);
