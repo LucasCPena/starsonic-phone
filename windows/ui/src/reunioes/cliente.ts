@@ -73,7 +73,8 @@ const CONTROLE = /[\u0000-\u001f\u007f-\u009f]/g;
 const SURROGADO_SOLTO = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
 
 /** O texto como o núcleo o aceita no aviso: sem controle, sem surrogado solto, com até 120 pontos de código. */
-const paraOAviso = (t: string): string => limitCharacters(t.replace(CONTROLE, '').replace(SURROGADO_SOLTO, '\uFFFD'), MAXIMO_DO_AVISO);
+const paraOAviso = (t: string): string =>
+  limitCharacters(t.replace(CONTROLE, '').replace(SURROGADO_SOLTO, '\uFFFD'), MAXIMO_DO_AVISO);
 
 type ComandoDoPedido = Extract<Command, { cmd: 'reuniaoPedido' }>;
 

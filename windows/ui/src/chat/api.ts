@@ -353,7 +353,7 @@ export function criarApi(base: string, chave: string): ApiChat {
       await p('POST', `/reunioes/${encodeURIComponent(codigo)}/pausa`, { pausada, vez });
     },
     async participantesDaReuniao(codigo) {
-      // Como o passeDaReuniao: um 200 com outro corpo é um servidor que não é o do chat (ou um proxy): sem resposta boa.
+      // Como o passeDaReuniao: um 200 com outro corpo é de um servidor que não é o do chat (ou de um proxy).
       const r = (await p('GET', `/reunioes/${encodeURIComponent(codigo)}/participantes`)) as {
         participantes?: unknown;
         pedidos?: unknown;
@@ -363,7 +363,8 @@ export function criarApi(base: string, chave: string): ApiChat {
       const certo =
         Array.isArray(r?.participantes) &&
         r.participantes.every(
-          (x) => objeto(x) && texto(x.id) && texto(x.nome) && typeof x.deFora === 'boolean' && typeof x.tela === 'boolean',
+          (x) =>
+            objeto(x) && texto(x.id) && texto(x.nome) && typeof x.deFora === 'boolean' && typeof x.tela === 'boolean',
         ) &&
         Array.isArray(r.pedidos) &&
         r.pedidos.every((x) => objeto(x) && texto(x.id) && texto(x.nome));
