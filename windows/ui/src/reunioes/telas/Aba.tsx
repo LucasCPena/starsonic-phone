@@ -354,14 +354,15 @@ function CampoDoLink({ base, onAbrirDoCampo, onAbrirComoConvidado, onEntrar, lin
     }
   };
   // O link do app: o link da reunião no campo e o "Entrar" dele, uma vez por `vez`.
+  // Com o pedido do campo no ar, o link espera: ele não é apagado pela resposta dele.
   const jaTratado = useRef(0);
   useEffect(() => {
-    if (linkDoApp === null || linkDoApp.vez === jaTratado.current) return;
+    if (linkDoApp === null || ocupado || linkDoApp.vez === jaTratado.current) return;
     jaTratado.current = linkDoApp.vez;
     onLinkDoApp(linkDoApp.vez);
     setTexto(`${base.replace(/\/+$/, '')}/r/${linkDoApp.codigo}`);
     void abrir('entrar', linkDoApp.codigo);
-  }, [linkDoApp]);
+  }, [linkDoApp, ocupado]);
   const comoConvidado = () => {
     if (convidado === null) return;
     onAbrirComoConvidado(convidado);
@@ -441,7 +442,7 @@ export function Aba({
   const { lista, conectado, copiado } = vista;
   const agora = Date.now();
   const minimo = useLayout() === 'minimo';
-  // Sem o campo (sem conexão), o link do app não tem onde entrar: a frase da falta de conexão já está na tela.
+  // Sem o campo (a conexão caiu entre a decisão do main e este desenho), o link não tem onde entrar e não fica guardado.
   useEffect(() => {
     if (!conectado && linkDoApp !== null) onLinkDoApp(linkDoApp.vez);
   }, [conectado, linkDoApp]);

@@ -51,6 +51,8 @@ import type { EventoDaReuniao, Pedido, Reuniao } from './tipos';
 export interface VistaReunioes {
   /** A aba aparece: false até a primeira leitura dar certo, e de novo depois de um 403 semReunioes. */
   aba: boolean;
+  /** A primeira leitura da lista desta pessoa já terminou (deu certo, o semReunioes ou falhou). */
+  respondeu: boolean;
   /** As reuniões da pessoa da vez; null antes da primeira leitura. */
   lista: Reuniao[] | null;
   /** false: a frase da falta de conexão no lugar da lista. */
@@ -134,6 +136,8 @@ export class ReunioesCliente {
   private readonly bridge: Bridge;
   private readonly ouvintes = new Set<() => void>();
   private aba = false;
+  /** A primeira leitura desta pessoa terminou (a sessão que para a esquece). */
+  private respondeu = false;
   private lista: Reuniao[] | null = null;
   /** A última leitura falhou (sem rede, um 5xx...): a frase da falta de conexão. */
   private falhou = false;
@@ -345,6 +349,7 @@ export class ReunioesCliente {
     const c = this.chat.vista();
     return {
       aba: this.aba,
+      respondeu: this.respondeu,
       lista: this.lista,
       conectado: c.situacao === 'pronto' && c.conectado && !this.falhou,
       copiado: this.copiado,
@@ -358,6 +363,7 @@ export class ReunioesCliente {
     const nova = this.montar();
     const igual =
       nova.aba === this.v.aba &&
+      nova.respondeu === this.v.respondeu &&
       nova.lista === this.v.lista &&
       nova.conectado === this.v.conectado &&
       nova.copiado === this.v.copiado &&
@@ -381,6 +387,7 @@ export class ReunioesCliente {
     }
     // A pessoa trocou, ou outra leitura saiu depois desta: a resposta não vale.
     if (vez !== this.vez || n !== this.leitura || ehParado(erro)) return;
+    this.respondeu = true;
     if (lista) {
       this.aba = true;
       this.lista = lista;
@@ -416,6 +423,7 @@ export class ReunioesCliente {
     this.relogioDoCopiado = undefined;
     this.copiado = null;
     this.lista = null;
+    this.respondeu = false;
     this.falhou = false;
     this.semReunioes = false;
     // As reuniões continuam no navegador, com a pessoa que entrou: o app só as esquece.

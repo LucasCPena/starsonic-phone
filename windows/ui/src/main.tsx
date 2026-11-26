@@ -57,7 +57,7 @@ import { useAcao, useVistaChat } from './chat/usarChat';
 import { ReunioesCliente } from './reunioes/cliente';
 import { ReuniaoNoApp } from './reunioes/vista';
 import { Aba as AbaReunioes, type LinkDoApp } from './reunioes/telas/Aba';
-import { SEM_CHAT_ENTRE_PELO_NAVEGADOR } from './reunioes/textos';
+import { SEM_CHAT_ENTRE_PELO_NAVEGADOR, SERVIDOR_NAO_RESPONDEU } from './reunioes/textos';
 import { Nova as NovaReuniao } from './reunioes/telas/Nova';
 import { Reuniao, useVistaDaReuniao } from './reunioes/telas/Reuniao';
 import { useVistaReunioes } from './reunioes/usarReunioes';
@@ -176,7 +176,9 @@ function App() {
   const [view, setView] = useState<View>(initialView);
   const [toast, setToast] = useState<{ texto: string; vez: number } | null>(null);
   // (Reuniões) O link do app que espera a aba Reuniões pôr no campo e entrar.
-  const [linkDoApp, setLinkDoApp] = useState<LinkDoApp | null>(null);
+  // Ele espera no App até o chat responder (`pronto` falso) e então vai à aba, que o serve uma vez. A `vez` nunca volta.
+  const [linkDoApp, setLinkDoApp] = useState<(LinkDoApp & { conta: string | null; pronto: boolean }) | null>(null);
+  const contadorDoLink = useRef(0);
   // O último toast e quantos chegaram (nunca volta a zero): a edição do atalho sabe que o C++ recusou (o motivo vem num
   // toast, com o texto da loja) e distingue essa resposta de um aviso de outra coisa.
   const [toasts, setToasts] = useState({ n: 0, texto: '' });
@@ -247,17 +249,10 @@ function App() {
           // a mesma regra). Sem ela, a pessoa fica onde estava.
           if (atual.current?.chat?.ligado && reunioesCliente.vista().aba) setView(ABA_REUNIOES);
         } else if (!noIphone.current && msg.tela === 'reuniao') {
-          // (Reuniões) O link do app (starsonic://reuniao/<código>): a aba Reuniões, com o link no campo e o "Entrar"
-          // dele.
-          // Sem o chat ou sem a aba, só o aviso curto. Com uma ligação a aba não aparece: o Entrar recusa direto.
-          if (!atual.current?.chat?.ligado || !reunioesCliente.vista().aba) {
-            reunioesCliente.avisar(SEM_CHAT_ENTRE_PELO_NAVEGADOR);
-          } else if (atual.current.ligacao) {
-            void reuniaoNoApp.entrar(msg.codigo);
-          } else {
-            setView(ABA_REUNIOES);
-            setLinkDoApp((l) => ({ codigo: msg.codigo, vez: (l?.vez ?? 0) + 1 }));
-          }
+          // (Reuniões) O link do app (starsonic://reuniao/<código>): espera o chat responder (o efeito do `linkDoApp`) e
+          // então vai à aba Reuniões, com o link no campo e o "Entrar" dele. Um link novo toma o lugar do que espera.
+          const conta = atual.current?.conta?.id ?? null;
+          setLinkDoApp({ codigo: msg.codigo, vez: ++contadorDoLink.current, conta, pronto: false });
         }
       } else if (msg.type === 'reuniaoResposta') {
         // (Reuniões) A resposta do aviso ao pedido que ele mostra: o cliente tira o pedido e chama a rota.
@@ -343,6 +338,44 @@ function App() {
       return daAba || v.kind === 'reuniaoNova' ? { kind: 'tab', tab: 'teclado' } : v;
     });
   }, [abaDasReunioes]);
+  // O link do app (starsonic://reuniao/<código>) espera o chat responder pela primeira vez e é servido ou largado uma
+  // única vez, só para a pessoa de quando chegou (a troca de conta o larga, sem aviso). O app nunca entra sozinho:
+  // largado, ele não volta quando a conexão voltar.
+  const situacaoDoChat = vistaChat.situacao;
+  useEffect(() => {
+    const l = linkDoApp;
+    if (ios || l === null || l.pronto) return;
+    const largar = (aviso?: string) => {
+      if (aviso !== undefined) reunioesCliente.avisar(aviso);
+      setLinkDoApp((x) => (x?.vez === l.vez ? null : x));
+    };
+    if ((contaEmUso?.id ?? null) !== l.conta) return largar();
+    if (resumoDoChat?.ligado !== true || situacaoDoChat === 'precisaConta') return largar(SEM_CHAT_ENTRE_PELO_NAVEGADOR);
+    if (situacaoDoChat === 'fora') return largar(SERVIDOR_NAO_RESPONDEU);
+    if (situacaoDoChat !== 'pronto' || !vistaReunioes.respondeu) return;
+    // A leitura que falhou (ou a lista sem conexão) é o chat que não respondeu; sem a aba e sem falha, é o chat sem as
+    // reuniões (o 403 semReunioes).
+    if (!vistaReunioes.conectado) return largar(SERVIDOR_NAO_RESPONDEU);
+    if (!vistaReunioes.aba) return largar(SEM_CHAT_ENTRE_PELO_NAVEGADOR);
+    if (state?.ligacao) {
+      // A aba não é desenhada com a tela da ligação por cima: o Entrar recusa direto, e o erro dele vai ao aviso curto.
+      void reuniaoNoApp.entrar(l.codigo).then((r) => {
+        if (!r.ok && r.erro !== null) reunioesCliente.avisar(r.erro);
+      });
+      return largar();
+    }
+    setView(ABA_REUNIOES);
+    setLinkDoApp({ ...l, pronto: true });
+  }, [
+    linkDoApp,
+    contaEmUso?.id,
+    resumoDoChat?.ligado,
+    situacaoDoChat,
+    vistaReunioes.respondeu,
+    vistaReunioes.aba,
+    vistaReunioes.conectado,
+    state?.ligacao != null,
+  ]);
   // A vista da reunião fechou: a aba Reuniões (e, com ela de volta à vista, a lista lida de novo). Sem a aba (ela sumiu
   // com a vista aberta), o Teclado: a pessoa não é puxada para a aba quando ela voltar.
   const reuniaoEstavaAberta = useRef(false);
@@ -979,7 +1012,7 @@ function App() {
             onAbrirDoCampo={(codigo) => reunioesCliente.abrirNoNavegador(codigo)}
             onAbrirComoConvidado={(codigo) => reunioesCliente.abrirComoConvidado(codigo)}
             onEntrar={(codigo) => reuniaoNoApp.entrar(codigo)}
-            linkDoApp={linkDoApp}
+            linkDoApp={linkDoApp?.pronto ? linkDoApp : null}
             onLinkDoApp={(vez) => setLinkDoApp((l) => (l?.vez === vez ? null : l))}
           />
         )}

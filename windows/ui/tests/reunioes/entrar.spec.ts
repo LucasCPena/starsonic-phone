@@ -6,7 +6,14 @@ import { comandos, empurrar, esperarComando, mudarEstado, type Comando } from '.
 import { abrirNoChat } from '../chat/abrir';
 import { baseDoChat, empresaComReunioes } from '../chat/servidor';
 import { versaoDoWebView2, WEBVIEW2_MINIMO } from '../../src/reunioes/vista';
-import { abrirNasReunioes, marcar, meioDiaDeHoje, noRelogioDaPagina, paginaFalsa } from './abrir';
+import {
+  abrirNasReunioes,
+  marcar,
+  meioDiaDeHoje,
+  noRelogioDaPagina,
+  numerarAsLeituras,
+  paginaFalsa,
+} from './abrir';
 
 // O CSP da página só deixa falar com o endereço do chat de verdade; o servidor de teste fica no 127.0.0.1:4180.
 test.use({ bypassCSP: true });
@@ -18,6 +25,7 @@ const FORMATO_DO_PASSE = /^[A-Za-z0-9_-]{43}$/;
 const DESLIGUE = 'Desligue a ligação para entrar na reunião.';
 const SEM_CHAT = 'Este computador não está ligado ao chat da empresa. Entre pelo navegador.';
 const WEBVIEW2_ANTIGO = 'Este Windows não abre a reunião dentro do app. Ela abriu no navegador.';
+const NAO_RESPONDEU = 'O servidor do chat não respondeu. Tente de novo.';
 const ATUALIZAR = 'O servidor do chat precisa ser atualizado para abrir reuniões pelo app.';
 const OUTRA_EMPRESA = 'Esta reunião é de outra empresa. Ela abre no navegador, e você entra como convidado.';
 const NAO_E_LINK = 'Este não é um link de reunião do Starsonic.';
@@ -64,6 +72,26 @@ async function segurarOPasse(page: Page): Promise<{ soltar(): void; pedidos(): n
   return { soltar, pedidos: () => n };
 }
 
+/** O chat sem a operação do passe (404, com a reunião na lista): conta os pedidos, sem gastar a janela do endereço. */
+async function passeAntigo(page: Page): Promise<{ pedidos(): number }> {
+  let n = 0;
+  await page.route(ePasse, (rota) => {
+    n += 1;
+    return rota.fulfill({ status: 404, json: { erro: 'naoEncontrado' } });
+  });
+  return { pedidos: () => n };
+}
+
+/** Conta os pedidos do passe que saem da página (e os deixa seguir). */
+async function contarOsPasses(page: Page): Promise<{ pedidos(): number }> {
+  let n = 0;
+  await page.route(ePasse, (rota) => {
+    n += 1;
+    return rota.continue();
+  });
+  return { pedidos: () => n };
+}
+
 const abrirReuniao = (page: Page, codigo: string) =>
   empurrar(page, { v: 1, type: 'abrir', tela: 'reuniao', codigo });
 
@@ -71,6 +99,7 @@ test('o Entrar do campo abre a reunião colada, e o Enter é o Entrar', async ({
   const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
   const criada = await marcarHoje(pessoas[0].api);
   const pagina = await paginaFalsa(page, criada.codigo);
+  const passes = await contarOsPasses(page);
   await abrir(page, pessoas[0]);
   // Sem texto, sem botões; com texto, o Entrar (o botão principal, o primeiro) e o Abrir no navegador.
   await expect(doCampo(page).getByRole('button')).toHaveCount(0);
@@ -81,13 +110,17 @@ test('o Entrar do campo abre a reunião colada, e o Enter é o Entrar', async ({
   await expect(quadro(page)).toHaveAttribute('src', `${baseDoChat()}/r/${criada.codigo}`);
   await expect.poll(async () => (await pagina.recebidas()).length).toBe(1);
   expect(await doTipo(page, 'reuniaoNavegador')).toEqual([]);
-  // O campo esvaziou. O Enter, só com o código (em maiúsculas), faz o mesmo: a mesma reunião só é mostrada.
+  // O campo esvaziou. O link do app da reunião que já está na vista só a mostra: nenhum passe a mais, nenhum
+  // tamanho novo da janela e nenhum navegador.
   await expect(campo(page)).toHaveValue('');
-  await campo(page).fill(criada.codigo.toUpperCase());
-  await campo(page).press('Enter');
-  await expect(campo(page)).toHaveValue('');
+  const antes = passes.pedidos();
+  await abrirReuniao(page, criada.codigo);
+  await expect(page.getByRole('heading', { name: 'Reuniões', level: 1 })).toBeVisible();
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 300)));
+  expect(passes.pedidos()).toBe(antes);
   expect(await doTipo(page, 'reuniaoNavegador')).toEqual([]);
   expect(await doTipo(page, 'videoWindow')).toHaveLength(1);
+  await expect(quadro(page)).toHaveCount(1);
 });
 
 test('o Enter no campo, sem a reunião na vista, entra pelo passe', async ({ page }) => {
@@ -95,9 +128,11 @@ test('o Enter no campo, sem a reunião na vista, entra pelo passe', async ({ pag
   const criada = await marcarHoje(pessoas[0].api);
   const pagina = await paginaFalsa(page, criada.codigo);
   await abrir(page, pessoas[0]);
-  await campo(page).fill(criada.codigo);
+  // Só o código, em maiúsculas (o código é lido em minúsculas).
+  await campo(page).fill(criada.codigo.toUpperCase());
   await campo(page).press('Enter');
   await expect.poll(async () => (await pagina.recebidas()).length).toBe(1);
+  await expect(quadro(page)).toHaveAttribute('src', `${baseDoChat()}/r/${criada.codigo}`);
   const [passe] = (await pagina.recebidas()) as Array<{ passe: string }>;
   expect(passe.passe).toMatch(FORMATO_DO_PASSE);
   expect(await doTipo(page, 'reuniaoNavegador')).toEqual([]);
@@ -284,4 +319,116 @@ test('o chat antigo diz que precisa ser atualizado', async ({ page }) => {
   await campo(page).fill('texto qualquer');
   await campo(page).press('Enter');
   await expect(alertaDoCampo(page)).toHaveText(NAO_E_LINK);
+});
+
+test('dois links do app seguidos, com a aba à vista, entram cada um uma vez e nunca de novo', async ({ page }) => {
+  const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
+  const a = await marcar(pessoas[0].api, noRelogioDaPagina(0, 14, 0), 'A');
+  const b = await marcar(pessoas[0].api, noRelogioDaPagina(0, 15, 0), 'B');
+  const passes = await passeAntigo(page);
+  await abrir(page, pessoas[0]);
+  await abrirReuniao(page, a.codigo);
+  await expect(campo(page)).toHaveValue(`${baseDoChat()}/r/${a.codigo}`);
+  await expect.poll(() => passes.pedidos()).toBe(1);
+  await expect(alertaDoCampo(page)).toHaveText(ATUALIZAR);
+  await abrirReuniao(page, b.codigo);
+  await expect(campo(page)).toHaveValue(`${baseDoChat()}/r/${b.codigo}`);
+  await expect.poll(() => passes.pedidos()).toBe(2);
+  // Sair da aba e voltar, sem link novo, não entra em nada.
+  await page.locator('nav.nav button').first().click();
+  await expect(page.getByRole('heading', { name: 'Reuniões', level: 1 })).toHaveCount(0);
+  await page.locator('nav.nav button.tab-reunioes').click();
+  await expect(campo(page)).toBeVisible();
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 300)));
+  await expect(campo(page)).toHaveValue('');
+  expect(passes.pedidos()).toBe(2);
+});
+
+test('o link que inicia o app espera a primeira leitura e então entra', async ({ page }) => {
+  const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
+  const criada = await marcarHoje(pessoas[0].api);
+  const passes = await passeAntigo(page);
+  await numerarAsLeituras(page, 2000);
+  await page.clock.setFixedTime(meioDiaDeHoje());
+  await abrirNoChat(page, { chave: pessoas[0].chave, ...RECEPCAO });
+  await expect(page.locator('nav.nav button.tab-reunioes')).toHaveCount(0);
+  await abrirReuniao(page, criada.codigo);
+  await expect(page.locator('nav.nav button.tab-reunioes')).toBeVisible({ timeout: 15_000 });
+  await expect(campo(page)).toHaveValue(criada.link);
+  await expect(alertaDoCampo(page)).toHaveText(ATUALIZAR);
+  expect(passes.pedidos()).toBe(1);
+  await expect(page.locator('.toast-box')).toHaveCount(0);
+});
+
+test('o link do app com o chat ligado e as reuniões liberadas só na empresa diz para entrar pelo navegador', async ({
+  page,
+}) => {
+  const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
+  await page.route(
+    (url) => url.pathname === '/api/v1/reunioes',
+    (rota) => rota.fulfill({ status: 403, json: { erro: 'semReunioes' } }),
+  );
+  const passes = await contarOsPasses(page);
+  await abrirNoChat(page, { chave: pessoas[0].chave, ...RECEPCAO });
+  await abrirReuniao(page, 'abcdefghjk');
+  await expect(page.locator('.toast-box')).toHaveText(SEM_CHAT);
+  await expect(page.locator('nav.nav button.tab-reunioes')).toHaveCount(0);
+  expect(passes.pedidos()).toBe(0);
+  expect(await doTipo(page, 'reuniaoNavegador')).toEqual([]);
+});
+
+test('o link do app com a primeira leitura falhando diz que o servidor não respondeu', async ({ page }) => {
+  const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
+  await page.route(
+    (url) => url.pathname === '/api/v1/reunioes',
+    (rota) => rota.fulfill({ status: 503, json: { erro: 'servidor' } }),
+  );
+  const passes = await contarOsPasses(page);
+  await abrirNoChat(page, { chave: pessoas[0].chave, ...RECEPCAO });
+  await abrirReuniao(page, 'abcdefghjk');
+  await expect(page.locator('.toast-box')).toHaveText(NAO_RESPONDEU);
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 200)));
+  expect(passes.pedidos()).toBe(0);
+  expect(await doTipo(page, 'reuniaoNavegador')).toEqual([]);
+});
+
+test('o link do app com o campo ocupado espera o pedido dele e depois entra', async ({ page }) => {
+  const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
+  const a = await marcar(pessoas[0].api, noRelogioDaPagina(0, 14, 0), 'A');
+  const b = await marcar(pessoas[0].api, noRelogioDaPagina(0, 15, 0), 'B');
+  let n = 0;
+  let soltar!: () => void;
+  const solto = new Promise<void>((r) => (soltar = r));
+  await page.route(ePasse, async (rota) => {
+    n += 1;
+    if (n === 1) await solto;
+    return rota.fulfill({ status: 404, json: { erro: 'naoEncontrado' } });
+  });
+  await abrir(page, pessoas[0]);
+  await campo(page).fill(a.codigo);
+  await campo(page).press('Enter');
+  await expect.poll(() => n).toBe(1);
+  await abrirReuniao(page, b.codigo);
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 200)));
+  expect(n).toBe(1);
+  soltar();
+  await expect(campo(page)).toHaveValue(`${baseDoChat()}/r/${b.codigo}`);
+  await expect.poll(() => n).toBe(2);
+  await expect(alertaDoCampo(page)).toHaveText(ATUALIZAR);
+});
+
+test.describe('o WebView2 antigo, com uma ligação', () => {
+  test.use({ userAgent: UA('130.0.2849.80') });
+
+  test('o link do app diz o erro do caminho do navegador', async ({ page }) => {
+    const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
+    const criada = await marcarHoje(pessoas[0].api);
+    const passes = await passeAntigo(page);
+    await abrir(page, pessoas[0]);
+    await mudarEstado(page, (s) => ({ ...s, ligacao: LIGACAO }));
+    await abrirReuniao(page, criada.codigo);
+    await expect.poll(() => passes.pedidos()).toBe(1);
+    await expect(page.locator('.toast-box')).toHaveText(ATUALIZAR);
+    expect(await doTipo(page, 'reuniaoNavegador')).toEqual([]);
+  });
 });
