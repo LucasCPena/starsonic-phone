@@ -478,3 +478,34 @@ test('o link do app que chega antes de a conta aparecer segue com a primeira con
   await expect(alertaDoCampo(page)).toHaveText(ATUALIZAR);
   await expect(page.locator('.toast-box')).toHaveCount(0);
 });
+
+const CAIXA = { ramal: '2015', nome: 'Caixa 2' };
+const CONTA_CAIXA = { id: '41aa07c3d2e95b18', ramal: CAIXA.ramal, nome: CAIXA.nome };
+
+for (const [nome, passaSemConta] of [
+  ['direto para a outra conta', false],
+  ['por um estado sem conta', true],
+] as const) {
+  test(`o link do app que espera é largado quando a conta troca ${nome}`, async ({ page }) => {
+    const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO, CAIXA]);
+    const criada = await marcarHoje(pessoas[0].api);
+    const passes = await passeAntigo(page);
+    // A primeira leitura demora: o link está esperando quando a conta troca.
+    await numerarAsLeituras(page, 1500);
+    await page.clock.setFixedTime(meioDiaDeHoje());
+    await abrirNoChat(page, { chave: pessoas[0].chave, ...RECEPCAO, cenario: 'chat-duas-contas' });
+    await abrirReuniao(page, criada.codigo);
+    if (passaSemConta) await mudarEstado(page, (s) => ({ ...s, conta: null }));
+    await mudarEstado(page, (s) => ({ ...s, conta: { ...s.conta, ...CONTA_CAIXA } }));
+    // A aba da outra pessoa aparece, e o link de antes não vai a ela: nenhum pedido, nenhum aviso, o campo vazio.
+    await expect(page.locator('nav.nav button.tab-reunioes')).toBeVisible({ timeout: 15_000 });
+    await page.locator('nav.nav button.tab-reunioes').click();
+    await expect(campo(page)).toBeVisible();
+    await page.evaluate(() => new Promise((r) => setTimeout(r, 500)));
+    await expect(campo(page)).toHaveValue('');
+    await expect(page.locator('.toast-box')).toHaveCount(0);
+    expect(passes.pedidos()).toBe(0);
+    expect(await doTipo(page, 'videoWindow')).toEqual([]);
+    expect(await doTipo(page, 'reuniaoNavegador')).toEqual([]);
+  });
+}
