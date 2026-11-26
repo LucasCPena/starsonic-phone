@@ -88,6 +88,7 @@ import type { Send, Tab, View } from './types';
 import { useColegaDaLigacao } from './video/chatDaLigacao';
 import { videoDoApp } from './video/estado';
 import { FaixaDaLigacao } from './video/FaixaDaLigacao';
+import { AvisoOuvindo } from './reunioes/AvisoOuvindo';
 import { AVISOS_DE_5_S } from './video/textos';
 import { criarVideoDaPagina, VideoContexto } from './video/vistas';
 
@@ -291,7 +292,8 @@ function App() {
   useLayoutEffect(() => {
     if (!ios) reunioesCliente.ligacoes(ligacaoDoEstado);
   }, [ligacaoDoEstado]);
-  // A aba some com a pessoa nela (o semReunioes, o chat desligado): a vista vai para o Teclado de fato, e não só a tela.
+  // A aba some com a pessoa nela (o semReunioes, o chat desligado): a vista vai para o Teclado de fato, e não só a
+  // tela.
   // Sem isto, a aba que volta (as reuniões liberadas de novo) puxaria a pessoa de volta para ela sozinha.
   const abaDasReunioes = !ios && resumoDoChat?.ligado === true && vistaReunioes.aba;
   useLayoutEffect(() => {
@@ -568,6 +570,7 @@ function App() {
               status: state.conta ? accountDot(state.conta, true, state.naoPerturbe) : undefined,
               semRedimensionar: true,
             })}
+          <AvisoOuvindo ouvindo={vistaReunioes.ouvindoNoNavegador} fora />
           <Grande
             key={sala && salaEmCima(l, sala) ? `sala-${sala.id}` : 'ligacao'}
             state={state}
@@ -598,6 +601,7 @@ function App() {
         <div class="win" data-layout={layout} data-plataforma={plataforma}>
           {barraDaLigacao}
           <FaixaDaLigacao state={state} ligacao={l} send={send} onVoltar={fecharOChat} />
+          <AvisoOuvindo ouvindo={vistaReunioes.ouvindoNoNavegador} fora />
           {conversaDaLigacao(daLigacao)}
           {toastEl}
         </div>
@@ -611,6 +615,7 @@ function App() {
         <div class="win call" data-layout={layout} data-plataforma={plataforma}>
           {barraDaLigacao}
           {faixaDeFora}
+          <AvisoOuvindo ouvindo={vistaReunioes.ouvindoNoNavegador} fora />
           <TelaDaSala key={sala.id} state={state} ligacao={l} sala={sala} contatos={sugestoes} daEmpresa={daEmpresa.contatos} send={send} />
           {toastEl}
         </div>

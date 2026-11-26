@@ -17,6 +17,7 @@ test.use({ bypassCSP: true });
 const EMPRESA = 'ACME Comércio Ltda';
 const RECEPCAO = { ramal: '2001', nome: 'Recepção' };
 const CAIXA = { ramal: '2015', nome: 'Caixa 2' };
+const ANA = { ramal: '2003', nome: 'Ana Souza' };
 const FRASE = 'A reunião no navegador continua ouvindo você. Desligue o microfone lá.';
 const FORA = { status: 409, json: { erro: 'foraDaReuniao' } };
 const OK = { status: 204 };
@@ -132,9 +133,10 @@ async function respondendoAPausa(page: Page, inicial: Resposta) {
  */
 async function abrir(
   page: Page,
-  o: { cenario?: 'chat-duas-contas'; valeAte?: number; pausa?: Resposta } = {},
+  o: { cenario?: 'chat-duas-contas'; valeAte?: number; pausa?: Resposta; colega?: boolean } = {},
 ) {
-  const { pessoas } = await empresaComReunioes(EMPRESA, o.cenario ? [RECEPCAO, CAIXA] : [RECEPCAO]);
+  const quem = o.cenario ? [RECEPCAO, CAIXA] : o.colega ? [RECEPCAO, ANA] : [RECEPCAO];
+  const { pessoas } = await empresaComReunioes(EMPRESA, quem);
   const criada = await marcar(pessoas[0].api, noRelogioDaPagina(1, 10, 0), 'Planejamento de dezembro');
   await page.clock.install({ time: Date.now() });
   const leituras = await numerarAsLeituras(page, 150);
@@ -476,6 +478,59 @@ const TAMANHOS: Array<[number, number, string]> = [
   [360, 600, 'compacto'],
   [300, 440, 'minimo'],
 ];
+
+/** Uma sala de vídeo de id 51 (a linha da ligação), com a Ana nela. */
+const SALA = {
+  id: 51,
+  fora: false,
+  cheia: false,
+  participantes: [
+    {
+      id: 52,
+      numero: '2003',
+      nome: 'Ana Souza',
+      estado: 'naSala',
+      imagem: false,
+      quadro: { x: 0, y: 0, largura: 1, altura: 1 },
+    },
+  ],
+};
+
+/** As telas de ligação além da comum, onde a frase tem de aparecer também. */
+const OUTRAS_TELAS: Record<string, (page: Page) => Promise<void>> = {
+  'na faixa da ligação com a conversa do chat': async (page) => {
+    await page.getByRole('button', { name: 'Chat', exact: true }).click();
+    await expect(page.getByRole('log', { name: 'Mensagens com Ana Souza' })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Ligação com Ana Souza', exact: true })).toBeVisible();
+  },
+  'na tela da sala de vídeo': async (page) => {
+    await mudarEstado(page, (s) => ({ ...s, ligacao: { ...s.ligacao, sala: SALA } }));
+    await page.clock.runFor(1);
+    await expect(page.getByRole('group', { name: 'Mosaico da sala', exact: true })).toBeVisible();
+  },
+};
+
+/** A frase inteira na janela de cada um dos três tamanhos, e sem violação séria do axe. */
+async function fraseNosTresTamanhos(page: Page): Promise<void> {
+  // O axe usa timers: com o relógio parado ele não termina. A frase fica (a rota continua abortando a pausa).
+  await page.clock.resume();
+  for (const [largura, altura, layout] of TAMANHOS) {
+    const onde = `${largura}×${altura}`;
+    await page.setViewportSize({ width: largura, height: altura });
+    await expect(page.locator('.win')).toHaveAttribute('data-layout', layout);
+    await expect(frase(page), onde).toBeVisible();
+    const caixa = (await frase(page).boundingBox())!;
+    expect(caixa.x, onde).toBeGreaterThanOrEqual(0);
+    expect(caixa.x + caixa.width, onde).toBeLessThanOrEqual(largura);
+    expect(caixa.y + caixa.height, onde).toBeLessThanOrEqual(altura);
+    const cortada = await frase(page).evaluate((e) => e.scrollWidth > e.clientWidth + 0.5);
+    expect(cortada, `a frase cortada em ${onde}`).toBe(false);
+    const rola = await page.evaluate(() => document.scrollingElement!.scrollWidth);
+    expect(rola, `a página rola na horizontal em ${onde}`).toBeLessThanOrEqual(largura);
+    await semViolacoesSerias(page);
+  }
+}
+
 for (const tema of ['light', 'dark'] as const) {
   test.describe(`tema ${tema}`, () => {
     test.use({ colorScheme: tema });
@@ -485,23 +540,38 @@ for (const tema of ['light', 'dark'] as const) {
       await eventos.mandar(naReuniao(codigo));
       await chegaALigacao(page, ligacao());
       await expect(frase(page)).toBeVisible();
-      // O axe usa timers: com o relógio parado ele não termina. A frase fica (a rota continua abortando a pausa).
-      await page.clock.resume();
-      for (const [largura, altura, layout] of TAMANHOS) {
-        const onde = `${largura}×${altura}`;
-        await page.setViewportSize({ width: largura, height: altura });
-        await expect(page.locator('.win')).toHaveAttribute('data-layout', layout);
-        await expect(frase(page), onde).toBeVisible();
-        const caixa = (await frase(page).boundingBox())!;
-        expect(caixa.x, onde).toBeGreaterThanOrEqual(0);
-        expect(caixa.x + caixa.width, onde).toBeLessThanOrEqual(largura);
-        expect(caixa.y + caixa.height, onde).toBeLessThanOrEqual(altura);
-        const cortada = await frase(page).evaluate((e) => e.scrollWidth > e.clientWidth + 0.5);
-        expect(cortada, `a frase cortada em ${onde}`).toBe(false);
-        const rola = await page.evaluate(() => document.scrollingElement!.scrollWidth);
-        expect(rola, `a página rola na horizontal em ${onde}`).toBeLessThanOrEqual(largura);
-        await semViolacoesSerias(page);
-      }
+      await fraseNosTresTamanhos(page);
     });
+
+    for (const [nome, prepararATela] of Object.entries(OUTRAS_TELAS)) {
+      test(`a frase ${nome}: sem violação séria, e inteira nos três tamanhos`, async ({ page }) => {
+        const { codigo, eventos } = await abrir(page, { pausa: 'abortar', colega: true });
+        await eventos.mandar(naReuniao(codigo));
+        await chegaALigacao(page, ligacao());
+        await expect(frase(page)).toBeVisible();
+        await page.clock.resume();
+        await prepararATela(page);
+        await expect(frase(page)).toBeVisible();
+        await fraseNosTresTamanhos(page);
+      });
+    }
   });
 }
+
+test('a frase aparece também no vídeo grande, e a região fica na página', async ({ page }) => {
+  const { codigo, eventos, pausas } = await abrir(page, { pausa: 'abortar' });
+  await eventos.mandar(naReuniao(codigo));
+  const comVideo = ligacao();
+  (comVideo.top as { video: unknown }).video = { oferece: true, ativo: true, imagem: true, camera: true, cedo: false };
+  await mudarEstado(page, (s) => ({ ...s, video: { ...s.video, janela: 'grande' }, ligacao: comVideo }));
+  await page.clock.runFor(1);
+  await expect(page.locator('.win.win-grande')).toBeVisible();
+  const regiao = page.getByRole('status').and(page.locator('.call-ouvindo'));
+  await expect(regiao).toHaveText(FRASE);
+  await expect(frase(page)).toBeVisible();
+  await dandoTempo(page);
+  pausas.responder(OK);
+  await page.clock.runFor(10_000);
+  await expect(regiao).toHaveText('');
+  await expect(regiao).toHaveCount(1);
+});

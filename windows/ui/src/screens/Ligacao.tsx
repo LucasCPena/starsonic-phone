@@ -73,7 +73,7 @@ import { CaixaDoVideo, SuaImagemFlutuante } from '../video/CaixaDoVideo';
 import { cameraDaLigacaoDesativada, imagemDaLigacao, oferecerAtenderComVideo, videoDe, videoDoApp } from '../video/estado';
 import { ATENDER_COM_VIDEO, CAMERA, CHAT, DESLIGAR_A_CAMERA, LIGAR_A_CAMERA, rotuloDoVideo } from '../video/textos';
 import { Avatar, confirmada, Ctrl, NoWindows, RoundAction } from './controlesDaLigacao';
-import { NAVEGADOR_CONTINUA_OUVINDO } from '../reunioes/textos';
+import { AvisoOuvindo } from '../reunioes/AvisoOuvindo';
 import { PainelPorNome, type PainelProps } from './PainelPorNome';
 import { statusLine, useNow } from './tempoDaLigacao';
 
@@ -741,9 +741,7 @@ export function Ligacao({
         )}
         {quem}
         {/* Sempre na página, para o leitor de tela dizer o texto quando ele aparece. */}
-        <p class="call-ouvindo" role="status">
-          {ouvindoNoNavegador ? NAVEGADOR_CONTINUA_OUVINDO : ''}
-        </p>
+        <AvisoOuvindo ouvindo={ouvindoNoNavegador} />
         <div class="call-middle">{meio}</div>
         {baixo}
       </main>
