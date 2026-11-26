@@ -10,8 +10,6 @@ export const SEM_ASSUNTO = 'Reunião sem assunto';
 export const RECUSAR = 'Recusar';
 export const ACEITAR = 'Aceitar';
 export const FECHAR_O_AVISO = 'Fechar o aviso';
-/** O nome no aviso de um pedido que chegou sem nome (ou só com caracteres de controle). */
-export const CONVIDADO_SEM_NOME = 'Convidado';
 
 // A aba.
 export const REUNIOES = 'Reuniões';

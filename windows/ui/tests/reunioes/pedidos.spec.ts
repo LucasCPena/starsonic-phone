@@ -160,6 +160,13 @@ test('o nome vai com até 120 caracteres e sem caracteres de controle', async ({
   await esperarComando(page, mostrando({ id: MARIA.id, nome: certo }, PLANEJAMENTO));
 });
 
+test('o pedido cujo nome fica vazio depois da limpeza não entra no aviso', async ({ page }) => {
+  const { codigo, eventos } = await abrir(page, { assunto: PLANEJAMENTO });
+  await eventos.mandar(comOsPedidos(codigo, { id: VERA.id, nome: '\u0000\u009f' }, RUI));
+  await esperarComando(page, mostrando(RUI, PLANEJAMENTO));
+  expect(await dosPedidos(page)).toEqual(dizem(mostrando(RUI, PLANEJAMENTO)));
+});
+
 test('a reunião sem assunto manda o assunto vazio', async ({ page }) => {
   const { codigo, eventos } = await abrir(page);
   await eventos.mandar(comOsPedidos(codigo, MARIA));
@@ -348,7 +355,7 @@ test('o servidor que não responde diz a frase, e o pedido volta ao aviso', asyn
     .toEqual(dizem(mostrando(MARIA, PLANEJAMENTO), SEM_PEDIDO, mostrando(MARIA, PLANEJAMENTO)));
 });
 
-test('um 500 devolve o pedido ao aviso, e o foraDaReuniao da rota tira o computador da reunião', async ({ page }) => {
+test('um 500 devolve o pedido ao aviso', async ({ page }) => {
   const { codigo, eventos } = await abrir(page, { assunto: PLANEJAMENTO });
   await page.route(ePassoDaRota, (rota) => rota.fulfill({ status: 500, json: { erro: 'servidor' } }));
   await eventos.mandar(comOsPedidos(codigo, MARIA));
@@ -356,11 +363,21 @@ test('um 500 devolve o pedido ao aviso, e o foraDaReuniao da rota tira o computa
   await responder(page, MARIA.id, 'recusar');
   await expect(toast(page)).toHaveText(NAO_RESPONDEU);
   await expect.poll(() => vezes(page, mostrando(MARIA, PLANEJAMENTO))).toBe(2);
-  // O 409 foraDaReuniao: o computador deixa de estar na reunião, e os pedidos dela saem.
-  await page.unroute(ePassoDaRota);
-  await page.route(ePassoDaRota, (rota) => rota.fulfill({ status: 409, json: { erro: 'foraDaReuniao' } }));
+});
+
+test('o foraDaReuniao da rota tira o computador da reunião, com os pedidos dela, sem aviso', async ({ page }) => {
+  const { codigo, eventos } = await abrir(page, { assunto: PLANEJAMENTO });
+  const chamadas = await respondendoAsRotas(page, { status: 409, json: { erro: 'foraDaReuniao' } });
+  await eventos.mandar(comOsPedidos(codigo, MARIA, RUI));
+  await esperarComando(page, mostrando(MARIA, PLANEJAMENTO));
   await responder(page, MARIA.id, 'aceitar');
-  await esperarComando(page, SEM_PEDIDO);
+  // O Maria sai do aviso na hora (o Rui aparece); o 409 tira também o Rui, que era da mesma reunião.
+  await expect
+    .poll(() => dosPedidos(page))
+    .toEqual(dizem(mostrando(MARIA, PLANEJAMENTO), mostrando(RUI, PLANEJAMENTO), SEM_PEDIDO));
+  expect(chamadas).toHaveLength(1);
+  await dandoTempo(page);
+  await expect(toast(page)).toHaveCount(0);
 });
 
 test('a troca de conta limpa o aviso, e a resposta que chega depois não sai', async ({ page }) => {
@@ -376,6 +393,31 @@ test('a troca de conta limpa o aviso, e a resposta que chega depois não sai', a
   await dandoTempo(page);
   expect(chamadas).toEqual([]);
   expect(await dosPedidos(page)).toEqual(dizem(mostrando(MARIA, PLANEJAMENTO), SEM_PEDIDO));
+});
+
+test('a troca de conta esquece a reunião do navegador: os eventos dela só valem para a pessoa de antes', async ({
+  page,
+}) => {
+  const { codigo, eventos } = await abrir(page, { assunto: PLANEJAMENTO, cenario: 'chat-duas-contas' });
+  await eventos.mandar(comOsPedidos(codigo, MARIA));
+  await esperarComando(page, mostrando(MARIA, PLANEJAMENTO));
+  const trocarPara = async (nome: RegExp, conta: string) => {
+    await page.getByRole('button', { name: /Trocar de conta/ }).click();
+    await page.getByRole('menuitemradio', { name: nome }).click();
+    await expect(page.locator('.account-name')).toHaveText(conta);
+  };
+  await trocarPara(/Caixa 2/, 'Caixa 2 · 2015');
+  await expect.poll(() => dosPedidos(page)).toEqual(dizem(mostrando(MARIA, PLANEJAMENTO), SEM_PEDIDO));
+  // O servidor manda os eventos ao computador, seja quem for que o use: na sessão da Caixa 2 eles não valem.
+  await expect(async () => eventos.mandar(comOsPedidos(codigo, MARIA))).toPass();
+  await dandoTempo(page);
+  expect(await dosPedidos(page)).toEqual(dizem(mostrando(MARIA, PLANEJAMENTO), SEM_PEDIDO));
+  // De volta à Recepção, a reunião volta como a de um app reaberto: o pedido está no aviso de novo.
+  await trocarPara(/Recepção/, 'Recepção · 2001');
+  await expect(async () => eventos.mandar(comOsPedidos(codigo, MARIA))).toPass();
+  await expect
+    .poll(() => dosPedidos(page))
+    .toEqual(dizem(mostrando(MARIA, PLANEJAMENTO), SEM_PEDIDO, mostrando(MARIA, PLANEJAMENTO)));
 });
 
 test('o clique fora dos botões do aviso leva à aba Reuniões', async ({ page }) => {
@@ -419,10 +461,11 @@ test('um evento malformado é ignorado, e um válido não mexe na lista de conve
     { tipo: 'reuniaoAcabou' },
   ];
   for (const e of mal) await eventos.mandar(e);
-  await eventos.mandar(comOsPedidos(OUTRA, MARIA));
-  await esperarComando(page, mostrando(MARIA, null));
-  // Os malformados, que vieram antes, não puseram nada no aviso.
-  expect(await dosPedidos(page)).toEqual(dizem(mostrando(MARIA, null)));
+  // Os malformados não puseram nada no aviso (o mandar volta depois de a página tratar o evento).
+  expect(await dosPedidos(page)).toEqual([]);
+  await eventos.mandar(comOsPedidos(OUTRA, RUI));
+  await esperarComando(page, mostrando(RUI, null));
+  expect(await dosPedidos(page)).toEqual(dizem(mostrando(RUI, null)));
   // O evento das reuniões não vira conversa nem mensagem.
   await page.locator('nav.nav button.tab-chat').click();
   await expect(page.getByRole('heading', { name: 'Nenhuma conversa ainda' })).toBeVisible();

@@ -133,7 +133,13 @@ export async function comEventos(page: Page): Promise<{
       await ws.close();
       return;
     }
-    noAr.push({ ws, servidor: ws.connectToServer() });
+    const conexao = { ws, servidor: ws.connectToServer() };
+    noAr.push(conexao);
+    // Uma conexão que a página fechou (a troca de conta, a queda) já não recebe os eventos.
+    ws.onClose(() => {
+      const i = noAr.indexOf(conexao);
+      if (i >= 0) noAr.splice(i, 1);
+    });
   });
   await page.route(
     (url) => /^\/api\/v1\/reunioes\/[^/]+\/participantes$/.test(url.pathname),

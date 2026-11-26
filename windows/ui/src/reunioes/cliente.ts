@@ -31,7 +31,6 @@ import { ehParado, type ChatCliente } from '../chat/cliente';
 import { limitCharacters } from '../format';
 import type { Command, RespostaDoAviso } from '../state';
 import {
-  CONVIDADO_SEM_NOME,
   LINK_SEM_VALOR,
   MUITAS_TENTATIVAS,
   REUNIAO_CHEIA,
@@ -84,6 +83,8 @@ interface Aberta {
   info: { assunto: string; valeAte: number | null } | null;
   /** O computador está nela, pelo que o app sabe. */
   dentro: boolean;
+  /** A pessoa (o id no chat) com quem o app a conheceu. */
+  pessoa: number | null;
   /** Sobe a cada evento dela: a resposta de um pedido que saiu antes dele não vale mais. */
   epoca: number;
 }
@@ -121,6 +122,12 @@ export class ReunioesCliente {
   private readonly abrindo = new Set<string>();
   /** As reuniões abertas no navegador, pelo código que o servidor dá. */
   private readonly abertas = new Map<string, Aberta>();
+  /**
+   * As reuniões que o app conhecia numa sessão que parou, com a pessoa dela (só na memória, enquanto o app vive): o
+   * servidor manda os eventos de uma reunião ao computador, seja quem for que o use agora. O de uma reunião lembrada
+   * com outra pessoa não vale (a spec, 4.5: a troca de conta esquece as reuniões do navegador).
+   */
+  private readonly lembradas = new Map<string, number | null>();
   /** Os pedidos para entrar, na ordem em que chegaram, de todas as reuniões. */
   private pedidos: PedidoGuardado[] = [];
   /** O último reuniaoPedido mandado ao núcleo (o JSON dele): o núcleo começa sem pedido. */
@@ -356,6 +363,7 @@ export class ReunioesCliente {
     this.falhou = false;
     this.semReunioes = false;
     // As reuniões continuam no navegador, com a pessoa que entrou: o app só as esquece.
+    for (const [codigo, a] of this.abertas) this.lembradas.set(codigo, a.pessoa);
     this.abertas.clear();
     this.pedidos = [];
     this.conferindo = new Set();
@@ -367,16 +375,24 @@ export class ReunioesCliente {
   private guardar(r: Reuniao): void {
     const info = { assunto: r.assunto ?? '', valeAte: r.valeAte };
     const antes = this.abertas.get(r.codigo);
+    this.lembradas.delete(r.codigo);
     if (antes) antes.info = info;
-    else this.abertas.set(r.codigo, { info, dentro: false, epoca: 0 });
+    else this.abertas.set(r.codigo, { info, dentro: false, pessoa: this.pessoa(), epoca: 0 });
   }
 
   /** O que um evento diz da reunião: ela entra na lista se o app não a conhecia (com o que a lista da pessoa sabe). */
-  private daReuniao(codigo: string): Aberta {
+  private daReuniao(codigo: string): Aberta | null {
     let a = this.abertas.get(codigo);
     if (!a) {
+      if (this.lembradas.has(codigo) && this.lembradas.get(codigo) !== this.pessoa()) return null;
+      this.lembradas.delete(codigo);
       const da = this.lista?.find((r) => r.codigo === codigo);
-      a = { info: da ? { assunto: da.assunto ?? '', valeAte: da.valeAte } : null, dentro: false, epoca: 0 };
+      a = {
+        info: da ? { assunto: da.assunto ?? '', valeAte: da.valeAte } : null,
+        dentro: false,
+        pessoa: this.pessoa(),
+        epoca: 0,
+      };
       this.abertas.set(codigo, a);
     }
     a.epoca += 1;
@@ -384,18 +400,23 @@ export class ReunioesCliente {
     return a;
   }
 
+  /** A pessoa da sessão de agora. */
+  private pessoa(): number | null {
+    return this.chat.vista().eu?.id ?? null;
+  }
+
   private evento(e: EventoDaReuniao): void {
     switch (e.tipo) {
       case 'reuniaoParticipantes':
-        this.daReuniao(e.reuniao);
+        if (!this.daReuniao(e.reuniao)) return;
         this.definirPedidos(e.reuniao, e.pedidos);
         break;
       case 'reuniaoPedido':
-        this.daReuniao(e.reuniao);
+        if (!this.daReuniao(e.reuniao)) return;
         this.juntar(e.reuniao, e.pedido);
         break;
       case 'reuniaoPedidoFim':
-        this.daReuniao(e.reuniao);
+        if (!this.daReuniao(e.reuniao)) return;
         this.pedidos = this.pedidos.filter((p) => p.id !== e.pedido);
         break;
       case 'reuniaoAcabou': {
@@ -414,7 +435,9 @@ export class ReunioesCliente {
   /** O pedido novo entra no fim (um que já é conhecido fica onde está, e com o `fora` que tem). */
   private juntar(reuniao: string, p: Pedido): void {
     if (!ID_DO_PEDIDO.test(p.id) || this.pedidos.some((x) => x.id === p.id)) return;
-    this.pedidos.push({ id: p.id, reuniao, nome: paraOAviso(p.nome) || CONVIDADO_SEM_NOME, fora: false });
+    // O nome que fica vazio depois da limpeza não vai ao aviso (o núcleo o recusaria): fica no painel da reunião.
+    const nome = paraOAviso(p.nome);
+    if (nome) this.pedidos.push({ id: p.id, reuniao, nome, fora: false });
   }
 
   /** Os pedidos da reunião são estes: os que já eram conhecidos ficam, os que acabaram saem. */
