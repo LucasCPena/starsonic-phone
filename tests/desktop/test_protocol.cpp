@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "Protocol.h"
+#include "Reunioes.h"
 #include "nlohmann/json.hpp"
 #include "test_support.h"
 
@@ -1122,4 +1123,43 @@ TEST_CASE("the meeting messages to the interface") {
     CHECK(Parse(MeetingAnswerMessage(kMeetingRequestId, "aceitar")) ==
           json({{"v", 1}, {"type", "reuniaoResposta"}, {"pedido", kMeetingRequestId}, {"resposta", "aceitar"}}));
     CHECK(Parse(OpenMeetingsMessage()) == json({{"v", 1}, {"type", "abrir"}, {"tela", "reunioes"}}));
+}
+
+TEST_CASE("the meeting link command is read with its url") {
+    Command c = Parsed(R"({"v":1,"cmd":"reuniaoLink","url":"https://exemplo.com/a?b=1"})");
+    CHECK(c.kind == CommandKind::MeetingLink);
+    CHECK(std::string(CommandName(c.kind)) == "reuniaoLink");
+    CHECK(c.url == "https://exemplo.com/a?b=1");
+    c = Parsed(R"({"v":1,"cmd":"reuniaoLink","url":"HTTP://exemplo.com"})");
+    CHECK(c.url == "HTTP://exemplo.com");
+}
+
+TEST_CASE("the meeting link command with a bad url is refused without the url") {
+    const std::string tooLong = "https://exemplo.com/" + std::string(2029, 'a');   // 2049 caracteres
+    REQUIRE(tooLong.size() == 2049);
+    std::vector<std::string> commands = {
+        R"({"v":1,"cmd":"reuniaoLink"})",
+        R"({"v":1,"cmd":"reuniaoLink","url":7})",
+        R"({"v":1,"cmd":"reuniaoLink","url":"ftp://x"})",
+        R"({"v":1,"cmd":"reuniaoLink","url":"https://"})",
+        R"({"v":1,"cmd":"reuniaoLink","url":"https://a b"})",
+        "{\"v\":1,\"cmd\":\"reuniaoLink\",\"url\":\"https://a\\u0007b\"}",
+        R"j({"v":1,"cmd":"reuniaoLink","url":"javascript:alert(1)"})j",
+        json({{"v", 1}, {"cmd", "reuniaoLink"}, {"url", tooLong}}).dump(),
+    };
+    for (const std::string& command : commands) {
+        INFO(command.substr(0, 60));
+        const std::string reason = RefusalOf(command);
+        CHECK(reason == "reuniaoLink: endereco invalido");
+        CHECK(reason.find("exemplo") == std::string::npos);
+        CHECK(reason.find("alert") == std::string::npos);
+    }
+    // Com 2048 caracteres vale.
+    const std::string longest = "https://exemplo.com/" + std::string(2028, 'a');
+    Parsed(json({{"v", 1}, {"cmd", "reuniaoLink"}, {"url", longest}}).dump());
+}
+
+TEST_CASE("the session message to the interface") {
+    CHECK(Parse(SessionMessage(true)) == json({{"v", 1}, {"type", "sessao"}, {"bloqueada", true}}));
+    CHECK(Parse(SessionMessage(false)) == json({{"v", 1}, {"type", "sessao"}, {"bloqueada", false}}));
 }

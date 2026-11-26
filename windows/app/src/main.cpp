@@ -536,6 +536,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         if (url.empty()) return;
         window.RunOnWindow([url] { OpenUrl(url); });
     };
+    // (0.5.0) Um link do chat da reuniao no navegador padrao: qualquer http ou https valido (o nucleo ja conferiu), fora da
+    // lista do openUrl. Nada dele vai ao diagnostico.
+    hooks.openMeetingLink = [&window](const std::string& url) { window.RunOnWindow([url] { OpenUrl(url); }); };
     hooks.minimize = [&window] { window.RunOnWindow([&window] { window.Minimize(); }); };
     hooks.closeToTray = [&window] { window.RunOnWindow([&window] { window.CloseToTray(); }); };
     // (0.3.0) O modo da janela do video ("normal", "grande", "telaCheia"): da thread de comandos para a da janela.
@@ -773,7 +776,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     callbacks.devicesChanged = [&app] { app.RefreshAudioDevices(); };
     // (0.3.0) A sessao do Windows bloqueada ou desconectada pausa a camera: o EngineHost so guarda o valor (a thread da
     // janela nunca toca o motor) e o aplica fora dela.
-    callbacks.cameraPaused = [&engine](bool paused) { engine.SetCameraPaused(paused); };
+    // O mesmo valor vai ao nucleo, que o repassa a interface (a mensagem sessao).
+    callbacks.cameraPaused = [&engine, &app](bool paused) {
+        engine.SetCameraPaused(paused);
+        app.SetSessionLocked(paused);
+    };
     callbacks.moved = [&app](int x, int y) { app.SaveWindowPosition(x, y); };
     callbacks.resized = [&app](int width, int height) { app.SaveWindowSize(width, height); };
     callbacks.account = [&network](const std::string& server, bool connected) {

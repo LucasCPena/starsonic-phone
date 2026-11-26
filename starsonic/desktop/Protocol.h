@@ -93,6 +93,7 @@ enum class CommandKind {
     MeetingRequest,  // o pedido para entrar que o aviso mostra, ou nenhum (reuniaoPedido)
     MeetingAnswer,   // a resposta da pagina do aviso a esse pedido (reuniaoResposta)
     MeetingShow,     // o clique fora dos botoes do aviso (reuniaoMostrar)
+    MeetingLink,     // o link do chat da reuniao, no navegador padrao (reuniaoLink; o campo url; so no Windows)
 };
 
 // Um servidor da lista do administrador (adminSet e o estado): o endereco (UTF-8) e a porta (UDP e TCP).

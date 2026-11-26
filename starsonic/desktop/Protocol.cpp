@@ -89,6 +89,7 @@ const Name kNames[] = {
     {CommandKind::MeetingRequest, "reuniaoPedido"},
     {CommandKind::MeetingAnswer, "reuniaoResposta"},
     {CommandKind::MeetingShow, "reuniaoMostrar"},
+    {CommandKind::MeetingLink, "reuniaoLink"},
 };
 
 // Os limites dos textos do chat (docs/ponte-windows.md, "Os comandos do chat"), em caracteres.
@@ -224,6 +225,13 @@ public:
     }
     void Fail(const std::string& message) {
         if (ok()) error_ = message;
+    }
+    // Um texto obrigatorio: se falta ou nao e texto, a recusa e a mesma, sem o valor.
+    void RequiredText(const char* key, std::string* out, const char* reason) {
+        if (!ok()) return;
+        const auto found = object_.find(key);
+        if (found == object_.end() || !found->is_string()) return Fail(reason);
+        *out = found->get<std::string>();
     }
     // Um objeto opcional (o pedido de uma reuniao): nullptr se faltar; o que nao e objeto e recusado com o nome do
     // campo, sem o valor.
@@ -705,6 +713,11 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
             if (f.ok() && !command.meeting.pass.empty() && !ValidMeetingPass(command.meeting.pass)) {
                 f.Fail("passe invalido");
             }
+            break;
+        case CommandKind::MeetingLink:
+            // O endereco nunca vai na recusa (nem ao diagnostico): so o nome do comando e o motivo.
+            f.RequiredText("url", &command.url, "endereco invalido");
+            if (f.ok() && !ValidMeetingLinkUrl(command.url)) f.Fail("endereco invalido");
             break;
         case CommandKind::MeetingRequest: {
             // O pedido e opcional: sem ele, nenhum pedido para mostrar. Com ele, o escondida e obrigatorio.

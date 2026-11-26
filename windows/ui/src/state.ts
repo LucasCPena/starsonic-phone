@@ -401,7 +401,10 @@ export type IncomingMessage =
   | { v: number; type: 'reuniaoResposta'; pedido: string; resposta: RespostaDoAviso }
   /** (reuniões) O clique fora dos botões do aviso: a janela vai para a aba Reuniões. */
   | { v: number; type: 'abrir'; tela: 'reunioes' }
-  | { v: number; type: 'abrir'; tela: 'reuniao'; codigo: string };
+  | { v: number; type: 'abrir'; tela: 'reuniao'; codigo: string }
+  /** (reuniões) A sessão do Windows está bloqueada ou desconectada (o mesmo valor que pausa a câmera do motor): quando
+   *  muda, e no `ready` da janela principal, depois do estado. */
+  | { v: number; type: 'sessao'; bloqueada: boolean };
 
 /** Interface → C++ (sem o `v`, que a ponte acrescenta). */
 export type Command =
@@ -500,6 +503,9 @@ export type Command =
   | { cmd: 'reuniaoPedido'; pedido?: PedidoDoAviso; escondida?: boolean }
   | { cmd: 'reuniaoResposta'; pedido: string; resposta: RespostaDoAviso }
   | { cmd: 'reuniaoMostrar' }
+  /** (reuniões; o iPhone recusa) Um link do chat da reunião, no navegador padrão (só http e https, até 2.048 caracteres,
+   *  sem espaços nem caracteres de controle). */
+  | { cmd: 'reuniaoLink'; url: string }
   /** (0.3.0; o iPhone recusa) O vídeo: a nossa câmera na ligação, a câmera e o H.264 das Configurações, o teste da câmera,
    *  as vistas à vista de cada página, o modo da janela, o novo download do H.264 e a altura do aviso. */
   | { cmd: 'camera'; on: boolean }

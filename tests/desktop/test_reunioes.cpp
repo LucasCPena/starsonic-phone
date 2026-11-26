@@ -343,3 +343,141 @@ TEST_CASE("OpenMeeting is refused on the iPhone") {
     h.Send(kReady);
     CHECK(h.Messages("abrir").empty());
 }
+
+// As chamadas do openMeetingLink, na ordem.
+static std::vector<std::string> LinkHooks(const Harness& h) {
+    std::vector<std::string> out;
+    for (const std::string& call : h.host) {
+        if (call.compare(0, 15, "openMeetingLink") == 0) out.push_back(call);
+    }
+    return out;
+}
+
+static std::string LinkCommand(const std::string& url) {
+    return json({{"v", 1}, {"cmd", "reuniaoLink"}, {"url", url}}).dump();
+}
+
+TEST_CASE("ValidMeetingLinkUrl: the limits") {
+    CHECK(ValidMeetingLinkUrl("https://exemplo.com"));
+    CHECK(ValidMeetingLinkUrl("http://exemplo.com/a?b=1#c"));
+    CHECK(ValidMeetingLinkUrl("HtTpS://exemplo.com"));
+    CHECK(ValidMeetingLinkUrl("https://exemplo.com/" + std::string(2028, 'a')));   // 2048
+    CHECK_FALSE(ValidMeetingLinkUrl("https://exemplo.com/" + std::string(2029, 'a')));   // 2049
+    CHECK_FALSE(ValidMeetingLinkUrl(""));
+    CHECK_FALSE(ValidMeetingLinkUrl("https://"));
+    CHECK_FALSE(ValidMeetingLinkUrl("https:///x"));
+    CHECK_FALSE(ValidMeetingLinkUrl("ftp://exemplo.com"));
+    CHECK_FALSE(ValidMeetingLinkUrl("javascript:alert(1)"));
+    CHECK_FALSE(ValidMeetingLinkUrl("exemplo.com"));
+    CHECK_FALSE(ValidMeetingLinkUrl("https://exemplo.com/a b"));
+    CHECK_FALSE(ValidMeetingLinkUrl("https://exemplo.com/a\tb"));
+    CHECK_FALSE(ValidMeetingLinkUrl(std::string("https://exemplo.com/a\x07")));
+    CHECK_FALSE(ValidMeetingLinkUrl("https://exemplo.com/a\x7f"));
+    CHECK_FALSE(ValidMeetingLinkUrl("https://exemplo.com/a\xc2\x85"));   // U+0085
+    CHECK(ValidMeetingLinkUrl("https://exemplo.com/\xc3\xa7"));
+}
+
+TEST_CASE("MeetingLink opens and logs only the host") {
+    Harness h;
+    h.StartRegistered();
+    h.Send(kReady);
+    h.logs.clear();
+    h.Send(LinkCommand("https://exemplo.com/sala/segredo?x=1"));
+    CHECK(LinkHooks(h) == std::vector<std::string>{"openMeetingLink https://exemplo.com/sala/segredo?x=1"});
+    CHECK(h.logs == std::vector<std::string>{"reunioes: link aberto: https://exemplo.com"});
+    CHECK(h.opened.empty());   // nao passa pelo openUrl da lista de links permitidos
+    for (const std::string& line : h.logs) CHECK(line.find("segredo") == std::string::npos);
+}
+
+TEST_CASE("MeetingLink with a bad url does nothing and logs without it") {
+    Harness h;
+    h.StartRegistered();
+    h.Send(kReady);
+    h.logs.clear();
+    h.Send(LinkCommand("ftp://exemplo.com/segredo"));
+    CHECK(LinkHooks(h).empty());
+    CHECK(h.Logged("comando ignorado: reuniaoLink: endereco invalido"));
+    for (const std::string& line : h.logs) CHECK(line.find("segredo") == std::string::npos);
+}
+
+TEST_CASE("MeetingLink is refused on the iPhone") {
+    Harness h(Platform::IPhone);
+    h.StartRegistered();
+    h.Send(kReady);
+    h.logs.clear();
+    h.Send(LinkCommand("https://exemplo.com/a"));
+    CHECK(LinkHooks(h).empty());
+    CHECK(h.Logged("comando recusado no modo iPhone: reuniaoLink"));
+}
+
+TEST_CASE("SetSessionLocked posts only when it changes") {
+    Harness h;
+    h.StartRegistered();
+    h.Send(kReady);
+    const size_t before = h.Messages("sessao").size();
+    h.logs.clear();
+    h.app->SetSessionLocked(true);
+    h.app->SetSessionLocked(true);
+    h.Run();
+    REQUIRE(h.Messages("sessao").size() == before + 1);
+    CHECK(h.posts.back() == R"({"v":1,"type":"sessao","bloqueada":true})");
+    h.app->SetSessionLocked(false);
+    h.Run();
+    REQUIRE(h.Messages("sessao").size() == before + 2);
+    CHECK(h.posts.back() == R"({"v":1,"type":"sessao","bloqueada":false})");
+    // Nada vai ao diagnostico.
+    CHECK(h.logs.empty());
+}
+
+TEST_CASE("SetSessionLocked does nothing on the iPhone") {
+    Harness h(Platform::IPhone);
+    h.StartRegistered();
+    h.Send(kReady);
+    h.logs.clear();
+    h.app->SetSessionLocked(true);
+    h.Run();
+    CHECK(h.Messages("sessao").empty());
+    CHECK(h.logs.empty());
+    h.Send(kReady);
+    CHECK(h.Messages("sessao").empty());
+}
+
+TEST_CASE("SetSessionLocked: the current value goes on every ready of the main window, after the state") {
+    Harness h;
+    h.app->SetSessionLocked(true);   // antes do primeiro ready
+    h.StartRegistered();
+    h.Run();
+    size_t from = h.posts.size();
+    h.Send(kReady);
+    REQUIRE(h.posts.size() > from + 1);
+    CHECK(h.posts[from].find(R"("type":"state")") != std::string::npos);
+    std::vector<size_t> at;
+    for (size_t i = from; i < h.posts.size(); ++i) {
+        if (h.posts[i] == R"({"v":1,"type":"sessao","bloqueada":true})") at.push_back(i);
+    }
+    CHECK(at.size() == 1);
+
+    // Outro ready da principal: o valor de agora de novo.
+    from = h.posts.size();
+    h.Send(kReady);
+    size_t again = 0;
+    for (size_t i = from; i < h.posts.size(); ++i) {
+        if (h.posts[i] == R"({"v":1,"type":"sessao","bloqueada":true})") ++again;
+    }
+    CHECK(again == 1);
+
+    // O ready do aviso nao a recebe.
+    from = h.posts.size();
+    h.SendFromNotice(kReady);
+    for (size_t i = from; i < h.posts.size(); ++i) CHECK(h.posts[i].find("sessao") == std::string::npos);
+
+    // Antes do abrir da reuniao que esperava o ready.
+    Harness other;
+    other.app->OpenMeeting("abcdefghjk");
+    other.app->SetSessionLocked(false);
+    other.StartRegistered();
+    other.Send(kReady);
+    REQUIRE(other.posts.size() > 2);
+    CHECK(other.posts.back() == R"({"v":1,"type":"abrir","tela":"reuniao","codigo":"abcdefghjk"})");
+    CHECK(other.posts[other.posts.size() - 2] == R"({"v":1,"type":"sessao","bloqueada":false})");
+}

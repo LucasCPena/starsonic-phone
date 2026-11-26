@@ -604,7 +604,8 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
         // A altura do aviso é do executável: as specs só olham o comando.
         break;
       case 'reuniaoNavegador':
-        // (reuniões) A reunião no navegador é do executável: as specs só olham o comando.
+      case 'reuniaoLink':
+        // (reuniões) A reunião e os links do chat no navegador são do executável: as specs só olham o comando.
         break;
       case 'reuniaoPedido': {
         // (reuniões) Como o núcleo: o pedido que o aviso mostra entra no estado (sem o `pedido`, sai); um pedido sem o

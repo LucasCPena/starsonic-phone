@@ -29,7 +29,7 @@ TEST_CASE("ready replays the current state with the ringing call") {
     h.posts.clear();
 
     h.Send(R"({"v":1,"cmd":"ready"})");
-    REQUIRE(h.posts.size() == 3);
+    REQUIRE(h.posts.size() == 4);
     const json state = json::parse(h.posts[0]);
     CHECK(state["type"] == "state");
     const json& call = state["state"]["ligacao"];
@@ -46,7 +46,7 @@ TEST_CASE("ready replays the current state with the ringing call") {
     // Um segundo ready (a pagina recarregou) recebe o mesmo estado de novo.
     h.posts.clear();
     h.Send(R"({"v":1,"cmd":"ready"})");
-    CHECK(h.posts.size() == 3);
+    CHECK(h.posts.size() == 4);
 }
 
 TEST_CASE("login with a port in the address shows the address message") {
@@ -870,11 +870,12 @@ TEST_CASE("an update offer reaches the interface, comes back on ready and is ans
     // A interface recarregou (ou o aviso abriu): a pergunta volta depois do estado e do toque.
     h.posts.clear();
     h.Send(R"({"v":1,"cmd":"ready"})");
-    REQUIRE(h.posts.size() == 4);
+    REQUIRE(h.posts.size() == 5);
     CHECK(json::parse(h.posts[0])["type"] == "state");
     CHECK(json::parse(h.posts[1])["type"] == "ring");
     CHECK(json::parse(h.posts[2])["type"] == "update");
     CHECK(json::parse(h.posts[3])["type"] == "janela");   // (0.2.0) a janela na frente, no fim
+    CHECK(json::parse(h.posts[4])["type"] == "sessao");   // o valor de agora da sessao, depois da janela
 
     // Depois: a resposta vai ao executavel uma vez, e a pergunta nao volta mais.
     h.Send(R"({"v":1,"cmd":"updateLater"})");
@@ -2425,7 +2426,7 @@ TEST_CASE("opening the app shows the saved list first") {
     h.posts.clear();
     h.Send(kReady);
     // O estado, o toque e a lista (depois do estado), e (0.2.0) a janela na frente, no fim.
-    REQUIRE(h.posts.size() == 4);
+    REQUIRE(h.posts.size() == 5);
     CHECK(json::parse(h.posts[0])["type"] == "state");
     CHECK(json::parse(h.posts[1])["type"] == "ring");
     CHECK(json::parse(h.posts[2]) ==
@@ -2438,6 +2439,7 @@ TEST_CASE("opening the app shows the saved list first") {
     CHECK(json::parse(h.posts[3])["type"] == "janela");
     CHECK(h.State()["empresa"] == Empresa(kGoogleLink, "lendo", "", 1761062400000LL, 1, 1));
     CHECK(h.fetches.size() == 1);
+    CHECK(json::parse(h.posts[4])["type"] == "sessao");
 }
 
 TEST_CASE("a closed link and a missing file show their messages") {
@@ -3122,8 +3124,8 @@ TEST_CASE("the window in front is sent when it changes and again after each read
     // Antes do primeiro SetWindowInFront, false: no ready, depois do estado (no fim).
     size_t from = h.posts.size();
     h.Send(kReady);
-    CHECK(TypesFrom(h, from) == std::vector<std::string>{"state", "ring", "janela"});
-    CHECK(h.posts.back() == R"({"v":1,"type":"janela","frente":false})");
+    CHECK(TypesFrom(h, from) == std::vector<std::string>{"state", "ring", "janela", "sessao"});
+    CHECK(h.posts[h.posts.size() - 2] == R"({"v":1,"type":"janela","frente":false})");
 
     // A janela veio para a frente: o SetWindowInFront so poe na fila; nela, o janela, sozinho.
     from = h.posts.size();
@@ -3142,8 +3144,8 @@ TEST_CASE("the window in front is sent when it changes and again after each read
     // A cada ready, de novo, com o valor de agora; e a cada mudanca.
     from = h.posts.size();
     h.Send(kReady);
-    CHECK(TypesFrom(h, from) == std::vector<std::string>{"state", "ring", "janela"});
-    CHECK(h.posts.back() == R"({"v":1,"type":"janela","frente":true})");
+    CHECK(TypesFrom(h, from) == std::vector<std::string>{"state", "ring", "janela", "sessao"});
+    CHECK(h.posts[h.posts.size() - 2] == R"({"v":1,"type":"janela","frente":true})");
     h.app->SetWindowInFront(false);
     h.Run();
     CHECK(h.posts.back() == R"({"v":1,"type":"janela","frente":false})");
@@ -3161,13 +3163,13 @@ TEST_CASE("OpenChat before the first ready comes after the state in the first re
     CHECK(h.Messages("abrir").empty());
     size_t from = h.posts.size();
     h.Send(kReady);
-    CHECK(TypesFrom(h, from) == std::vector<std::string>{"state", "ring", "janela", "abrir"});
+    CHECK(TypesFrom(h, from) == std::vector<std::string>{"state", "ring", "janela", "sessao", "abrir"});
     CHECK(h.posts.back() == R"({"v":1,"type":"abrir","tela":"chat","conversa":7})");
 
     // Uma vez so: a pagina que recarrega depois nao volta ao chat.
     from = h.posts.size();
     h.Send(kReady);
-    CHECK(TypesFrom(h, from) == std::vector<std::string>{"state", "ring", "janela"});
+    CHECK(TypesFrom(h, from) == std::vector<std::string>{"state", "ring", "janela", "sessao"});
 
     // Depois do ready, o abrir vai na hora, sozinho e sem linha no diagnostico.
     from = h.posts.size();

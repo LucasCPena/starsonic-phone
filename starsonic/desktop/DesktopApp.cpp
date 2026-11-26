@@ -9,7 +9,8 @@
 #include "AccountPolicy.h"
 #include "CallMessages.h"
 #include "RegistrationErrors.h"
-#include "Reunioes.h"   // OpenMeetingMessage
+#include "LogRedaction.h"   // RedactUrl
+#include "Reunioes.h"   // OpenMeetingMessage, SessionMessage
 #include "Text.h"
 #include "branding.h"   // os links do Sobre (STARSONIC_URL_SITE, STARSONIC_URL_SUPPORT, STARSONIC_REPO_URL)
 
@@ -129,6 +130,7 @@ CommandPlatform PlatformOf(const Command& command) {
         case CommandKind::MeetingRequest:
         case CommandKind::MeetingAnswer:
         case CommandKind::MeetingShow:
+        case CommandKind::MeetingLink:
             return CommandPlatform::Windows;
         case CommandKind::ContactsOpened:
         case CommandKind::AllowContacts:
@@ -598,6 +600,16 @@ void DesktopApp::OpenChat(int64_t conversa) {
     });
 }
 
+void DesktopApp::SetSessionLocked(bool locked) {
+    Post([this, locked] {
+        // Sem linha no diagnostico, nem no iPhone (la nao ha sessao a avisar). O ready manda o valor de novo.
+        if (IPhone()) return;
+        if (locked == sessionLocked_) return;
+        sessionLocked_ = locked;
+        if (hooks_.post) hooks_.post(SessionMessage(locked));
+    });
+}
+
 void DesktopApp::OpenMeeting(const std::string& code) {
     Post([this, code] {
         if (IPhone()) {
@@ -733,6 +745,8 @@ void DesktopApp::Execute(const Command& command, bool noticePage) {
             // 0.2.0: a janela na frente (false ate o primeiro SetWindowInFront) e o abrir do chat pedido antes do
             // primeiro ready, no fim.
             if (hooks_.post) hooks_.post(WindowMessage(windowInFront_));
+            // O valor de agora da sessao do Windows, so para o ready da janela principal, antes dos abrir pedidos.
+            if (!noticePage && hooks_.post) hooks_.post(SessionMessage(sessionLocked_));
             if (openChatPending_) {
                 const int64_t conversa = *openChatPending_;
                 openChatPending_.reset();
@@ -1080,6 +1094,12 @@ void DesktopApp::Execute(const Command& command, bool noticePage) {
         case CommandKind::MeetingShow:
             Log("reunioes: reuniaoMostrar");
             if (hooks_.post) hooks_.post(OpenMeetingsMessage());
+            break;
+        case CommandKind::MeetingLink:
+            // Qualquer http ou https valido (ja conferido no Protocol), fora da lista do openUrl. So o esquema e o
+            // servidor vao ao diagnostico.
+            Log("reunioes: link aberto: " + RedactUrl(command.url));
+            if (hooks_.openMeetingLink) hooks_.openMeetingLink(command.url);
             break;
     }
 }

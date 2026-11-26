@@ -260,6 +260,7 @@ struct Harness {
         hooks.openMeeting = [this](const std::string& code, const std::string& pass) {
             host.push_back("openMeeting " + code + " " + pass);
         };
+        hooks.openMeetingLink = [this](const std::string& url) { host.push_back("openMeetingLink " + url); };
         hooks.chatBadge = [this](int n) { host.push_back("chatBadge " + std::to_string(n)); };
         hooks.chatDownload = [this](const std::string& arquivo, const std::string& nome, const std::string& chave) {
             host.push_back("chatDownload " + arquivo + " | " + nome + " | " + chave);

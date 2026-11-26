@@ -196,6 +196,9 @@ struct DesktopHooks {
     // As reunioes (so no Windows): abre a reuniao no navegador padrao (reuniaoNavegador). pass: "" sem o passe. Nunca
     // espera. Nada da reuniao (o codigo, o passe) vai ao diagnostico.
     std::function<void(const std::string& code, const std::string& pass)> openMeeting;
+    // O link do chat da reuniao (reuniaoLink), no navegador padrao: qualquer http ou https valido, fora da lista do
+    // openUrl. Nunca espera. Nada vai ao diagnostico alem do esquema e do servidor (o nucleo escreve essa linha).
+    std::function<void(const std::string& url)> openMeetingLink;
     // 0.3.0: o video (docs/ponte-windows.md, "O video (0.3.0)"), so no Windows. Ligados no executavel (Tasks 8 e 9); um
     // vazio nao faz nada. Todos chamados na thread de comandos e nunca esperam.
     // As vistas do video que a pagina mostra agora (videoViews, ja sem as que nao sao da pagina), e se e a pagina do
@@ -409,6 +412,10 @@ public:
     // conta), espera por ele e vai no fim do ready, depois do resto (dois links: o do ultimo). No iPhone, recusado com
     // uma linha no diagnostico. Deixa "reunioes: link do app", sem o codigo. So poe na fila.
     void OpenMeeting(const std::string& code);
+    // A sessao do Windows bloqueada ou desconectada (o mesmo valor que pausa a camera do motor): a mensagem sessao,
+    // so quando muda (false ate a primeira chamada) e o valor de agora em todo ready da janela principal, depois do
+    // estado e antes dos abrir pedidos. Nada vai ao diagnostico. No iPhone, nada. So poe na fila.
+    void SetSessionLocked(bool locked);
     // 0.3.0: o modulo H.264 terminou de baixar e conferir (Installed) ou falhou (Failed), em qualquer thread: vai para a
     // fila. Com o H.264 desligado (no cartao ou pela pessoa), nada muda. No iPhone, nada. So poe na fila.
     void SetH264State(H264State state);
@@ -648,6 +655,7 @@ private:
     // diagnostico), e se esse ready ja veio (o interfaceReady_ conta o da pagina do aviso tambem).
     std::optional<std::string> openMeetingPending_;
     bool mainInterfaceReady_ = false;
+    bool sessionLocked_ = false;   // a ultima sessao do Windows passada ao SetSessionLocked
     // O pedido para entrar que o aviso mostra (reuniaoPedido): so na memoria, e nunca no diagnostico. O ready da janela
     // principal o esquece (a interface que recarregou nao o conhece mais).
     std::optional<MeetingRequestView> meetingRequest_;

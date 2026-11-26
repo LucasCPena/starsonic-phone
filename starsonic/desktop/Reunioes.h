@@ -13,6 +13,15 @@ bool ValidMeetingPass(const std::string& pass);
 // O id de um pedido para entrar: 16 caracteres hexadecimais, em minusculas.
 bool ValidMeetingRequestId(const std::string& id);
 
+// O endereco que o chat da reuniao manda abrir no navegador (reuniaoLink): http ou https (sem diferenciar maiusculas)
+// com um servidor depois, ate 2048 caracteres (pontos de codigo), sem espaco e sem caractere de controle (U+0000 a
+// U+001F e U+007F a U+009F).
+bool ValidMeetingLinkUrl(const std::string& url);
+
+// {"v":1,"type":"sessao","bloqueada":true|false}: a sessao do Windows bloqueada ou desconectada (o mesmo valor que
+// pausa a camera do motor), para as duas interfaces.
+std::string SessionMessage(bool locked);
+
 // {"v":1,"type":"abrir","tela":"reuniao","codigo":"<codigo>"}: o link starsonic://reuniao/<codigo> (ja conferido),
 // so para a interface da janela principal.
 std::string OpenMeetingMessage(const std::string& code);
