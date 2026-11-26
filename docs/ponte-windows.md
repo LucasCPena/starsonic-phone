@@ -504,8 +504,9 @@ transferência.`, `Sem conexão com o servidor. Tente de novo em instantes.`) n�
   `config.bipeFim` está ligado. Duas que acabam juntas (a conferência) dão um bipe só. Não vem para a recusada, a
   perdida ou a que não completou, nem quando a outra ligação continua. Não muda o toque de agora e não volta no
   `ready`.
-- (0.5.0) O aviso do canto também mostra quem quer entrar numa reunião aberta no navegador, por uma regra própria (a
-  janela fora da frente, ou a reunião escondida): ver "O aviso do canto com um pedido", em "As reuniões (0.5.0)".
+- (0.5.0) O aviso do canto também mostra quem quer entrar numa reunião aberta no navegador, por uma regra própria (sem
+  ligação tocando, e com a janela fora da frente ou a reunião escondida): ver "O aviso do canto com um pedido", em
+  "As reuniões (0.5.0)".
 
 ```json
 {"v":1,"type":"toast","texto":"A troca de conta fica para o fim da ligação."}
@@ -1038,7 +1039,8 @@ contam pontos de código, como nos comandos do chat, e um campo fora da regra fa
   leva o `id` (16 de `[0-9a-f]`), o `nome` (1 a 120 caracteres, sem caractere de controle) e o `assunto` (0 a 120
   caracteres, sem caractere de controle, ou `null`). Com `pedido`, o núcleo guarda esse pedido como o que o aviso do
   canto mostra; sem `pedido`, não há pedido para mostrar, e o que estava guardado sai. O `assunto` vazio quer dizer que
-  a reunião não tem assunto; o `null`, que o app não sabe. O `escondida` sozinho, sem `pedido`, não muda nada.
+  a reunião não tem assunto; o `null`, que o app não sabe. O `escondida` não vale sozinho: sem `pedido` ele é
+  ignorado, e o comando só tira o pedido guardado (como o `reuniaoPedido` sem campo nenhum).
 - **`reuniaoResposta`**: `pedido` (o id, como acima) e `resposta` (`aceitar`, `recusar` ou `fechar`). Só vale para o
   pedido que o aviso mostra: o núcleo o tira e manda à interface principal a mensagem `reuniaoResposta` (abaixo). Para
   outro id, ou sem pedido guardado (uma resposta atrasada), não faz nada.
@@ -1104,12 +1106,15 @@ refeito: ninguém mais saberia tirar o pedido do aviso). O `ready` da página do
 ### O aviso do canto com um pedido
 
 O executável decide se o aviso do canto aparece pelo `ShowsNotice` (o `ShellState.cpp`, que lê o `reuniao` do estado):
-aparece com a ligação tocando como antes (a janela fora da frente, ou o porteiro tocando como a segunda ligação), **ou**
-com um pedido para mostrar e a janela fora da frente **ou** com a reunião escondida. Como o `escondida` vai `true`, um
-pedido de uma reunião do navegador aparece também com a janela do app na frente. Com as duas coisas valendo, a página do
-aviso desenha a ligação, e o pedido espera. O aviso não toma o foco da janela principal. O clique fora dos botões manda
-o `reuniaoMostrar`, e o executável traz a janela principal para a frente; o Aceitar, o Recusar e o fechar mandam o
-`reuniaoResposta`, que não traz a janela.
+aparece com a ligação tocando como antes (a janela fora da frente, ou o porteiro tocando como a segunda ligação),
+**ou**, sem nenhuma ligação tocando, com um pedido para mostrar e a janela fora da frente **ou** com a reunião
+escondida. Como o
+`escondida` vai `true`, um pedido de uma reunião do navegador aparece também com a janela do app na frente. **A ligação
+tocando tem a vez:** com ela e um pedido, o aviso aparece pela regra da ligação (com a janela na frente, só com o
+porteiro tocando), o pedido espera, e ele volta ao aviso quando a ligação para de tocar. Com o aviso aberto pela
+ligação, a página do aviso desenha a ligação. O aviso não toma o foco da janela principal. O clique fora dos botões
+manda o `reuniaoMostrar`, e o executável traz a janela principal para a frente; o Aceitar, o Recusar e o fechar mandam
+o `reuniaoResposta`, que não traz a janela.
 
 ### O navegador
 

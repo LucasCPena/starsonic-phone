@@ -128,6 +128,13 @@ O quadro mostra a janela no tamanho Normal e no grande, no tema claro. A aba Reu
     o use.** Por isso, na troca de conta, o app lembra das reuniões do navegador que conhecia com a pessoa que saiu,
     e, na sessão de outra pessoa, ignora os eventos delas (nem aviso, nem pausa). Na volta daquela pessoa, um evento
     traz a reunião de volta, como para um app que foi reaberto (7.9).
+  - **Nota de 26/11 (a construção do app): o que a troca de conta ainda deixa.** Uma reunião que o app não conhecia
+    nesta execução do app (aberta no navegador pela pessoa que saiu, e sem um evento visto antes da troca) é tomada
+    no primeiro evento dela por quem estiver no PC: essa pessoa vê os nomes de quem pede para entrar no aviso do
+    Windows por até 10 s, até a conferência de 10 s mostrar que o computador não está na reunião e tirar o pedido. O
+    servidor recusa tudo o que essa pessoa tentar na reunião (o `409 foraDaReuniao`, por pessoa): a lista de
+    participantes, o aceitar, o recusar e a pausa (`chat-servidor/internal/api/reunioes.go`, as rotas
+    `participantes`, `aceitar`, `recusar` e `pausa`).
 
 ## 5. Fora do escopo
 
@@ -295,7 +302,10 @@ Mensagens `postMessage`, sempre um objeto com `"starsonic": 1` e o `tipo`. A pá
   `reuniaoMostrar` (o clique fora dos botões), e o `docs/ponte-windows.md` os descreve. Copiar o link é da página do
   app (o `navigator.clipboard.writeText`), e não um comando do executável. A regra do aviso do canto (a escolha 6 do
   plano) vale também com a janela do app na frente: o app não vê a reunião do navegador, e o pedido dela vai com
-  `escondida` verdadeiro.
+  `escondida` verdadeiro. **Acerto de 26/11 (a revisão final):** com uma ligação tocando, o aviso é só da ligação: ele
+  aparece com a janela fora da frente (ou com o porteiro tocando como a segunda ligação), e **nunca** só por causa do
+  pedido, mesmo com a reunião escondida. O pedido espera, e o aviso volta a mostrá-lo quando a ligação para de tocar
+  (a regra do `ShowsNotice`: a ligação tocando tem a vez, como a linha acima da nota diz).
 
 ### 7.8 O som, a câmera e as ligações da central
 
@@ -332,11 +342,12 @@ Dentro do app, a pausa vai por mensagem ao `iframe`: é na hora, e não depende 
   nela (alguém entra, sai ou pede para entrar), porque não guarda no disco as reuniões que abriu. Antes disso, uma
   ligação não a pausa.
 - **Nota de 26/11 (a construção do app): o fim da pausa alcança quem a recebeu, e os pedidos vão um a um.** Quando a
-  ligação acaba, o `pausada` falso vai a **toda** reunião a que a pausa foi mandada, mesmo que o link dela tenha
-  vencido nesse meio tempo: a página que recebeu a pausa continua em pausa até receber o fim. O falso vai uma vez e
-  não é repetido se falhar. E o app manda os pedidos de pausa de **uma** reunião um de cada vez, cada um depois de o
-  anterior terminar: o servidor os repassa na ordem em que chegam, e a página não guarda o `vez` de um falso, então um
-  falso que ultrapassasse um verdadeiro deixaria a página em pausa.
+  ligação acaba, o `pausada` falso vai a **toda** reunião a que a pausa foi mandada **que o app ainda tem, na mesma
+  sessão**, mesmo que o link dela tenha vencido nesse meio tempo (a sessão que parou esquece as reuniões e a pausa de
+  antes, e uma reunião tirada por um `404` não recebe nada): a página que recebeu a pausa continua em pausa até
+  receber o fim. O falso vai uma vez e não é repetido se falhar. E o app manda os pedidos de pausa de **uma** reunião um
+  de cada vez, cada um depois de o anterior terminar: o servidor os repassa na ordem em que chegam, e a página não
+  guarda o `vez` de um falso, então um falso que ultrapassasse um verdadeiro deixaria a página em pausa.
 
 ## 8. Os valores
 
