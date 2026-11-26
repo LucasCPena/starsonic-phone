@@ -149,7 +149,11 @@ test('no tamanho Mínimo, o Copiar link é do menu', async ({ page }) => {
   // Sem o botão na linha.
   await expect(botaoCopiar(page)).toHaveCount(0);
   await botaoMais(page).click();
-  await expect(menu(page).getByRole('menuitem')).toHaveText(['Copiar link', 'Abrir no navegador', 'Cancelar a reunião']);
+  await expect(menu(page).getByRole('menuitem')).toHaveText([
+    'Copiar link',
+    'Abrir no navegador',
+    'Cancelar a reunião',
+  ]);
   await expect(menu(page).getByRole('menuitem').first()).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(menu(page)).toHaveCount(0);

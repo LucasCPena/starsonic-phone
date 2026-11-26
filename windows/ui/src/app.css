@@ -1805,12 +1805,12 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 /* O campo do link de uma reunião, no alto da lista (o quadro Main): o campo, o "Abrir no navegador" e o erro dele. */
 .reun-link { flex: none; display: flex; flex-direction: column; gap: 8px; }
 .reun-link-linha { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.reun-link-campo { flex: 1 1 180px; min-width: 0; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px;
-  border-radius: 12px; border: 1px solid var(--border); background: var(--field); color: var(--text-muted); }
+.reun-link-campo { flex: 1 1 180px; min-width: 0; display: flex; align-items: center; gap: 8px; height: 40px;
+  padding: 0 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--field); color: var(--text-muted); }
 .reun-link-campo:focus-within { border-color: var(--cyan); box-shadow: var(--focus-halo); background: var(--surface); }
 .reun-link-campo .ic { flex: none; }
-.reun-link-input { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; font: inherit; font-size: 14px;
-  font-weight: 500; color: var(--text-strong); }
+.reun-link-input { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; font: inherit;
+  font-size: 14px; font-weight: 500; color: var(--text-strong); }
 .reun-link-input::placeholder { color: var(--text-muted); opacity: 1; }
 .reun-link-abrir { height: 40px; padding: 0 16px; font-size: 14px; flex: none; align-self: flex-start; }
 .reun-link-erro { margin: 0; font-size: 13px; line-height: 1.45; font-weight: 600; color: #b02a2a; }

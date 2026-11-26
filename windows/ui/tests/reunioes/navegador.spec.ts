@@ -156,8 +156,15 @@ test('um texto que não é um link diz Este não é um link de reunião do Stars
 
 test('a reunião de outra empresa oferece o navegador sem o passe', async ({ page }) => {
   const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
-  const outra = await empresaComReunioes('Outra Empresa Ltda', [{ ramal: '3001', nome: 'Joana Prado' }]);
+  const outra = await empresaComReunioes('Outra Empresa Ltda', [{ ramal: '3001', nome: 'Carla' }]);
   const delaCriada = await marcarHoje(outra.pessoas[0].api);
+  // A primeira vez vai ao servidor (o 403 de verdade); as seguintes, o page.route as responde (o limite do endereço).
+  let pedidos = 0;
+  await page.route(ePasse, (rota) => {
+    pedidos += 1;
+    if (pedidos === 1) return rota.continue();
+    return rota.fulfill({ status: 403, json: { erro: 'outraEmpresa' } });
+  });
   await abrir(page, pessoas[0]);
   await campo(page).fill(delaCriada.link);
   await abrirNoNavegador(page).click();
@@ -171,6 +178,17 @@ test('a reunião de outra empresa oferece o navegador sem o passe', async ({ pag
   expect(await doNavegador(page)).toEqual([{ v: 1, cmd: 'reuniaoNavegador', codigo: delaCriada.codigo }]);
   await expect(campo(page)).toHaveValue('');
   await expect(alerta(page)).toHaveCount(0);
+  expect(pedidos).toBe(1);
+  // O Enter no campo faz o que o botão à vista faz: com o erro da outra empresa, abre como convidado, sem outro passe.
+  await campo(page).fill(delaCriada.codigo);
+  await campo(page).press('Enter');
+  await expect(alerta(page)).toHaveText(OUTRA_EMPRESA);
+  expect(pedidos).toBe(2);
+  await campo(page).press('Enter');
+  await expect.poll(async () => (await doNavegador(page)).length).toBe(2);
+  expect((await doNavegador(page))[1]).toEqual({ v: 1, cmd: 'reuniaoNavegador', codigo: delaCriada.codigo });
+  expect(pedidos).toBe(2);
+  await expect(campo(page)).toHaveValue('');
 });
 
 test('o link que não vale mais diz Este link não vale mais', async ({ page }) => {
@@ -184,7 +202,8 @@ test('o link que não vale mais diz Este link não vale mais', async ({ page }) 
   await campo(page).press('Enter');
   await expect(alerta(page)).toHaveText(SEM_VALOR);
   await expect(page.getByRole('article')).toHaveCount(0);
-  // Um código que nunca foi de uma reunião: o mesmo.
+  // Um código que nunca foi de uma reunião: o mesmo (o page.route responde o 404, sem gastar o limite do endereço).
+  await page.route(ePasse, (rota) => rota.fulfill({ status: 404, json: { erro: 'naoEncontrado' } }));
   await campo(page).fill('abcdefghjk');
   await campo(page).press('Enter');
   await expect(alerta(page)).toHaveText(SEM_VALOR);
@@ -330,8 +349,8 @@ for (const tema of ['light', 'dark'] as const) {
     test(`o campo do link e os erros dele não têm violações sérias (${tema})`, async ({ page }) => {
       const { pessoas } = await empresaComReunioes(EMPRESA, [RECEPCAO]);
       await marcarHoje(pessoas[0].api);
-      const outra = await empresaComReunioes('Outra Empresa Ltda', [{ ramal: '3001', nome: 'Joana Prado' }]);
-      const dela = await marcarHoje(outra.pessoas[0].api);
+      // O 403 vem do page.route: o limite de falhas do endereço é de todos os testes da rodada.
+      await page.route(ePasse, (rota) => rota.fulfill({ status: 403, json: { erro: 'outraEmpresa' } }));
       await abrir(page, pessoas[0]);
       await expect(campo(page)).toBeVisible();
       await semViolacoesSerias(page);
@@ -341,7 +360,7 @@ for (const tema of ['light', 'dark'] as const) {
       await campo(page).press('Enter');
       await expect(alerta(page)).toHaveText(NAO_E_LINK);
       await semViolacoesSerias(page);
-      await campo(page).fill(dela.codigo);
+      await campo(page).fill('abcdefghjk');
       await campo(page).press('Enter');
       await expect(alerta(page)).toHaveText(OUTRA_EMPRESA);
       await expect(abrirNoNavegador(page)).toBeVisible();

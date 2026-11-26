@@ -273,7 +273,9 @@ function CampoDoLink({ base, onAbrirDoCampo, onAbrirComoConvidado }: CampoProps)
       noValidate
       onSubmit={(e) => {
         e.preventDefault();
-        void abrir();
+        // O Enter faz o que o botão à vista faz: com o erro da outra empresa, é o "Abrir no navegador" do convidado.
+        if (convidado !== null) comoConvidado();
+        else void abrir();
       }}
     >
       <div class="reun-link-linha">

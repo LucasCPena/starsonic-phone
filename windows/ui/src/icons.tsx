@@ -187,9 +187,9 @@ export const IconLink = svg(
 /** O "Abrir no navegador" do menu (uma janela com a seta para fora). */
 export const IconAbrirNoNavegador = svg(
   <>
-    <path d="M14 4h6v6" />
-    <path d="M20 4l-9 9" />
-    <path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4" />
+    <path d="M14 5h5v5" />
+    <path d="M19 5l-8 8" />
+    <path d="M18 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h4" />
   </>,
 );
 export const IconCheck = svg(<path d="M5 12.5l4.5 4.5L19 7.5" />);
