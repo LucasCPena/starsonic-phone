@@ -16,6 +16,8 @@
 
 **O plano 3a está construído** (a branch `reunioes-etapa-2`, de `7715b29` a `e2ef14a`): a aba Reuniões, o "Abrir no navegador", o aviso do canto com um pedido e a pausa da reunião aberta no navegador. Este plano usa o que ele produziu (o `ReunioesCliente`, o `pausa.ts`, os textos, os ajudantes dos testes) e não o refaz.
 
+**Aprovado pelo responsável em 26/11/2026, às 08:52 ("segue"):** o plano, as escolhas da seção "As escolhas deste plano" e o método, o mesmo dos outros planos desta etapa: um agente novo constrói cada tarefa, e outro a revisa antes da próxima; no fim, uma revisão de tudo (superpowers:subagent-driven-development).
+
 **Respondido pelo responsável em 26/11/2026, às 08:35 ("pode sim"), antes do plano escrito:** as duas propostas que aparecem na tela (as escolhas 1 e 2 abaixo): o WebView2 mínimo `131`, com o navegador e o aviso abaixo dele, e o "Abrir no navegador" em "A reunião não abriu.".
 
 ## O que este plano não faz
