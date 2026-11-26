@@ -302,6 +302,16 @@ function App() {
   // (0.2.0) O toast das telas do chat (R31): o mesmo da ponte, sem contar como um toast do C++ (os `toasts` da edição do
   // atalho são só os dele).
   const avisarNaTela = useCallback((texto: string) => setToast((t) => ({ texto, vez: (t?.vez ?? 0) + 1 })), []);
+  // (Reuniões) O aviso curto do cliente das reuniões (o erro do "Abrir no navegador" do menu) é um toast como os
+  // outros: cada `vez` nova é um aviso novo (o da vista de quando a tela abriu já passou).
+  const avisoDasReunioes = useRef(vistaReunioes.avisoCurto?.vez ?? 0);
+  useLayoutEffect(() => {
+    const aviso = vistaReunioes.avisoCurto;
+    if (aviso && aviso.vez !== avisoDasReunioes.current) {
+      avisoDasReunioes.current = aviso.vez;
+      avisarNaTela(aviso.texto);
+    }
+  }, [vistaReunioes.avisoCurto, avisarNaTela]);
   // (vídeo, etapa 2) O chat na ligação: o colega da ligação de cima no chat (o Chat), a ação do Chat (a falha do pedido é
   // o toast das telas do chat), a conversa que ele abriu, com o id da ligação de cima (ela sai quando a de cima muda), e a
   // conversa da ligação na tela no último desenho com a ligação (no fim dela, ela fica).
@@ -860,6 +870,14 @@ function App() {
             onNova={() => setView({ kind: 'reuniaoNova', back: view })}
             onCopiar={(r) => void reunioesCliente.copiar(r)}
             onCancelar={(codigo) => reunioesCliente.cancelar(codigo)}
+            base={enderecoDoChat()}
+            onAbrirDaLinha={(codigo) =>
+              void reunioesCliente.abrirNoNavegador(codigo).then((r) => {
+                if (!r.ok && r.erro !== null) reunioesCliente.avisar(r.erro);
+              })
+            }
+            onAbrirDoCampo={(codigo) => reunioesCliente.abrirNoNavegador(codigo)}
+            onAbrirComoConvidado={(codigo) => reunioesCliente.abrirComoConvidado(codigo)}
           />
         )}
       </main>

@@ -4,27 +4,38 @@
 // texto. O "Nova reunião" abre o formulário. Cada linha tem o "Copiar link" (que diz "Link copiado" por 2 s, e o
 // `status` que o leitor de tela lê) e o botão do menu: até quando o link vale e o "Cancelar a reunião", que pergunta
 // antes (Cancelar.tsx). No tamanho Mínimo, a linha só tem o botão do menu, e o "Copiar link" é o primeiro item dele. A
-// hora de agora é lida a cada desenho, e a aba é desenhada de novo a cada leitura da lista.
+// hora de agora é lida a cada desenho, e a aba é desenhada de novo a cada leitura da lista. No alto da lista fica o
+// campo do link de uma reunião (de qualquer pessoa): com um texto, o "Abrir no navegador" (o Enter é o botão); o que
+// o `codigoDoTexto` não aceita diz "Este não é um link de reunião do Starsonic." sem pedido nenhum; os erros ficam
+// num `alert` embaixo do campo, e o da outra empresa traz o "Abrir no navegador" sem o passe. Deu certo: o campo
+// esvazia. O "Abrir no navegador" do menu da linha manda o erro dele ao aviso curto do app.
+import type { JSX } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { Menu } from '../../components/Menu';
 import {
+  IconAbrirNoNavegador,
   IconCancelarReuniao,
   IconCheck,
   IconCopiar,
+  IconLink,
   IconPlus,
   IconReticencias,
   IconReunioes,
   IconSemRede,
 } from '../../icons';
 import { useLayout } from '../../layout';
-import type { VistaReunioes } from '../cliente';
-import { acontecendo, descricaoDaLinha, quando, valeAteTexto } from '../formato';
+import type { ResultadoDoNavegador, VistaReunioes } from '../cliente';
+import { acontecendo, codigoDoTexto, descricaoDaLinha, quando, valeAteTexto } from '../formato';
 import {
+  ABRIR_NO_NAVEGADOR,
   AS_QUE_VOCE_MARCOU,
+  CAMPO_DO_LINK,
   CANCELAR_A_REUNIAO,
   COPIAR_LINK,
+  ENTRAR_COM_O_LINK,
   LINK_COPIADO,
   maisOpcoesDe,
+  NAO_E_LINK_DE_REUNIAO,
   NENHUMA_REUNIAO,
   NOVA_REUNIAO,
   opcoesDe,
@@ -45,9 +56,17 @@ interface Props {
   onCopiar(reuniao: Reuniao): void;
   /** O "Cancelar a reunião" do diálogo: resolve quando ela saiu da lista; rejeita com a falha. */
   onCancelar(codigo: string): Promise<void>;
+  /** O endereço do chat: o link inteiro de uma reunião começa com ele. */
+  base: string;
+  /** O "Abrir no navegador" do menu da linha: o erro dele sai no aviso curto do app. */
+  onAbrirDaLinha(codigo: string): void;
+  /** O "Abrir no navegador" do campo do link: devolve o que aconteceu, e o campo diz o erro. */
+  onAbrirDoCampo(codigo: string): Promise<ResultadoDoNavegador>;
+  /** O "Abrir no navegador" da reunião de outra empresa: sem o passe. */
+  onAbrirComoConvidado(codigo: string): void;
 }
 
-interface LinhaProps extends Pick<Props, 'onCopiar' | 'onCancelar'> {
+interface LinhaProps extends Pick<Props, 'onCopiar' | 'onCancelar' | 'onAbrirDaLinha'> {
   reuniao: Reuniao;
   agora: number;
   copiado: boolean;
@@ -55,7 +74,7 @@ interface LinhaProps extends Pick<Props, 'onCopiar' | 'onCancelar'> {
   minimo: boolean;
 }
 
-function Linha({ reuniao, agora, copiado, minimo, onCopiar, onCancelar }: LinhaProps) {
+function Linha({ reuniao, agora, copiado, minimo, onCopiar, onCancelar, onAbrirDaLinha }: LinhaProps) {
   const aoVivo = acontecendo(reuniao);
   const assunto = reuniao.assunto || SEM_ASSUNTO;
   const mais = useRef<HTMLButtonElement>(null);
@@ -162,6 +181,19 @@ function Linha({ reuniao, agora, copiado, minimo, onCopiar, onCancelar }: LinhaP
                     {COPIAR_LINK}
                   </button>
                 )}
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="menuitem"
+                  onClick={() => {
+                    setMenu(false);
+                    onAbrirDaLinha(reuniao.codigo);
+                    mais.current?.focus();
+                  }}
+                >
+                  <IconAbrirNoNavegador size="sm" />
+                  {ABRIR_NO_NAVEGADOR}
+                </button>
                 <button type="button" role="menuitem" class="menuitem reun-menu-cancelar" onClick={abrirCancelar}>
                   <IconCancelarReuniao size="sm" />
                   {CANCELAR_A_REUNIAO}
@@ -185,7 +217,109 @@ function Linha({ reuniao, agora, copiado, minimo, onCopiar, onCancelar }: LinhaP
   );
 }
 
-export function Aba({ vista, onNova, onCopiar, onCancelar }: Props) {
+interface CampoProps extends Pick<Props, 'base' | 'onAbrirDoCampo' | 'onAbrirComoConvidado'> {}
+
+/** O campo do link de uma reunião, no alto da lista. */
+function CampoDoLink({ base, onAbrirDoCampo, onAbrirComoConvidado }: CampoProps) {
+  const [texto, setTexto] = useState('');
+  const [ocupado, setOcupado] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  /** O código da reunião de outra empresa: o botão do erro a abre como convidado. */
+  const [convidado, setConvidado] = useState<string | null>(null);
+  const viva = useRef(true);
+  useLayoutEffect(
+    () => () => {
+      viva.current = false;
+    },
+    [],
+  );
+
+  const digitou = (e: JSX.TargetedEvent<HTMLInputElement>) => {
+    setTexto(e.currentTarget.value);
+    setErro(null);
+    setConvidado(null);
+  };
+  const abrir = async () => {
+    if (ocupado) return;
+    const codigo = codigoDoTexto(texto, base);
+    if (codigo === null) {
+      if (texto.trim() !== '') setErro(NAO_E_LINK_DE_REUNIAO);
+      return;
+    }
+    setErro(null);
+    setConvidado(null);
+    setOcupado(true);
+    const r = await onAbrirDoCampo(codigo);
+    if (!viva.current) return;
+    setOcupado(false);
+    if (r.ok) {
+      setTexto('');
+    } else {
+      setErro(r.erro);
+      setConvidado(r.outraEmpresa ? codigo : null);
+    }
+  };
+  const comoConvidado = () => {
+    if (convidado === null) return;
+    onAbrirComoConvidado(convidado);
+    setTexto('');
+    setErro(null);
+    setConvidado(null);
+  };
+
+  return (
+    <form
+      class="reun-link"
+      noValidate
+      onSubmit={(e) => {
+        e.preventDefault();
+        void abrir();
+      }}
+    >
+      <div class="reun-link-linha">
+        <label class="reun-link-campo">
+          <IconLink size="sm" />
+          <input
+            type="text"
+            class="reun-link-input"
+            aria-label={ENTRAR_COM_O_LINK}
+            placeholder={CAMPO_DO_LINK}
+            autocomplete="off"
+            spellcheck={false}
+            value={texto}
+            onInput={digitou}
+          />
+        </label>
+        {texto.trim() !== '' && convidado === null && (
+          <button type="submit" class="btn btn-cyan reun-link-abrir" disabled={ocupado}>
+            {ABRIR_NO_NAVEGADOR}
+          </button>
+        )}
+      </div>
+      {erro !== null && (
+        <p class="reun-link-erro" role="alert">
+          {erro}
+        </p>
+      )}
+      {convidado !== null && (
+        <button type="button" class="btn btn-cyan reun-link-abrir" onClick={comoConvidado}>
+          {ABRIR_NO_NAVEGADOR}
+        </button>
+      )}
+    </form>
+  );
+}
+
+export function Aba({
+  vista,
+  onNova,
+  onCopiar,
+  onCancelar,
+  base,
+  onAbrirDaLinha,
+  onAbrirDoCampo,
+  onAbrirComoConvidado,
+}: Props) {
   const { lista, conectado, copiado } = vista;
   const agora = Date.now();
   const minimo = useLayout() === 'minimo';
@@ -201,6 +335,9 @@ export function Aba({ vista, onNova, onCopiar, onCancelar }: Props) {
           {NOVA_REUNIAO}
         </button>
       </div>
+      {conectado && (
+        <CampoDoLink base={base} onAbrirDoCampo={onAbrirDoCampo} onAbrirComoConvidado={onAbrirComoConvidado} />
+      )}
       {!conectado ? (
         <div class="chat-vazio">
           <span class="chat-vazio-tile" aria-hidden="true">
@@ -234,6 +371,7 @@ export function Aba({ vista, onNova, onCopiar, onCancelar }: Props) {
                 minimo={minimo}
                 onCopiar={onCopiar}
                 onCancelar={onCancelar}
+                onAbrirDaLinha={onAbrirDaLinha}
               />
             ))}
           </ul>

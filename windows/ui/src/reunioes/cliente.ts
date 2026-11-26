@@ -12,10 +12,21 @@
 // - O `criar` (a Nova reunião) cria como a pessoa da vez, lê a lista de novo e copia o link; o `copiar` escreve o link
 //   no clipboard e faz a vista dizer o `copiado` (a linha da reunião diz "Link copiado") por 2 s; o `cancelar` cancela
 //   a reunião e relê a lista (o 404, ela já não existe, também resolve).
+// - O `abrirNoNavegador` pede o passe como a pessoa da vez (um pedido por código de cada vez) e manda o
+//   reuniaoNavegador com o código e o passe: o passe vai da resposta para o comando e para mais lugar nenhum (nem uma variável da
+//   classe, nem o estado, nem o console). O `abrirComoConvidado` manda o comando sem o passe. O `avisar` é o aviso
+//   curto do app (a tela o mostra como o toast).
 // Nada de uma reunião vai ao console.
 import type { Bridge } from '../bridge';
 import { ErroChat } from '../chat/api';
 import { ehParado, type ChatCliente } from '../chat/cliente';
+import {
+  LINK_SEM_VALOR,
+  MUITAS_TENTATIVAS,
+  REUNIAO_DE_OUTRA_EMPRESA,
+  SERVIDOR_NAO_RESPONDEU,
+  SERVIDOR_PRECISA_ATUALIZAR,
+} from './textos';
 import type { Reuniao } from './tipos';
 
 export interface VistaReunioes {
@@ -27,7 +38,12 @@ export interface VistaReunioes {
   conectado: boolean;
   /** O código da reunião cuja linha diz "Link copiado" (por 2 s); null sem nenhuma. */
   copiado: string | null;
+  /** Um aviso curto para a tela (o toast do app); a `vez` sobe a cada aviso. */
+  avisoCurto: { texto: string; vez: number } | null;
 }
+
+/** `erro` null: nada a dizer (a pessoa trocou no meio, ou a aba sumiu). */
+export type ResultadoDoNavegador = { ok: true } | { ok: false; erro: string | null; outraEmpresa: boolean };
 
 /** A lista é lida de novo a esta distância, com a aba à vista (e depois de uma falha). */
 export const RELEITURA_MS = 30_000;
@@ -40,6 +56,7 @@ const ehSemReunioes = (e: unknown): boolean => e instanceof ErroChat && e.status
 
 export class ReunioesCliente {
   private readonly chat: ChatCliente;
+  private readonly bridge: Bridge;
   private readonly ouvintes = new Set<() => void>();
   private aba = false;
   private lista: Reuniao[] | null = null;
@@ -56,10 +73,15 @@ export class ReunioesCliente {
   /** A reunião cuja linha diz "Link copiado", e o relógio que a apaga. */
   private copiado: string | null = null;
   private relogioDoCopiado: ReturnType<typeof setTimeout> | undefined;
+  /** Os códigos com um pedido de passe no ar: um pedido por código de cada vez. */
+  private readonly abrindo = new Set<string>();
+  /** O último aviso curto. */
+  private avisoCurto: { texto: string; vez: number } | null = null;
   private v: VistaReunioes;
 
   constructor(o: { chat: ChatCliente; bridge: Bridge; base: string }) {
     this.chat = o.chat;
+    this.bridge = o.bridge;
     this.v = this.montar();
     // O `conectado` depende do chat estar pronto e conectado.
     o.chat.assinar(() => this.publicar());
@@ -143,6 +165,62 @@ export class ReunioesCliente {
     await this.ler();
   }
 
+  /**
+   * Pede o passe como a pessoa da vez e manda o reuniaoNavegador com o código e o passe: a resposta vai direto ao
+   * comando. Um pedido por código de cada vez (o segundo, com o primeiro no ar, não faz nada: `erro` null).
+   */
+  async abrirNoNavegador(codigo: string): Promise<ResultadoDoNavegador> {
+    if (this.abrindo.has(codigo)) return { ok: false, erro: null, outraEmpresa: false };
+    this.abrindo.add(codigo);
+    const vez = this.vez;
+    try {
+      const r = await this.chat.pedir((api) => api.passeDaReuniao(codigo));
+      this.bridge.send({ cmd: 'reuniaoNavegador', codigo, passe: r.passe });
+      return { ok: true };
+    } catch (e) {
+      return await this.erroDoPasse(e, codigo, vez);
+    } finally {
+      this.abrindo.delete(codigo);
+    }
+  }
+
+  /** A reunião de outra empresa: o reuniaoNavegador sem o passe (a pessoa entra como convidada). */
+  abrirComoConvidado(codigo: string): void {
+    this.bridge.send({ cmd: 'reuniaoNavegador', codigo });
+  }
+
+  /** Um aviso curto para a tela (o toast do app). */
+  avisar(texto: string): void {
+    this.avisoCurto = { texto, vez: (this.avisoCurto?.vez ?? 0) + 1 };
+    this.publicar();
+  }
+
+  /** O que cada falha do pedido do passe vira (a tabela da Task 10). */
+  private async erroDoPasse(e: unknown, codigo: string, vez: number): Promise<ResultadoDoNavegador> {
+    const dizer = (erro: string | null, outraEmpresa = false): ResultadoDoNavegador => ({
+      ok: false,
+      erro,
+      outraEmpresa,
+    });
+    if (ehParado(e)) return dizer(null);
+    if (!(e instanceof ErroChat)) return dizer(SERVIDOR_NAO_RESPONDEU);
+    if (e.status === 404) {
+      // Uma reunião da lista da pessoa que o servidor não conhece: se a lista relida ainda a tem, o servidor é antigo.
+      if (!this.lista?.some((r) => r.codigo === codigo)) return dizer(LINK_SEM_VALOR);
+      await this.ler();
+      if (vez !== this.vez) return dizer(null);
+      if (this.falhou) return dizer(SERVIDOR_NAO_RESPONDEU);
+      return dizer(this.lista?.some((r) => r.codigo === codigo) ? SERVIDOR_PRECISA_ATUALIZAR : LINK_SEM_VALOR);
+    }
+    if (e.status === 403 && e.erro === 'outraEmpresa') return dizer(REUNIAO_DE_OUTRA_EMPRESA, true);
+    if (ehSemReunioes(e)) {
+      await this.ler();
+      return dizer(null);
+    }
+    if (e.status === 429) return dizer(MUITAS_TENTATIVAS);
+    return dizer(SERVIDOR_NAO_RESPONDEU);
+  }
+
   private montar(): VistaReunioes {
     const c = this.chat.vista();
     return {
@@ -150,6 +228,7 @@ export class ReunioesCliente {
       lista: this.lista,
       conectado: c.situacao === 'pronto' && c.conectado && !this.falhou,
       copiado: this.copiado,
+      avisoCurto: this.avisoCurto,
     };
   }
 
@@ -160,7 +239,8 @@ export class ReunioesCliente {
       nova.aba === this.v.aba &&
       nova.lista === this.v.lista &&
       nova.conectado === this.v.conectado &&
-      nova.copiado === this.v.copiado;
+      nova.copiado === this.v.copiado &&
+      nova.avisoCurto === this.v.avisoCurto;
     if (igual) return;
     this.v = nova;
     for (const f of [...this.ouvintes]) f();

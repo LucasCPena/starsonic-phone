@@ -24,6 +24,7 @@ const botaoCopiado = (page: Page) => page.getByRole('button', { name: 'Link copi
 const botaoMais = (page: Page, assunto = PLANEJAMENTO) =>
   page.getByRole('button', { name: `Mais opções de ${assunto}` });
 const menu = (page: Page, assunto = PLANEJAMENTO) => page.getByRole('menu', { name: `Opções de ${assunto}` });
+const itemAbrir = (page: Page) => page.getByRole('menuitem', { name: 'Abrir no navegador' });
 const itemCancelar = (page: Page) => page.getByRole('menuitem', { name: 'Cancelar a reunião' });
 const pergunta = (page: Page) => page.getByRole('alertdialog', { name: 'Cancelar a reunião?' });
 const voltar = (page: Page) => pergunta(page).getByRole('button', { name: 'Voltar' });
@@ -96,11 +97,13 @@ test('o menu diz até quando o link vale e tem o Cancelar a reunião', async ({ 
   await expect(menu(page)).toBeVisible();
   await expect(menu(page).getByText('O link vale até hoje, 23:59', { exact: true })).toBeVisible();
   // A linha da validade é um texto, não um item.
-  await expect(menu(page).getByRole('menuitem')).toHaveText(['Cancelar a reunião']);
-  // O foco começa no primeiro item; as setas e o Home/End andam entre os itens (aqui há um só).
-  await expect(itemCancelar(page)).toBeFocused();
+  await expect(menu(page).getByRole('menuitem')).toHaveText(['Abrir no navegador', 'Cancelar a reunião']);
+  // O foco começa no primeiro item; as setas e o Home/End andam entre os itens.
+  await expect(itemAbrir(page)).toBeFocused();
   await page.keyboard.press('ArrowDown');
   await expect(itemCancelar(page)).toBeFocused();
+  await page.keyboard.press('Home');
+  await expect(itemAbrir(page)).toBeFocused();
   await page.keyboard.press('End');
   await expect(itemCancelar(page)).toBeFocused();
   // O Esc fecha e devolve o foco ao botão.
@@ -111,6 +114,8 @@ test('o menu diz até quando o link vale e tem o Cancelar a reunião', async ({ 
   await page.keyboard.press('Enter');
   await expect(menu(page)).toBeVisible();
   // O foco vai ao primeiro item depois do desenho: o Enter só vale com ele lá (no botão, o Enter fecharia o menu).
+  await expect(itemAbrir(page)).toBeFocused();
+  await page.keyboard.press('ArrowDown');
   await expect(itemCancelar(page)).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(menu(page)).toHaveCount(0);
@@ -144,7 +149,7 @@ test('no tamanho Mínimo, o Copiar link é do menu', async ({ page }) => {
   // Sem o botão na linha.
   await expect(botaoCopiar(page)).toHaveCount(0);
   await botaoMais(page).click();
-  await expect(menu(page).getByRole('menuitem')).toHaveText(['Copiar link', 'Cancelar a reunião']);
+  await expect(menu(page).getByRole('menuitem')).toHaveText(['Copiar link', 'Abrir no navegador', 'Cancelar a reunião']);
   await expect(menu(page).getByRole('menuitem').first()).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(menu(page)).toHaveCount(0);
@@ -157,7 +162,7 @@ test('no tamanho Mínimo, o Copiar link é do menu', async ({ page }) => {
   await page.setViewportSize({ width: 400, height: 720 });
   await expect(botaoCopiar(page).or(botaoCopiado(page))).toHaveCount(1);
   await botaoMais(page).click();
-  await expect(menu(page).getByRole('menuitem')).toHaveText(['Cancelar a reunião']);
+  await expect(menu(page).getByRole('menuitem')).toHaveText(['Abrir no navegador', 'Cancelar a reunião']);
 });
 
 test('o cancelar pergunta antes, com o assunto e a hora', async ({ page }) => {
