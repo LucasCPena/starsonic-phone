@@ -14,8 +14,8 @@
 //   a reunião e relê a lista (o 404, ela já não existe, também resolve).
 // - O `abrirNoNavegador` pede o passe como a pessoa da vez (um pedido por código de cada vez) e manda o
 //   reuniaoNavegador com o código e o passe: o passe vai da resposta para o comando e para mais lugar nenhum (nem uma
-//   variável da classe, nem o estado, nem o console). O `abrirComoConvidado` manda o comando sem o passe. O `avisar` é o aviso
-//   curto do app (a tela o mostra como o toast).
+//   variável da classe, nem o estado, nem o console). O `abrirComoConvidado` manda o comando sem o
+//   passe. O `avisar` é o aviso curto do app (a tela o mostra como o toast).
 // Nada de uma reunião vai ao console.
 import type { Bridge } from '../bridge';
 import { ErroChat } from '../chat/api';
