@@ -1,5 +1,5 @@
 // Os ajudantes dos testes das reuniões: abrir o app na aba Reuniões e as horas no relógio da página.
-import { expect, type Page } from '@playwright/test';
+import { expect, type Page, type WebSocketRoute } from '@playwright/test';
 import { abrirNoChat } from '../chat/abrir';
 import type { ApiDeTeste } from '../chat/servidor';
 
@@ -99,4 +99,80 @@ export async function esperarALeitura(page: Page, l: { lidas(): number }, minimo
   await expect
     .poll(async () => (await page.locator('.reun-assunto').allTextContents())[0] === `Leitura ${l.lidas()}`)
     .toBe(true);
+}
+
+/** O que o `comEventos` guarda de cada reunião: as listas do último evento dela. */
+interface ListasDaReuniao {
+  participantes: unknown[];
+  pedidos: Array<{ id: string }>;
+}
+
+/**
+ * Faz de conta que o computador está numa reunião aberta no navegador: o chat de teste não tem servidor de vídeo, e
+ * nele ninguém "está na reunião". Chame antes de abrir a página. Fica entre a página e o chat de verdade no WebSocket
+ * dos eventos (o molde é o do tests/chat/sem-conexao.spec.ts, com o Math.random em 0,5: a primeira nova tentativa sai
+ * 1 s depois da queda) e responde ao GET …/participantes de cada reunião com as listas do último evento mandado (409
+ * foraDaReuniao antes do primeiro evento dela e depois do reuniaoAcabou). Um page.route do teste, posto depois dele,
+ * passa na frente.
+ */
+export async function comEventos(page: Page): Promise<{
+  /** Entrega um evento à página, como se viesse do servidor. */
+  mandar(evento: object): Promise<void>;
+  /** Fecha a conexão dos eventos e recusa as próximas, até o `voltar`. */
+  derrubar(): Promise<void>;
+  voltar(): void;
+}> {
+  await page.addInitScript(() => {
+    Math.random = () => 0.5;
+  });
+  let cair = false;
+  const noAr: Array<{ ws: WebSocketRoute; servidor: WebSocketRoute }> = [];
+  const reunioes = new Map<string, ListasDaReuniao>();
+  await page.routeWebSocket(/\/api\/v1\/eventos\?/, async (ws) => {
+    if (cair) {
+      await ws.close();
+      return;
+    }
+    noAr.push({ ws, servidor: ws.connectToServer() });
+  });
+  await page.route(
+    (url) => /^\/api\/v1\/reunioes\/[^/]+\/participantes$/.test(url.pathname),
+    (rota) => {
+      if (rota.request().method() !== 'GET') return rota.continue();
+      const codigo = new URL(rota.request().url()).pathname.split('/')[4];
+      const listas = reunioes.get(codigo);
+      if (!listas) return rota.fulfill({ status: 409, json: { erro: 'foraDaReuniao' } });
+      return rota.fulfill({ status: 200, json: { participantes: listas.participantes, pedidos: listas.pedidos } });
+    },
+  );
+  return {
+    async mandar(evento) {
+      const e = evento as { tipo?: string; reuniao?: string; pedido?: any; participantes?: unknown[]; pedidos?: any[] };
+      if (typeof e.reuniao === 'string') {
+        const listas = reunioes.get(e.reuniao) ?? { participantes: [], pedidos: [] };
+        if (e.tipo === 'reuniaoParticipantes' && Array.isArray(e.participantes) && Array.isArray(e.pedidos)) {
+          reunioes.set(e.reuniao, { participantes: e.participantes, pedidos: e.pedidos });
+        } else if (e.tipo === 'reuniaoPedido' && e.pedido) {
+          reunioes.set(e.reuniao, { ...listas, pedidos: [...listas.pedidos, e.pedido] });
+        } else if (e.tipo === 'reuniaoPedidoFim') {
+          reunioes.set(e.reuniao, { ...listas, pedidos: listas.pedidos.filter((p) => p.id !== e.pedido) });
+        } else if (e.tipo === 'reuniaoAcabou') {
+          reunioes.delete(e.reuniao);
+        }
+      }
+      const ultima = noAr[noAr.length - 1];
+      if (!ultima) throw new Error('comEventos.mandar: nenhum WebSocket dos eventos no ar');
+      ultima.ws.send(JSON.stringify(evento));
+      // O evento chega à página e é tratado antes de qualquer coisa que o teste mande depois (os dois vão em ordem pelo
+      // mesmo canal do Playwright): o que o teste manda em seguida (a resposta do aviso, o relógio) já o encontra.
+      await page.evaluate(() => 0);
+    },
+    async derrubar() {
+      cair = true;
+      for (const { ws } of noAr.splice(0)) await ws.close();
+    },
+    voltar() {
+      cair = false;
+    },
+  };
 }

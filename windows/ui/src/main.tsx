@@ -231,7 +231,14 @@ function App() {
         if (noIphone.current && msg.tela === 'recentes') setView({ kind: 'tab', tab: 'recentes' });
         else if (!noIphone.current && msg.tela === 'chat') {
           setView(msg.conversa > 0 ? { kind: 'chatConversa', conversa: msg.conversa, back: ABA_CHAT } : ABA_CHAT);
+        } else if (!noIphone.current && msg.tela === 'reunioes') {
+          // (Reuniões) O clique fora dos botões do aviso do pedido: a aba Reuniões, se ela existe (a tecla Ctrl + 6 tem
+          // a mesma regra). Sem ela, a pessoa fica onde estava.
+          if (atual.current?.chat?.ligado && reunioesCliente.vista().aba) setView(ABA_REUNIOES);
         }
+      } else if (msg.type === 'reuniaoResposta') {
+        // (Reuniões) A resposta do aviso ao pedido que ele mostra: o cliente tira o pedido e chama a rota.
+        if (!noIphone.current) void reunioesCliente.responder(msg.pedido, msg.resposta);
       }
     });
     bridge.send({ cmd: 'ready' });
