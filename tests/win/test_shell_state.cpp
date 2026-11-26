@@ -387,7 +387,7 @@ TEST_CASE("a meeting request shows the notice out of front, or with the meeting 
     }
 }
 
-TEST_CASE("a ringing call still shows as before, with or without a meeting request") {
+TEST_CASE("a ringing call has the turn over a meeting request, and the request comes back after it") {
     const std::string ringing = R"(,"ligacao":{"top":{"id":4,"phase":"ringing"},"second":null,"secondKind":"none",)"
                                 R"("conference":false})";
     const std::string doorphone =
@@ -407,8 +407,8 @@ TEST_CASE("a ringing call still shows as before, with or without a meeting reque
     REQUIRE(s.has_value());
     CHECK(ShowsNotice(*s, false));
     CHECK(ShowsNotice(*s, true));
-    // Com as duas coisas: o aviso aparece fora da frente; na frente, so com a reuniao escondida (a pagina do aviso
-    // escolhe o que desenhar).
+    // Com as duas coisas, a ligacao tocando tem a vez (a spec, 7.7): o aviso mostra a ligacao fora da frente e, na
+    // frente, nenhum aviso (a janela ja mostra a ligacao), tambem com a reuniao escondida; o pedido espera.
     s = ReadShellStatus(State(std::string(kConnected) + ringing + request));
     REQUIRE(s.has_value());
     CHECK(s->ringing);
@@ -418,5 +418,19 @@ TEST_CASE("a ringing call still shows as before, with or without a meeting reque
     s = ReadShellStatus(State(std::string(kConnected) + ringing + hiddenRequest));
     REQUIRE(s.has_value());
     CHECK(ShowsNotice(*s, false));
+    CHECK_FALSE(ShowsNotice(*s, true));
+    // A porteira tocando na frente continua com o aviso, com o pedido ou sem ele.
+    s = ReadShellStatus(State(std::string(kConnected) + doorphone + hiddenRequest));
+    REQUIRE(s.has_value());
     CHECK(ShowsNotice(*s, true));
+    // Quando a ligacao para de tocar, o pedido volta: com a janela na frente e a reuniao escondida, o aviso mostra de
+    // novo; com a reuniao no navegador (escondida false), so fora da frente.
+    s = ReadShellStatus(State(std::string(kConnected) + R"(,"ligacao":null)" + hiddenRequest));
+    REQUIRE(s.has_value());
+    CHECK_FALSE(s->ringing);
+    CHECK(ShowsNotice(*s, true));
+    s = ReadShellStatus(State(std::string(kConnected) + R"(,"ligacao":null)" + request));
+    REQUIRE(s.has_value());
+    CHECK(ShowsNotice(*s, false));
+    CHECK_FALSE(ShowsNotice(*s, true));
 }

@@ -97,8 +97,9 @@ std::optional<ShellStatus> ReadShellStatus(const std::string& message) {
 }
 
 bool ShowsNotice(const ShellStatus& status, bool inFront) {
-    return (status.ringing && (!inFront || status.doorphoneSecond)) ||
-           (status.meetingRequest && (!inFront || status.meetingHidden));
+    // Uma ligacao tocando tem a vez (spec 7.7): o pedido de reuniao espera ate ela parar de tocar.
+    if (status.ringing) return !inFront || status.doorphoneSecond;
+    return status.meetingRequest && (!inFront || status.meetingHidden);
 }
 
 TrayIcon ChooseTrayIcon(const ShellStatus& status) {
