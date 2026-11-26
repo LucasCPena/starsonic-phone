@@ -1,6 +1,7 @@
 // A barra de título própria (a janela não tem a moldura do Windows): arrasta a janela (app-region: drag) e tem
 // Minimizar e Fechar (o fechar manda a janela para a bandeja: o app continua recebendo ligações). Na ligação, a
 // barra mostra também a bolinha da conta em uso ("Ocupado · em ligação" em vermelho: o cabeçalho fica escondido).
+import type { ComponentChildren } from 'preact';
 import type { AccountDot } from '../format';
 import { IconClose, IconMinimize } from '../icons';
 import { ResizeZones } from './ResizeZones';
@@ -16,9 +17,18 @@ interface Props {
   status?: AccountDot;
   /** (vídeo, etapa 2) Sem as zonas de redimensionar: o grande tem o tamanho que o executável dá. */
   semRedimensionar?: boolean;
+  /** (reuniões) Botões da tela, no começo do grupo da direita (o "Tela cheia" da reunião no app). */
+  acoes?: ComponentChildren;
 }
 
-export function TitleBar({ send, closeLabel = 'Fechar para a bandeja', title = 'Starsonic Phone', status, semRedimensionar }: Props) {
+export function TitleBar({
+  send,
+  closeLabel = 'Fechar para a bandeja',
+  title = 'Starsonic Phone',
+  status,
+  semRedimensionar,
+  acoes,
+}: Props) {
   return (
     <div class="titlebar">
       {status && (
@@ -31,6 +41,7 @@ export function TitleBar({ send, closeLabel = 'Fechar para a bandeja', title = '
       {/* As zonas de redimensionar da janela (a barra de título está em toda tela da janela principal). */}
       {!semRedimensionar && <ResizeZones send={send} />}
       <div class="caption">
+        {acoes}
         <button type="button" aria-label="Minimizar" title="Minimizar" onClick={() => send({ cmd: 'minimize' })}>
           <IconMinimize />
         </button>

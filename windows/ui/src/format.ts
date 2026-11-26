@@ -38,10 +38,17 @@ export interface AccountDot {
  * 2. conectando: ciano, "Conectando…";
  * 3. erro no cadastro: cinza com o triângulo, o texto do erro (e sem conexão, da rc.2: cinza, sem o triângulo);
  * 4. em ligação (tocando também): vermelha, "Ocupado · em ligação";
+ * 4b. (reuniões) na reunião, dentro do app: vermelha, "Ocupado · em reunião" (a ligação vem antes: ela tira a pessoa da
+ *     reunião);
  * 5. Não perturbe ligado: vermelha, "Não perturbe · as ligações não tocam";
  * 6. conectado: verde, "Conectado · <servidor>".
  */
-export function accountDot(conta: CurrentAccount, emLigacao: boolean, naoPerturbe: boolean): AccountDot {
+export function accountDot(
+  conta: CurrentAccount,
+  emLigacao: boolean,
+  naoPerturbe: boolean,
+  emReuniao = false,
+): AccountDot {
   if (conta.internet === false) return { dot: 'dot dot-off', texto: 'Sem internet · tentando de novo', atencao: false };
   switch (conta.status) {
     case 'conectando':
@@ -54,6 +61,7 @@ export function accountDot(conta: CurrentAccount, emLigacao: boolean, naoPerturb
       break;
   }
   if (emLigacao) return { dot: 'dot dot-busy', texto: 'Ocupado · em ligação', atencao: false };
+  if (emReuniao) return { dot: 'dot dot-busy', texto: 'Ocupado · em reunião', atencao: false };
   if (naoPerturbe) return { dot: 'dot dot-busy', texto: 'Não perturbe · as ligações não tocam', atencao: false };
   return { dot: 'dot dot-online', texto: accountStatusLine(conta), atencao: false };
 }

@@ -1,7 +1,7 @@
 // Os ajudantes dos testes das reuniões: abrir o app na aba Reuniões e as horas no relógio da página.
 import { expect, type Page, type WebSocketRoute } from '@playwright/test';
 import { abrirNoChat } from '../chat/abrir';
-import type { ApiDeTeste } from '../chat/servidor';
+import { baseDoChat, type ApiDeTeste } from '../chat/servidor';
 
 /** Abre o app no chat de verdade e vai para a aba Reuniões (que só aparece depois da primeira leitura). */
 export async function abrirNasReunioes(page: Page, o: Parameters<typeof abrirNoChat>[1]): Promise<void> {
@@ -184,6 +184,63 @@ export async function comEventos(page: Page): Promise<{
     },
     voltar() {
       cair = false;
+    },
+  };
+}
+
+/** A página de teste que toma o lugar da reunião: guarda o que o app manda e manda o que o teste quer. */
+function paginaDeTeste(semPronta: boolean): string {
+  return `<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><title>Página de teste</title></head>
+<body><p>Página de teste</p>
+<script>
+window.recebidas = [];
+addEventListener('message', (e) => { if (e.source === parent) window.recebidas.push(e.data); });
+${semPronta ? '' : "parent.postMessage({ starsonic: 1, tipo: 'pronta' }, '*');"}
+</script></body></html>`;
+}
+
+/**
+ * Troca a página /r/<código> do chat por uma página da mesma origem, sem o servidor de vídeo, que guarda o que o app
+ * manda e manda o que o teste quer. Chame antes do "Entrar". A página manda o `pronta` ao carregar, a não ser com o
+ * `semPronta`. As funções falam sempre com o documento que o `iframe` da reunião mostra agora.
+ */
+export async function paginaFalsa(
+  page: Page,
+  codigo: string,
+  o: { semPronta?: boolean } = {},
+): Promise<{
+  /** Da página para o app, com o "starsonic": 1 já posto. */
+  mandar(m: object): Promise<void>;
+  /** O que o app mandou à página, na ordem. */
+  recebidas(): Promise<object[]>;
+  /** Põe uma marca no documento de agora. */
+  marcar(): Promise<void>;
+  /** O documento de agora tem a marca (é o mesmo documento). */
+  marcada(): Promise<boolean>;
+}> {
+  await page.route(`${baseDoChat()}/r/${codigo}`, (rota) =>
+    rota.fulfill({ contentType: 'text/html; charset=utf-8', body: paginaDeTeste(o.semPronta === true) }),
+  );
+  const quadro = async () => {
+    const elemento = await page.locator('iframe[title="Reunião"]').elementHandle({ timeout: 10_000 });
+    const frame = await elemento!.contentFrame();
+    if (!frame) throw new Error('o iframe da reunião não tem documento');
+    await frame.waitForLoadState('domcontentloaded');
+    return frame;
+  };
+  return {
+    async mandar(m) {
+      await (await quadro()).evaluate((m) => parent.postMessage({ starsonic: 1, ...m }, '*'), m);
+    },
+    async recebidas() {
+      return (await quadro()).evaluate(() => (window as unknown as { recebidas: object[] }).recebidas);
+    },
+    async marcar() {
+      await (await quadro()).evaluate(() => ((window as unknown as { marca: boolean }).marca = true));
+    },
+    async marcada() {
+      return (await quadro()).evaluate(() => (window as unknown as { marca?: boolean }).marca === true);
     },
   };
 }

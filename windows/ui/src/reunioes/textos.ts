@@ -15,6 +15,7 @@ export const FECHAR_O_AVISO = 'Fechar o aviso';
 export const REUNIOES = 'Reuniões';
 export const AS_QUE_VOCE_MARCOU = 'As que você marcou';
 export const NOVA_REUNIAO = 'Nova reunião';
+export const ENTRAR = 'Entrar';
 export const COPIAR_LINK = 'Copiar link';
 export const LINK_COPIADO = 'Link copiado';
 export const CAMPO_DO_LINK = 'Cole aqui o link de uma reunião';
@@ -70,3 +71,13 @@ export const SERVIDOR_PRECISA_ATUALIZAR = 'O servidor do chat precisa ser atuali
 // Avisos curtos e a tela da ligação.
 export const REUNIAO_CHEIA = 'A reunião está cheia: ninguém mais entra agora.';
 export const NAVEGADOR_CONTINUA_OUVINDO = 'A reunião no navegador continua ouvindo você. Desligue o microfone lá.';
+
+// A reunião dentro do app (o quadro, telas 6, 7 e 12 a 14).
+export const REUNIAO = 'Reunião';
+export const TELA_CHEIA = 'Tela cheia';
+export const SAIR_DA_TELA_CHEIA = 'Sair da tela cheia';
+export const A_REUNIAO_NAO_ABRIU = 'A reunião não abriu.';
+export const TENTAR_DE_NOVO = 'Tentar de novo';
+export const FECHAR = 'Fechar';
+export const DESLIGUE_PARA_ENTRAR = 'Desligue a ligação para entrar na reunião.';
+export const SAIA_PARA_ENTRAR_EM_OUTRA = 'Saia da reunião de agora para entrar em outra.';

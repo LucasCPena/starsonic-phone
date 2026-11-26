@@ -150,11 +150,15 @@ test('no tamanho Mínimo, o Copiar link é do menu', async ({ page }) => {
   await expect(botaoCopiar(page)).toHaveCount(0);
   await botaoMais(page).click();
   await expect(menu(page).getByRole('menuitem')).toHaveText([
+    'Entrar',
     'Copiar link',
     'Abrir no navegador',
     'Cancelar a reunião',
   ]);
+  // O primeiro item é o Entrar (a Task 3 do plano 3b); o Copiar link é o segundo.
   await expect(menu(page).getByRole('menuitem').first()).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(menu(page).getByRole('menuitem', { name: 'Copiar link' })).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(menu(page)).toHaveCount(0);
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(criada.link);

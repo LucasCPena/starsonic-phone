@@ -9,6 +9,10 @@
 // o `codigoDoTexto` não aceita diz "Este não é um link de reunião do Starsonic." sem pedido nenhum; os erros ficam
 // num `alert` embaixo do campo, e o da outra empresa traz o "Abrir no navegador" sem o passe. Deu certo: o campo
 // esvazia. O "Abrir no navegador" do menu da linha manda o erro dele ao aviso curto do app.
+// (3b) O "Entrar" da linha abre a reunião dentro do app: é o botão principal, antes do "Copiar link"; no tamanho
+// Mínimo, é o primeiro item do menu. Ocupado (o passe vindo), fica `aria-disabled` e ignora o clique: um `disabled` com o foco
+// o jogaria para o fundo. O erro do passe fica na linha, num `alert`; o da reunião de outra empresa traz o "Abrir no
+// navegador" sem o passe. Com a vista da reunião aberta, a aba fica embaixo dela, sem o foco.
 import type { JSX } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { Menu } from '../../components/Menu';
@@ -22,9 +26,11 @@ import {
   IconReticencias,
   IconReunioes,
   IconSemRede,
+  IconVideo,
 } from '../../icons';
 import { useLayout } from '../../layout';
 import type { ResultadoDoNavegador, VistaReunioes } from '../cliente';
+import type { ResultadoDoEntrar } from '../vista';
 import { acontecendo, codigoDoTexto, descricaoDaLinha, quando, valeAteTexto } from '../formato';
 import {
   ABRIR_NO_NAVEGADOR,
@@ -32,6 +38,7 @@ import {
   CAMPO_DO_LINK,
   CANCELAR_A_REUNIAO,
   COPIAR_LINK,
+  ENTRAR,
   ENTRAR_COM_O_LINK,
   LINK_COPIADO,
   maisOpcoesDe,
@@ -64,9 +71,12 @@ interface Props {
   onAbrirDoCampo(codigo: string): Promise<ResultadoDoNavegador>;
   /** O "Abrir no navegador" da reunião de outra empresa: sem o passe. */
   onAbrirComoConvidado(codigo: string): void;
+  /** O "Entrar" da linha (e o do menu, no tamanho Mínimo): a reunião abre dentro do app, ou diz por que não. */
+  onEntrar(codigo: string): Promise<ResultadoDoEntrar>;
 }
 
-interface LinhaProps extends Pick<Props, 'onCopiar' | 'onCancelar' | 'onAbrirDaLinha'> {
+interface LinhaProps
+  extends Pick<Props, 'onCopiar' | 'onCancelar' | 'onAbrirDaLinha' | 'onEntrar' | 'onAbrirComoConvidado'> {
   reuniao: Reuniao;
   agora: number;
   copiado: boolean;
@@ -74,7 +84,17 @@ interface LinhaProps extends Pick<Props, 'onCopiar' | 'onCancelar' | 'onAbrirDaL
   minimo: boolean;
 }
 
-function Linha({ reuniao, agora, copiado, minimo, onCopiar, onCancelar, onAbrirDaLinha }: LinhaProps) {
+function Linha({
+  reuniao,
+  agora,
+  copiado,
+  minimo,
+  onCopiar,
+  onCancelar,
+  onAbrirDaLinha,
+  onEntrar,
+  onAbrirComoConvidado,
+}: LinhaProps) {
   const aoVivo = acontecendo(reuniao);
   const assunto = reuniao.assunto || SEM_ASSUNTO;
   const mais = useRef<HTMLButtonElement>(null);
@@ -82,6 +102,9 @@ function Linha({ reuniao, agora, copiado, minimo, onCopiar, onCancelar, onAbrirD
   const [cancelando, setCancelando] = useState(false);
   const [ocupado, setOcupado] = useState(false);
   const [falhou, setFalhou] = useState(false);
+  // O Entrar com o passe vindo, e o erro dele (o `convidado`: a reunião é de outra empresa).
+  const [entrando, setEntrando] = useState(false);
+  const [erroDoEntrar, setErroDoEntrar] = useState<{ texto: string; convidado: boolean } | null>(null);
   // A linha saiu da tela (a lista foi relida sem ela): a resposta do cancelar não muda mais nada.
   const viva = useRef(true);
   useLayoutEffect(
@@ -92,6 +115,15 @@ function Linha({ reuniao, agora, copiado, minimo, onCopiar, onCancelar, onAbrirD
   );
 
   const copiar = () => onCopiar(reuniao);
+  const entrar = async () => {
+    if (entrando) return;
+    setEntrando(true);
+    setErroDoEntrar(null);
+    const r = await onEntrar(reuniao.codigo);
+    if (!viva.current) return;
+    setEntrando(false);
+    if (!r.ok && r.erro !== null) setErroDoEntrar({ texto: r.erro, convidado: r.outraEmpresa });
+  };
   const abrirCancelar = () => {
     setMenu(false);
     setFalhou(false);
@@ -143,6 +175,17 @@ function Linha({ reuniao, agora, copiado, minimo, onCopiar, onCancelar, onAbrirD
         </div>
         <div class="reun-acoes">
           {!minimo && (
+            <button
+              type="button"
+              class="btn btn-cyan reun-entrar"
+              aria-disabled={entrando ? 'true' : undefined}
+              onClick={() => void entrar()}
+            >
+              <IconVideo size="sm" />
+              {ENTRAR}
+            </button>
+          )}
+          {!minimo && (
             <button type="button" class="reun-copiar" onClick={copiar}>
               {copiado ? <IconCheck size="sm" /> : <IconCopiar size="sm" />}
               {copiado ? LINK_COPIADO : COPIAR_LINK}
@@ -165,6 +208,21 @@ function Linha({ reuniao, agora, copiado, minimo, onCopiar, onCancelar, onAbrirD
               <Menu label={opcoesDe(reuniao.assunto)} anchor={mais} onClose={() => setMenu(false)} class="reun-menu">
                 {reuniao.valeAte !== null && (
                   <span class="reun-menu-vale">{valeAteTexto(reuniao.valeAte, agora)}</span>
+                )}
+                {minimo && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    class="menuitem"
+                    onClick={() => {
+                      setMenu(false);
+                      void entrar();
+                      mais.current?.focus();
+                    }}
+                  >
+                    <IconVideo size="sm" />
+                    {ENTRAR}
+                  </button>
                 )}
                 {minimo && (
                   <button
@@ -202,6 +260,23 @@ function Linha({ reuniao, agora, copiado, minimo, onCopiar, onCancelar, onAbrirD
             )}
           </div>
         </div>
+        {erroDoEntrar !== null && (
+          <div class="reun-entrar-erro">
+            <p role="alert">{erroDoEntrar.texto}</p>
+            {erroDoEntrar.convidado && (
+              <button
+                type="button"
+                class="btn btn-cyan reun-link-abrir"
+                onClick={() => {
+                  setErroDoEntrar(null);
+                  onAbrirComoConvidado(reuniao.codigo);
+                }}
+              >
+                {ABRIR_NO_NAVEGADOR}
+              </button>
+            )}
+          </div>
+        )}
         {cancelando && (
           <Cancelar
             reuniao={reuniao}
@@ -321,6 +396,7 @@ export function Aba({
   onAbrirDaLinha,
   onAbrirDoCampo,
   onAbrirComoConvidado,
+  onEntrar,
 }: Props) {
   const { lista, conectado, copiado } = vista;
   const agora = Date.now();
@@ -374,6 +450,8 @@ export function Aba({
                 onCopiar={onCopiar}
                 onCancelar={onCancelar}
                 onAbrirDaLinha={onAbrirDaLinha}
+                onEntrar={onEntrar}
+                onAbrirComoConvidado={onAbrirComoConvidado}
               />
             ))}
           </ul>

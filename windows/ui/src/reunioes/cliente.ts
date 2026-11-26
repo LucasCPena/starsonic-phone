@@ -12,10 +12,11 @@
 // - O `criar` (a Nova reunião) cria como a pessoa da vez, lê a lista de novo e copia o link; o `copiar` escreve o link
 //   no clipboard e faz a vista dizer o `copiado` (a linha da reunião diz "Link copiado") por 2 s; o `cancelar` cancela
 //   a reunião e relê a lista (o 404, ela já não existe, também resolve).
-// - O `abrirNoNavegador` pede o passe como a pessoa da vez (um pedido por código de cada vez) e manda o
-//   reuniaoNavegador com o código e o passe: o passe vai da resposta para o comando e para mais lugar nenhum (nem uma
-//   variável da classe, nem o estado, nem o console). O `abrirComoConvidado` manda o comando sem o
-//   passe. O `avisar` é o aviso curto do app (a tela o mostra como o toast).
+// - O `pedirPasse` pede o passe como a pessoa da vez, guarda a reunião da resposta e diz os erros do passe. O
+//   `abrirNoNavegador` o usa (um pedido por código de cada vez) e manda o reuniaoNavegador com o código e o passe: o
+//   passe vai da resposta para o comando e para mais lugar nenhum (nem uma variável da classe, nem o estado, nem o
+//   console). O `abrirComoConvidado` manda o comando sem o passe. O `avisar` é o aviso curto do app (a tela o mostra
+//   como o toast).
 // - (Task 11) As reuniões abertas no navegador: o cliente guarda, só na memória, cada uma (o assunto e o valeAte, se
 //   conhecidos; se o computador está nela) e os pedidos para entrar, na ordem em que chegaram. Os eventos das reuniões
 //   dizem se o computador está nela; o servidor não avisa que ele saiu, e por isso a conferência (o GET participantes)
@@ -62,8 +63,9 @@ export interface VistaReunioes {
   ouvindoNoNavegador: boolean;
 }
 
-/** `erro` null: nada a dizer (a pessoa trocou no meio, ou a aba sumiu). */
-export type ResultadoDoNavegador = { ok: true } | { ok: false; erro: string | null; outraEmpresa: boolean };
+/** O pedido do passe que falhou. `erro` null: nada a dizer (a pessoa trocou no meio, ou a aba sumiu). */
+export type ResultadoSemPasse = { ok: false; erro: string | null; outraEmpresa: boolean };
+export type ResultadoDoNavegador = { ok: true } | ResultadoSemPasse;
 
 /** A lista é lida de novo a esta distância, com a aba à vista (e depois de uma falha). */
 export const RELEITURA_MS = 30_000;
@@ -271,20 +273,32 @@ export class ReunioesCliente {
   }
 
   /**
+   * Pede o passe como a pessoa da vez e guarda a reunião da resposta entre as abertas. Os erros são os do
+   * abrirNoNavegador (a tabela do erroDoPasse). O passe vai da resposta para quem pediu e para mais lugar nenhum.
+   */
+  async pedirPasse(codigo: string): Promise<{ ok: true; passe: string; reuniao: Reuniao } | ResultadoSemPasse> {
+    const vez = this.vez;
+    try {
+      const r = await this.chat.pedir((api) => api.passeDaReuniao(codigo));
+      this.guardar(r.reuniao);
+      return { ok: true, passe: r.passe, reuniao: r.reuniao };
+    } catch (e) {
+      return await this.erroDoPasse(e, codigo, vez);
+    }
+  }
+
+  /**
    * Pede o passe como a pessoa da vez e manda o reuniaoNavegador com o código e o passe: a resposta vai direto ao
    * comando. Um pedido por código de cada vez (o segundo, com o primeiro no ar, não faz nada: `erro` null).
    */
   async abrirNoNavegador(codigo: string): Promise<ResultadoDoNavegador> {
     if (this.abrindo.has(codigo)) return { ok: false, erro: null, outraEmpresa: false };
     this.abrindo.add(codigo);
-    const vez = this.vez;
     try {
-      const r = await this.chat.pedir((api) => api.passeDaReuniao(codigo));
-      this.guardar(r.reuniao);
+      const r = await this.pedirPasse(codigo);
+      if (!r.ok) return r;
       this.bridge.send({ cmd: 'reuniaoNavegador', codigo, passe: r.passe });
       return { ok: true };
-    } catch (e) {
-      return await this.erroDoPasse(e, codigo, vez);
     } finally {
       this.abrindo.delete(codigo);
     }
@@ -302,8 +316,8 @@ export class ReunioesCliente {
   }
 
   /** O que cada falha do pedido do passe vira (a tabela da Task 10). */
-  private async erroDoPasse(e: unknown, codigo: string, vez: number): Promise<ResultadoDoNavegador> {
-    const dizer = (erro: string | null, outraEmpresa = false): ResultadoDoNavegador => ({
+  private async erroDoPasse(e: unknown, codigo: string, vez: number): Promise<ResultadoSemPasse> {
+    const dizer = (erro: string | null, outraEmpresa = false): ResultadoSemPasse => ({
       ok: false,
       erro,
       outraEmpresa,

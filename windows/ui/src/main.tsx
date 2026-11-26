@@ -28,6 +28,9 @@
 // (R39).
 // (Reuniões) A sexta aba (Ctrl+6) é do reunioes/: o cliente das reuniões (reunioes/cliente.ts) usa a sessão do cliente
 // do chat, e a aba só aparece depois da primeira leitura que dá certo (as reuniões liberadas para a empresa).
+// (3b) A reunião dentro do app (reunioes/vista.ts e telas/Reuniao.tsx): a vista é montada uma vez, junto da tela de
+// agora e fora da raiz dela (o `comVista`): enquanto a reunião está na vista, a tela de baixo fica inerte e o aviso
+// curto vai para a vista. Ao fechar, a aba Reuniões.
 // (0.3.0) O vídeo: as memórias das vistas desta página (video/vistas.ts) são guardadas uma vez, junto com a ponte, e vão
 // às vistas de vídeo pelo VideoContexto. Os avisos do vídeo (os toasts do AVISOS_DE_5_S) ficam 5 s na tela; os outros,
 // os 2 s de sempre. (Task 8) O chat na ligação: numa ligação com um colega do chat (video/chatDaLigacao.ts), o Chat da
@@ -38,7 +41,7 @@
 // `salaEmCima`, só no Windows) toma o lugar da tela da ligação na janela normal (sala/TelaDaSala.tsx). Com você fora dela
 // (a ligação de fora atendida, ou a sala de volta ainda em espera: o `foraDaSala`), a faixa "Você está fora da sala"
 // (sala/FaixaForaDaSala.tsx) fica entre a barra da ligação e a tela; com a sala embaixo, a tela é a de uma ligação, sem o Chat.
-import { render } from 'preact';
+import { render, type JSX } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { createBridge } from './bridge';
 import { ChatCliente } from './chat/cliente';
@@ -52,8 +55,10 @@ import { PorPessoas } from './chat/telas/PorPessoas';
 import type { Conversa as ConversaDaLista } from './chat/tipos';
 import { useAcao, useVistaChat } from './chat/usarChat';
 import { ReunioesCliente } from './reunioes/cliente';
+import { ReuniaoNoApp } from './reunioes/vista';
 import { Aba as AbaReunioes } from './reunioes/telas/Aba';
 import { Nova as NovaReuniao } from './reunioes/telas/Nova';
+import { Reuniao, useVistaDaReuniao } from './reunioes/telas/Reuniao';
 import { useVistaReunioes } from './reunioes/usarReunioes';
 import { AdminLogin } from './components/AdminLogin';
 import { Atualizacao } from './components/Atualizacao';
@@ -95,6 +100,7 @@ import { criarVideoDaPagina, VideoContexto } from './video/vistas';
 const bridge = createBridge();
 const chatCliente = new ChatCliente({ bridge, base: enderecoDoChat() });
 const reunioesCliente = new ReunioesCliente({ chat: chatCliente, bridge, base: enderecoDoChat() });
+const reuniaoNoApp = new ReuniaoNoApp({ reunioes: reunioesCliente, bridge, base: enderecoDoChat() });
 const videoDaPagina = criarVideoDaPagina(bridge, 'principal');
 // (0.2.0, R39) Um arquivo arrastado para a janela nunca navega, em lugar nenhum dela: sem isto, o WebView2 abriria o
 // file:// do arquivo (e o núcleo gravaria o caminho dele no diagnóstico). Só a conversa que recebe arquivos (com o
@@ -105,6 +111,7 @@ for (const tipo of ['dragover', 'drop'] as const) {
   });
 }
 const ringer = createRinger();
+const ORIGEM_DO_CHAT = new URL(enderecoDoChat()).origin;
 const TOAST_MS = 2000;
 /** (vídeo, etapa 2) Os avisos do vídeo (a câmera, o H.264, a recusa) ficam mais tempo: dizem o que fazer. */
 const TOAST_DO_VIDEO_MS = 5000;
@@ -274,8 +281,11 @@ function App() {
   // As reuniões: a aba só existe com o chat ligado e depois de uma leitura que deu certo (vistaReunioes.aba). Com ela
   // na vista (a aba aberta, sem ligação nem tela por cima), o cliente lê a lista na hora e a cada 30 s.
   const vistaReunioes = useVistaReunioes(reunioesCliente);
+  const vistaDaReuniao = useVistaDaReuniao(reuniaoNoApp);
+  const reuniaoAberta = vistaDaReuniao.fase !== 'nenhuma';
   const reunioesNaVista =
     !ios &&
+    !reuniaoAberta &&
     resumoDoChat?.ligado === true &&
     vistaReunioes.aba &&
     view.kind === 'tab' &&
@@ -290,8 +300,29 @@ function App() {
   // relógio da página parado nos testes.
   const ligacaoDoEstado = state?.ligacao ?? null;
   useLayoutEffect(() => {
-    if (!ios) reunioesCliente.ligacoes(ligacaoDoEstado);
+    if (!ios) {
+      reunioesCliente.ligacoes(ligacaoDoEstado);
+      reuniaoNoApp.ligacoes(ligacaoDoEstado);
+    }
   }, [ligacaoDoEstado]);
+  // Os aparelhos das Configurações vão à reunião no app: no passe e, depois, a cada troca.
+  const microfoneDoEstado = state?.audio.microfone;
+  const altoFalanteDoEstado = state?.audio.altoFalante;
+  const cameraDoEstado = state?.video?.camera;
+  useLayoutEffect(() => {
+    if (microfoneDoEstado === undefined || altoFalanteDoEstado === undefined) return;
+    reuniaoNoApp.aparelhos({
+      microfone: microfoneDoEstado,
+      altoFalante: altoFalanteDoEstado,
+      camera: cameraDoEstado ?? '',
+    });
+  }, [microfoneDoEstado, altoFalanteDoEstado, cameraDoEstado]);
+  // A vista da reunião fechou: a aba Reuniões (e, com ela de volta à vista, a lista lida de novo).
+  const reuniaoEstavaAberta = useRef(false);
+  useLayoutEffect(() => {
+    if (reuniaoEstavaAberta.current && !reuniaoAberta) setView(ABA_REUNIOES);
+    reuniaoEstavaAberta.current = reuniaoAberta;
+  }, [reuniaoAberta]);
   // A aba some com a pessoa nela (o semReunioes, o chat desligado): a vista vai para o Teclado de fato, e não só a
   // tela.
   // Sem isto, a aba que volta (as reuniões liberadas de novo) puxaria a pessoa de volta para ela sozinha.
@@ -463,9 +494,40 @@ function App() {
   // Antes do primeiro estado a plataforma não se sabe: a janela é a do Windows.
   const plataforma = ios ? 'ios' : undefined;
   const barra = (props: Omit<Parameters<typeof TitleBar>[0], 'send'> = {}) => (ios ? null : <TitleBar send={send} {...props} />);
+  // (3b) A reunião no app fica fora da raiz de cada tela: a tela de agora é sempre o primeiro filho (a vista, o segundo,
+  // não é recriada por uma troca de tela), e inerte enquanto a vista cobre a janela. O aviso curto vai para a vista.
+  const vistaDaJanela =
+    state && reuniaoAberta ? (
+      <Reuniao
+        controle={reuniaoNoApp}
+        vista={vistaDaReuniao}
+        origem={ORIGEM_DO_CHAT}
+        barra={(acoes) =>
+          barra({
+            title: state.conta ? `Starsonic Phone · ${accountTitle(state.conta)}` : undefined,
+            status: state.conta
+              ? accountDot(state.conta, state.ligacao != null, state.naoPerturbe, vistaDaReuniao.fase === 'naReuniao')
+              : undefined,
+            semRedimensionar: true,
+            acoes,
+          })
+        }
+        layout={layout}
+        plataforma={plataforma}
+        toast={<Toast texto={toast?.texto ?? null} vez={toast?.vez ?? 0} />}
+      />
+    ) : null;
+  const comVista = (tela: JSX.Element) => (
+    <>
+      <div class="tela-de-baixo" inert={reuniaoAberta}>
+        {tela}
+      </div>
+      {vistaDaJanela}
+    </>
+  );
 
   if (!bridge.available) {
-    return (
+    return comVista(
       <div class="win" data-layout={layout} data-plataforma={plataforma}>
         {barra()}
         <p class="fatal" role="alert">
@@ -475,7 +537,7 @@ function App() {
     );
   }
   if (reinstalar) {
-    return (
+    return comVista(
       <div class="win" data-layout={layout} data-plataforma={plataforma}>
         {barra()}
         <p class="fatal" role="alert">
@@ -485,7 +547,7 @@ function App() {
     );
   }
   if (!state) {
-    return (
+    return comVista(
       <div class="win" data-layout={layout} data-plataforma={plataforma}>
         {barra()}
       </div>
@@ -494,7 +556,7 @@ function App() {
 
   // As sugestões do número (o Teclado, o Transferir e a Nova ligação): no iPhone, as da agenda, no lugar dos `contatos`.
   const sugestoes = ios ? sugestoesDaAgenda : state.contatos;
-  const toastEl = <Toast texto={toast?.texto ?? null} vez={toast?.vez ?? 0} />;
+  const toastEl = <Toast texto={reuniaoAberta ? null : (toast?.texto ?? null)} vez={toast?.vez ?? 0} />;
   // A pergunta da atualização e o diálogo do administrador nunca cobrem a tela da ligação.
   const avisos = (
     <>
@@ -562,7 +624,7 @@ function App() {
         sala === null && l.second === null && (colegaDaLigacao !== null || daLigacao !== null)
           ? { aberto: daLigacao !== null, alternar: daLigacao ? fecharOChat : abrirOChat, painel: daLigacao && conversaDaLigacao(daLigacao) }
           : null;
-      return (
+      return comVista(
         <div class={`win call win-${janela === 'telaCheia' ? 'tela-cheia' : 'grande'}`} data-layout={layout} data-plataforma={plataforma}>
           {janela === 'grande' &&
             barra({
@@ -597,7 +659,7 @@ function App() {
     });
     // (vídeo, etapa 2) A conversa do Chat, no tema do app, embaixo da faixa da ligação.
     if (daLigacao) {
-      return (
+      return comVista(
         <div class="win" data-layout={layout} data-plataforma={plataforma}>
           {barraDaLigacao}
           <FaixaDaLigacao state={state} ligacao={l} send={send} onVoltar={fecharOChat} />
@@ -611,7 +673,7 @@ function App() {
     // da sala: uma sala nova começa com a tela e a pergunta do Desligar novas.
     const faixaDeFora = sala && foraDaSala(l, sala) ? <FaixaForaDaSala state={state} ligacao={l} sala={sala} send={send} /> : null;
     if (sala && salaEmCima(l, sala)) {
-      return (
+      return comVista(
         <div class="win call" data-layout={layout} data-plataforma={plataforma}>
           {barraDaLigacao}
           {faixaDeFora}
@@ -621,7 +683,7 @@ function App() {
         </div>
       );
     }
-    return (
+    return comVista(
       <div class="win call" data-layout={layout} data-plataforma={plataforma}>
         {barraDaLigacao}
         {faixaDeFora}
@@ -641,7 +703,7 @@ function App() {
 
   // A área do administrador (aberta no C++), também por cima da tela Entrar (os servidores antes da primeira conta).
   if (view.kind === 'admin' && state.admin.aberto) {
-    return (
+    return comVista(
       <div class="win" data-layout={layout} data-plataforma={plataforma}>
         {barra({ title: 'Starsonic Phone · Administrador' })}
         <Admin
@@ -658,7 +720,7 @@ function App() {
   }
 
   if (state.tela === 'entrar') {
-    return (
+    return comVista(
       <div class="win" data-layout={layout} data-plataforma={plataforma}>
         {barra({ closeLabel: 'Fechar' })}
         <Entrar state={state} send={send} mode="entrar" />
@@ -802,7 +864,7 @@ function App() {
   if (ficou) conteudo = telaDaConversa(ficou, { onVoltar: () => setView(ABA_CHAT) });
 
   if (conteudo) {
-    return (
+    return comVista(
       <div class="win" data-layout={layout} data-plataforma={plataforma}>
         {barra()}
         {conteudo}
@@ -818,7 +880,7 @@ function App() {
   const abas = ios ? IPHONE_TABS : abasDoWindows;
   const tab = view.kind === 'tab' && abas.includes(view.tab) ? view.tab : telaDoChat(view) && abas.includes('chat') ? 'chat' : 'teclado';
   const conta = state.conta;
-  return (
+  return comVista(
     <div class="win" data-layout={layout} data-plataforma={plataforma}>
       {barra()}
       {conta && <Header state={state} conta={conta} send={send} navigate={setView} current={view} layout={layout} />}
@@ -897,6 +959,7 @@ function App() {
             }
             onAbrirDoCampo={(codigo) => reunioesCliente.abrirNoNavegador(codigo)}
             onAbrirComoConvidado={(codigo) => reunioesCliente.abrirComoConvidado(codigo)}
+            onEntrar={(codigo) => reuniaoNoApp.entrar(codigo)}
           />
         )}
       </main>
